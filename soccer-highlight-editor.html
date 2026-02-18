@@ -553,13 +553,54 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   const allState=useCallback(()=>({v:JSON.parse(JSON.stringify(tracks)),t:JSON.parse(JSON.stringify(tagTrack)),a:JSON.parse(JSON.stringify(audioTracks))}),[tracks,tagTrack,audioTracks]);
   const pushHist=useCallback(()=>setHistory(h=>[...h.slice(-40),allState()]),[allState]);
-  const recalcAll=useCallback((vt,tt,at)=>{let mx=120;vt.forEach(t=>t.clips.forEach(c=>{const rawD=c.clipEnd-c.clipStart;let fz=0;tt.clips.forEach(tg=>{if(tg.trackStart>=c.trackStart&&tg.trackStart<c.trackStart+rawD)fz+=tg.duration;});const e=c.trackStart+rawD+fz;if(e>mx)mx=e;}));tt.clips.forEach(c=>{const e=c.trackStart+c.duration;if(e>mx)mx=e;});at.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>mx)mx=e;}));setTlDur(mx+30);},[]);
 
-  const findActiveTag=useCallback(ph=>{for(const tg of tagTrack.clips){if(ph>=tg.trackStart&&ph<tg.trackStart+tg.duration)return tg;}return null;},[tagTrack]);
+  /* ═══ RESOLVED TAGS: compute timeline positions from source-anchored tags ═══ */
+  const resolvedTags=React.useMemo(()=>{
+    const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
+    const result=[];
+    /* Group tags by clipId, then compute timeline positions */
+    const tagsByClip={};
+    tagTrack.clips.forEach(tg=>{
+      if(tg.clipId){
+        if(!tagsByClip[tg.clipId])tagsByClip[tg.clipId]=[];
+        tagsByClip[tg.clipId].push(tg);
+      }else{
+        /* Legacy tag without clipId — use trackStart directly */
+        result.push({...tg,_tlStart:tg.trackStart});
+      }
+    });
+    Object.keys(tagsByClip).forEach(cid=>{
+      const clip=allClips.find(c=>c.id===cid);
+      if(!clip)return;/* orphaned tag — clip deleted */
+      const tags=tagsByClip[cid].filter(t=>t.sourceTime>=clip.clipStart&&t.sourceTime<clip.clipEnd).sort((a,b)=>a.sourceTime-b.sourceTime);
+      let fzAccum=0;
+      tags.forEach(tg=>{
+        const tlPos=clip.trackStart+(tg.sourceTime-clip.clipStart)+fzAccum;
+        result.push({...tg,_tlStart:tlPos});
+        fzAccum+=tg.duration;
+      });
+    });
+    return result.sort((a,b)=>a._tlStart-b._tlStart);
+  },[tracks,tagTrack]);
 
-  const freezeOffset=useCallback((clipStart,ph)=>{let total=0;for(const tg of tagTrack.clips){const tEnd=tg.trackStart+tg.duration;if(tEnd<=clipStart||tg.trackStart>=ph)continue;const s=Math.max(tg.trackStart,clipStart);const e=Math.min(tEnd,ph);if(e>s)total+=e-s;}return total;},[tagTrack]);
+  const recalcAll=useCallback((vt,tt,at)=>{
+    /* Rebuild resolved positions inline for accurate duration calc */
+    const allC=[];vt.forEach(t=>t.clips.forEach(c=>allC.push(c)));
+    const resolved=[];const byClip={};
+    tt.clips.forEach(tg=>{if(tg.clipId){if(!byClip[tg.clipId])byClip[tg.clipId]=[];byClip[tg.clipId].push(tg);}else{resolved.push({...tg,_tlStart:tg.trackStart});}});
+    Object.keys(byClip).forEach(cid=>{const cl=allC.find(c=>c.id===cid);if(!cl)return;const tags=byClip[cid].filter(t=>t.sourceTime>=cl.clipStart&&t.sourceTime<cl.clipEnd).sort((a,b)=>a.sourceTime-b.sourceTime);let fz=0;tags.forEach(tg=>{resolved.push({...tg,_tlStart:cl.trackStart+(tg.sourceTime-cl.clipStart)+fz});fz+=tg.duration;});});
+    let mx=120;
+    vt.forEach(t=>t.clips.forEach(c=>{const rawD=c.clipEnd-c.clipStart;let fz=0;resolved.forEach(tg=>{if(tg._tlStart>=c.trackStart&&tg._tlStart<c.trackStart+rawD+fz)fz+=tg.duration;});const e=c.trackStart+rawD+fz;if(e>mx)mx=e;}));
+    resolved.forEach(c=>{const e=c._tlStart+c.duration;if(e>mx)mx=e;});
+    at.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>mx)mx=e;}));
+    setTlDur(mx+30);
+  },[]);
 
-  const findActiveClip=useCallback(ph=>{for(let i=tracks.length-1;i>=0;i--)for(const cl of tracks[i].clips){const rawD=cl.clipEnd-cl.clipStart;let fz=0;for(const tg of tagTrack.clips){const tEnd=tg.trackStart+tg.duration;if(tEnd<=cl.trackStart)continue;if(tg.trackStart>=cl.trackStart+rawD+fz)continue;const s=Math.max(tg.trackStart,cl.trackStart);const e=Math.min(tEnd,cl.trackStart+rawD+fz);if(e>s)fz+=tg.duration;}const effectiveD=rawD+fz;if(ph>=cl.trackStart&&ph<cl.trackStart+effectiveD)return cl;}return null;},[tracks,tagTrack]);
+  const findActiveTag=useCallback(ph=>{for(const tg of resolvedTags){if(ph>=tg._tlStart&&ph<tg._tlStart+tg.duration)return tg;}return null;},[resolvedTags]);
+
+  const freezeOffset=useCallback((clipStart,ph)=>{let total=0;for(const tg of resolvedTags){const tEnd=tg._tlStart+tg.duration;if(tEnd<=clipStart||tg._tlStart>=ph)continue;const s=Math.max(tg._tlStart,clipStart);const e=Math.min(tEnd,ph);if(e>s)total+=e-s;}return total;},[resolvedTags]);
+
+  const findActiveClip=useCallback(ph=>{for(let i=tracks.length-1;i>=0;i--)for(const cl of tracks[i].clips){const rawD=cl.clipEnd-cl.clipStart;let fz=0;for(const tg of resolvedTags){const tEnd=tg._tlStart+tg.duration;if(tEnd<=cl.trackStart)continue;if(tg._tlStart>=cl.trackStart+rawD+fz)continue;const s=Math.max(tg._tlStart,cl.trackStart);const e=Math.min(tEnd,cl.trackStart+rawD+fz);if(e>s)fz+=tg.duration;}const effectiveD=rawD+fz;if(ph>=cl.trackStart&&ph<cl.trackStart+effectiveD)return cl;}return null;},[tracks,resolvedTags]);
 
   const findActiveAudio=useCallback(ph=>{for(const t of audioTracks)for(const cl of t.clips){const d=cl.clipEnd-cl.clipStart;if(ph>=cl.trackStart&&ph<cl.trackStart+d)return cl;}return null;},[audioTracks]);
 
@@ -593,11 +634,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   const addTag=useCallback((playerId,start,spotX=50,spotY=50)=>{pushHist();
     const player=players.find(p=>p.id===playerId);if(!player)return;
-    const playerIdx=players.indexOf(player);const tag={id:uid("tag"),type:"tag",playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:Math.max(0,start),duration:3.0,spotX,spotY,spotScale:1.0};
+    const playerIdx=players.indexOf(player);
+    /* Find the active video clip at 'start' (timeline time) and compute sourceTime */
+    const clip=findActiveClip(start);
+    if(!clip){console.warn("No video clip at playhead for tag");return;}
+    const fo=freezeOffset(clip.trackStart,start);
+    const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
+    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:3.0,spotX,spotY,spotScale:1.0};
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
-    setTagTrack(p=>{const n={...p,clips:[...p.clips,tag].sort((a,b)=>a.trackStart-b.trackStart)};recalcAll(tracks,n,audioTracks);return n;});
+    setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(tag.id);
-  },[pushHist,players,recalcAll,tracks,audioTracks]);
+  },[pushHist,players,findActiveClip,freezeOffset,recalcAll,tracks,audioTracks]);
 
   const updateTagPos=useCallback((tagId,newX,newY)=>{
     setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===tagId?{...c,spotX:Math.max(5,Math.min(95,newX)),spotY:Math.max(5,Math.min(95,newY))}:c)}));
@@ -613,39 +660,54 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   const updateClipEdge=useCallback((trackId,clipId,isLeft,newPos,isAudio=false,isTag=false)=>{
     if(isTag){
-      setTagTrack(p=>{const n={...p,clips:p.clips.map(c=>{if(c.id!==clipId)return c;if(isLeft){const newStart=newPos;const durReduction=c.trackStart-newStart;if(durReduction>=-0.1)return{...c,trackStart:Math.max(0,newStart),duration:Math.max(0.1,c.duration+durReduction)};}else{const newEnd=newPos;const newDur=newEnd-c.trackStart;return{...c,duration:Math.max(0.1,newDur)};}return c;})};recalcAll(tracks,n,audioTracks);return n;});
+      /* For source-anchored tags, only adjust duration. Left edge does nothing (sourceTime is fixed). Right edge changes duration. */
+      if(!isLeft){
+        const resolved=resolvedTags.find(t=>t.id===clipId);if(!resolved)return;
+        const newDur=Math.max(0.1,newPos-resolved._tlStart);
+        setTagTrack(p=>{const n={...p,clips:p.clips.map(c=>c.id===clipId?{...c,duration:newDur}:c)};recalcAll(tracks,n,audioTracks);return n;});
+      }
     }else if(isAudio){
       setAudioTracks(p=>{const n=p.map(t=>{if(t.id!==trackId)return t;return{...t,clips:t.clips.map(c=>{if(c.id!==clipId)return c;if(isLeft){const newStart=newPos;const dur=c.clipEnd-c.clipStart;const durReduction=c.trackStart-newStart;if(durReduction>=-0.1){const newClipStart=c.clipStart+durReduction;return{...c,trackStart:Math.max(0,newStart),clipStart:Math.max(0,newClipStart)};}return c;}else{const dur=c.clipEnd-c.clipStart;const newEnd=newPos;const newClipEnd=c.clipStart+(dur+(newEnd-c.trackStart-dur));return{...c,clipEnd:newClipEnd};}return c;})};});recalcAll(tracks,tagTrack,n);return n;});
     }else{
       setTracks(p=>{const n=p.map(t=>{if(t.id!==trackId)return t;return{...t,clips:t.clips.map(c=>{if(c.id!==clipId)return c;if(isLeft){const newStart=newPos;const dur=c.clipEnd-c.clipStart;const durReduction=c.trackStart-newStart;if(durReduction>=-0.1){const newClipStart=c.clipStart+durReduction;return{...c,trackStart:Math.max(0,newStart),clipStart:Math.max(0,newClipStart)};}return c;}else{const dur=c.clipEnd-c.clipStart;const newEnd=newPos;const newClipEnd=c.clipStart+(dur+(newEnd-c.trackStart-dur));return{...c,clipEnd:newClipEnd};}return c;})};});recalcAll(n,tagTrack,audioTracks);return n;});
     }
-  },[recalcAll,tracks,tagTrack,audioTracks]);
+  },[recalcAll,tracks,tagTrack,audioTracks,resolvedTags]);
 
   const cutClip=useCallback((trackId,clipId)=>{pushHist();
+    let aId=null,bId=null,splitSourceTime=null;
     const docut=trks=>trks.map(t=>{if(t.id!==trackId)return t;const c=t.clips.find(x=>x.id===clipId);if(!c)return t;
-      const d=c.clipEnd-c.clipStart,cut=playhead-c.trackStart;if(cut<=.05||cut>=d-.05)return t;
-      const a={...c,id:uid("clip"),clipEnd:c.clipStart+cut},b={...c,id:uid("clip"),trackStart:playhead,clipStart:c.clipStart+cut};
+      const d=c.clipEnd-c.clipStart;const fo=freezeOffset(c.trackStart,playhead);const cut=playhead-c.trackStart-fo;if(cut<=.05||cut>=d-.05)return t;
+      const a={...c,id:uid("clip"),clipEnd:c.clipStart+cut};aId=a.id;
+      const b={...c,id:uid("clip"),trackStart:playhead,clipStart:c.clipStart+cut};bId=b.id;
+      splitSourceTime=c.clipStart+cut;
       setClipProps(p=>({...p,[a.id]:{...(p[c.id]||{volume:100,scale:1})},[b.id]:{...(p[c.id]||{volume:100,scale:1})}}));
       return{...t,clips:t.clips.filter(x=>x.id!==clipId).concat([a,b]).sort((x,y)=>x.trackStart-y.trackStart)};});
     let found=false;tracks.forEach(t=>{if(t.clips.find(c=>c.id===clipId))found=true;});
     if(found){setTracks(p=>{const n=docut(p);recalcAll(n,tagTrack,audioTracks);return n;});compactV1();}
     else setAudioTracks(p=>{const n=docut(p);recalcAll(tracks,tagTrack,n);return n;});
+    /* Reassign tags from old clipId to appropriate new clip */
+    if(aId&&bId&&splitSourceTime!==null){
+      setTagTrack(p=>{const newClips=p.clips.map(tg=>{if(tg.clipId!==clipId)return tg;return tg.sourceTime<splitSourceTime?{...tg,clipId:aId}:{...tg,clipId:bId};});return{...p,clips:newClips};});
+    }
     setSelectedClipId(null);
-  },[pushHist,playhead,tracks,tagTrack,audioTracks,recalcAll,compactV1]);
+  },[pushHist,playhead,tracks,tagTrack,audioTracks,recalcAll,compactV1,freezeOffset]);
 
   const cutTag=useCallback((tagId)=>{pushHist();
+    const resolved=resolvedTags.find(t=>t.id===tagId);if(!resolved)return;
+    const tlStart=resolved._tlStart;
+    const cut=playhead-tlStart;if(cut<=.05||cut>=resolved.duration-.05)return;
     setTagTrack(p=>{const c=p.clips.find(x=>x.id===tagId);if(!c)return p;
-      const cut=playhead-c.trackStart;if(cut<=.05||cut>=c.duration-.05)return p;
-      const a={...c,id:uid("tag"),duration:cut};const b={...c,id:uid("tag"),trackStart:playhead,duration:c.duration-cut};
+      const a={...c,id:uid("tag"),duration:cut};const b={...c,id:uid("tag"),sourceTime:c.sourceTime,duration:c.duration-cut};
       setClipProps(pr=>({...pr,[a.id]:{...(pr[c.id]||{volume:100,scale:1,spotScale:1.0})},[b.id]:{...(pr[c.id]||{volume:100,scale:1,spotScale:1.0})}}));
-      const n={...p,clips:p.clips.filter(x=>x.id!==tagId).concat([a,b]).sort((x,y)=>x.trackStart-y.trackStart)};recalcAll(tracks,n,audioTracks);return n;});
+      const n={...p,clips:p.clips.filter(x=>x.id!==tagId).concat([a,b])};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(null);
-  },[pushHist,playhead,tracks,audioTracks,recalcAll]);
+  },[pushHist,playhead,tracks,audioTracks,recalcAll,resolvedTags]);
 
   const delClip=useCallback(()=>{if(!selectedClipId)return;pushHist();
     setTracks(p=>{const n=p.map(t=>({...t,clips:t.clips.filter(c=>c.id!==selectedClipId)}));recalcAll(n,tagTrack,audioTracks);return n;});
     setAudioTracks(p=>{const n=p.map(t=>({...t,clips:t.clips.filter(c=>c.id!==selectedClipId)}));recalcAll(tracks,tagTrack,n);return n;});
-    setTagTrack(p=>{const n={...p,clips:p.clips.filter(c=>c.id!==selectedClipId)};recalcAll(tracks,n,audioTracks);return n;});
+    /* Remove tag if it's the selected item, OR remove all tags anchored to this clip */
+    setTagTrack(p=>{const n={...p,clips:p.clips.filter(c=>c.id!==selectedClipId&&c.clipId!==selectedClipId)};recalcAll(tracks,n,audioTracks);return n;});
     compactV1();
     setSelectedClipId(null);
   },[selectedClipId,pushHist,recalcAll,tracks,tagTrack,audioTracks,compactV1]);
@@ -669,7 +731,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     edges.push(playhead);
     /* collect all clip edges except the one being moved */
     [...tracks,...audioTracks].forEach(t=>t.clips.forEach(c=>{if(c.id===clipId)return;const d=c.clipEnd-c.clipStart;edges.push(c.trackStart);edges.push(c.trackStart+d);}));
-    tagTrack.clips.forEach(c=>{if(c.id===clipId)return;edges.push(c.trackStart);edges.push(c.trackStart+c.duration);});
+    resolvedTags.forEach(c=>{if(c.id===clipId)return;edges.push(c._tlStart);edges.push(c._tlStart+c.duration);});
     const threshSec=SNAP_THRESH/zoom;
     let best=timeSec;let bestDist=Infinity;let snapEdge=null;
     /* snap leading edge (start) */
@@ -679,7 +741,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(snapEdge!==null){setSnapLine(snapEdge);clearTimeout(snapLineTimer.current);snapLineTimer.current=setTimeout(()=>setSnapLine(null),400);}
     else{setSnapLine(null);}
     return Math.max(0,best);
-  },[snapOn,playhead,tracks,audioTracks,tagTrack,zoom]);
+  },[snapOn,playhead,tracks,audioTracks,resolvedTags,zoom]);
 
   /* magnetPush removed — replaced by compactV1 ripple mode above */
 
@@ -687,7 +749,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const zoomToFit=useCallback(()=>{
     let contentEnd=0;
     tracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>contentEnd)contentEnd=e;}));
-    tagTrack.clips.forEach(c=>{const e=c.trackStart+c.duration;if(e>contentEnd)contentEnd=e;});
+    resolvedTags.forEach(c=>{const e=c._tlStart+c.duration;if(e>contentEnd)contentEnd=e;});
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>contentEnd)contentEnd=e;}));
     if(contentEnd<=0)return;
     const el=tlScrollRef.current;if(!el)return;
@@ -695,7 +757,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const newZoom=Math.max(2,Math.min(200,availW/contentEnd));
     setZoom(newZoom);
     if(el)el.scrollLeft=0;
-  },[tracks,tagTrack,audioTracks]);
+  },[tracks,resolvedTags,audioTracks]);
 
   /* ═══ VIDEO EXPORT ═══ */
   const exportVideo=useCallback(async()=>{
@@ -704,9 +766,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* calc content end (with freeze extensions) */
     let cEnd=0;
     tracks.forEach(t=>t.clips.forEach(c=>{const rd=c.clipEnd-c.clipStart;let fz=0;
-      tagTrack.clips.forEach(tg=>{const te=tg.trackStart+tg.duration;if(te<=c.trackStart)return;if(tg.trackStart>=c.trackStart+rd+fz)return;fz+=tg.duration;});
+      resolvedTags.forEach(tg=>{const te=tg._tlStart+tg.duration;if(te<=c.trackStart)return;if(tg._tlStart>=c.trackStart+rd+fz)return;fz+=tg.duration;});
       const e=c.trackStart+rd+fz;if(e>cEnd)cEnd=e;}));
-    tagTrack.clips.forEach(c=>{const e=c.trackStart+c.duration;if(e>cEnd)cEnd=e;});
+    resolvedTags.forEach(c=>{const e=c._tlStart+c.duration;if(e>cEnd)cEnd=e;});
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>cEnd)cEnd=e;}));
     if(cEnd<=0){setExporting(false);return;}
     /* canvas 1920×1080 */
@@ -760,8 +822,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         const cl=findActiveClip(ph),tg=findActiveTag(ph),au=findActiveAudio(ph);
         cx.fillStyle="#000";cx.fillRect(0,0,1920,1080);
         if(tg){
-          if(pT!==tg.id){pT=tg.id;const c2=findActiveClip(tg.trackStart);
-            if(c2){pC=c2.id;const fo=freezeOffset(c2.trackStart,tg.trackStart);const vt=c2.clipStart+(tg.trackStart-c2.trackStart-fo);eV.src=c2.url;eV.currentTime=Math.max(0,vt);eV.pause();}
+          if(pT!==tg.id){pT=tg.id;
+            let c2=null;if(tg.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tg.clipId)c2=c;}));}
+            if(!c2)c2=findActiveClip(tg._tlStart);
+            if(c2){pC=c2.id;eV.src=c2.url;eV.currentTime=Math.max(0,tg.sourceTime||c2.clipStart);eV.pause();}
             vGain.gain.value=0;}
           try{cx.drawImage(eV,0,0,1920,1080);}catch(e){}
           drawSpot(tg);aGain.gain.value=0;if(pA){eA.pause();pA=null;}
@@ -782,7 +846,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       };
       requestAnimationFrame(step);
     });
-  },[tracks,tagTrack,audioTracks,findActiveClip,findActiveTag,findActiveAudio,freezeOffset,clipProps]);
+  },[tracks,tagTrack,audioTracks,resolvedTags,findActiveClip,findActiveTag,findActiveAudio,freezeOffset,clipProps]);
 
   const togglePlay=useCallback(()=>{if(isPlaying){setIsPlaying(false);if(animRef.current)cancelAnimationFrame(animRef.current);}else{setIsPlaying(true);lastTRef.current=performance.now();}},[isPlaying]);
 
@@ -793,8 +857,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(tag){
       if(prevTagRef.current===tag.id){v.pause();return;}
       prevTagRef.current=tag.id;
-      const clip2=findActiveClip(tag.trackStart);
-      if(clip2){prevClipRef.current=clip2.id;const fo=freezeOffset(clip2.trackStart,tag.trackStart);const vt=clip2.clipStart+(tag.trackStart-clip2.trackStart-fo);v.src=clip2.url;v.currentTime=Math.max(0,vt);v.volume=0;v.pause();}
+      /* Tag is source-anchored — find its parent clip by clipId and seek to sourceTime */
+      let clip2=null;if(tag.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tag.clipId)clip2=c;}));}
+      if(!clip2)clip2=findActiveClip(tag._tlStart);
+      if(clip2){prevClipRef.current=clip2.id;v.src=clip2.url;v.currentTime=Math.max(0,tag.sourceTime||clip2.clipStart);v.volume=0;v.pause();}
       else{prevClipRef.current=null;v.pause();v.removeAttribute("src");v.load();}
       return;
     }
@@ -820,7 +886,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   useEffect(()=>{const h=e=>{if(exporting)return;if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
     if(e.key===" "){e.preventDefault();togglePlay();}
     else if((e.metaKey||e.ctrlKey)&&(e.key==="b"||e.key==="B")){e.preventDefault();
-      for(const tg of tagTrack.clips){if(playhead>tg.trackStart&&playhead<tg.trackStart+tg.duration){cutTag(tg.id);return;}}
+      for(const tg of resolvedTags){if(playhead>tg._tlStart&&playhead<tg._tlStart+tg.duration){cutTag(tg.id);return;}}
       const allTrks=[...tracks,...audioTracks];for(const t of allTrks)for(const c of t.clips){const d=c.clipEnd-c.clipStart;if(playhead>c.trackStart&&playhead<c.trackStart+d){cutClip(t.id,c.id);return;}}
     }
     else if(e.key==="v"||e.key==="V")setTool("select");
@@ -831,7 +897,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     else if(e.key==="n"||e.key==="N")setSnapOn(p=>!p);
     else if(e.key==="m"||e.key==="M")setMagnetOn(p=>!p);
     else if(e.key==="Escape"){setSpotlightMode(null);setShowTagMenu(false);}};
-    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,tracks,tagTrack,audioTracks,playhead,exporting]);
+    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,tracks,resolvedTags,audioTracks,playhead,exporting]);
 
   useEffect(()=>{if(!isPlaying||!tlScrollRef.current)return;const el=tlScrollRef.current;const px=playhead*zoom;if(px>el.scrollLeft+el.clientWidth-80)el.scrollLeft=px-el.clientWidth/2;},[playhead,isPlaying,zoom]);
 
@@ -1088,10 +1154,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setSelectedClipId(clip.id);const sx=e.clientX,sts=clip.trackStart,tidx=allTrkIds.indexOf(trkId),sy=e.clientY;let curTid=trkId;const th=clip.isAudio?AUDIO_TRACK_H:TRACK_H;const cDur=clip.clipEnd-clip.clipStart;
     const onM=ev=>{const dx=ev.clientX-sx;let ns=Math.max(0,sts+dx/zoom);ns=snapToEdges(ns,clip.id,cDur);const dy=ev.clientY-sy,off=Math.round(dy/th),ni=Math.min(allTrkIds.length-1,Math.max(0,tidx+off)),ntid=allTrkIds[ni];moveClip(curTid,clip.id,ns,ntid);curTid=ntid;};
     const onU=()=>{document.removeEventListener("mousemove",onM);document.removeEventListener("mouseup",onU);compactV1();};document.addEventListener("mousemove",onM);document.addEventListener("mouseup",onU);};
-  const handleClipMDTag=(e,clip,isTag)=>{e.stopPropagation();if(tool==="blade")return;
-    setSelectedClipId(clip.id);const sx=e.clientX,sts=clip.trackStart;
-    const onM=ev=>{const dx=ev.clientX-sx;let ns=Math.max(0,sts+dx/zoom);ns=snapToEdges(ns,clip.id,clip.duration||0);if(isTag){setTagTrack(p=>{const n={...p,clips:p.clips.map(c=>c.id===clip.id?{...c,trackStart:ns}:c)};recalcAll(tracks,n,audioTracks);return n;});}};
-    const onU=()=>{document.removeEventListener("mousemove",onM);document.removeEventListener("mouseup",onU);};document.addEventListener("mousemove",onM);document.addEventListener("mouseup",onU);};
+  const handleClipMDTag=(e,clip,isTag)=>{e.stopPropagation();
+    if(tool==="blade"){cutTag(clip.id);return;}
+    setSelectedClipId(clip.id);
+    /* Tags are source-anchored — no drag movement, only select */};
   const handleEdgeMouseDown=(e,trkId,clipId,isLeft,isAudio,isTag)=>{e.stopPropagation();pushHist();const sx=e.clientX;const onM=ev=>{const dx=ev.clientX-sx;const newPos=Math.max(0,(isLeft?Math.max(0,findActiveClip(playhead)?.trackStart||0):playhead)*zoom+dx)/zoom;updateClipEdge(trkId,clipId,isLeft,newPos,isAudio,isTag);};const onU=()=>{document.removeEventListener("mousemove",onM);document.removeEventListener("mouseup",onU);if(!isAudio&&!isTag)compactV1();};document.addEventListener("mousemove",onM);document.addEventListener("mouseup",onU);};
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
     try{const d=JSON.parse(e.dataTransfer.getData("application/json"));const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
@@ -1148,11 +1214,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             </div>
           ))}
           <div onClick={handleTlClick} style={{height:TAG_TRACK_H,position:"relative",borderBottom:`1px solid ${C.s0}22`,background:C.s0+"22",cursor:tool==="blade"?"crosshair":"default"}}>
-            {tagTrack.clips.map(tag=>{const w=Math.max(MIN_CLIP_W,tag.duration*zoom);
+            {resolvedTags.map(tag=>{const w=Math.max(MIN_CLIP_W,tag.duration*zoom);
               const isSel=tag.id===selectedClipId;
-              const x=tag.trackStart*zoom;
+              const x=tag._tlStart*zoom;
               return(
-              <div key={tag.id} onMouseDown={e=>handleClipMDTag(e,tag,true)} onClick={e=>e.stopPropagation()}
+              <div key={tag.id} onMouseDown={e=>handleClipMDTag(e,{...tag,trackStart:tag._tlStart},true)} onClick={e=>e.stopPropagation()}
                 style={{position:"absolute",left:x,width:w,top:4,bottom:4,
                   background:C.green,borderRadius:4,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
                   border:isSel?`2px solid ${C.text}`:`1px solid ${C.green}88`,boxShadow:isSel?`0 0 8px ${C.green}55`:"none",
