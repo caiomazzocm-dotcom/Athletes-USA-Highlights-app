@@ -104,7 +104,7 @@ const fbStorage=firebase.storage();
 
 const uploadVideoToCloud=async(videoId,blob,onProgress)=>{const ref=fbStorage.ref(`videos/${videoId}`);const task=ref.put(blob);if(onProgress)task.on("state_changed",snap=>onProgress(snap.bytesTransferred/snap.totalBytes));await task;return await ref.getDownloadURL();};
 const deleteVideoFromCloud=async(videoId)=>{try{await fbStorage.ref(`videos/${videoId}`).delete();}catch(e){}};
-const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
+const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",positions:player.positions||[],profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
 const deletePlayerFromCloud=async(playerId)=>{try{await fbDb.collection("players").doc(playerId).delete();}catch(e){}};
 const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("players").get();return snap.docs.map(d=>{const p=d.data();return{...p,categories:(p.categories||[]).map(c=>({...c,videos:(c.videos||[]).map(v=>({...v,url:v.cloudUrl||""}))}))};});}catch(e){console.warn("Cloud load failed:",e);return[];}};
 
@@ -224,6 +224,7 @@ function AthleteSelect({players,onSelect,onCreate,onBack,onDelete}){
                     {pl.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:4}}>#{pl.shirtNumber}</span>}
                     <span style={{color:C.overlay,fontSize:11}}>Class {pl.recruitingClass}</span>
                   </div>
+                  {pl.positions&&pl.positions.length>0&&<div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:3,marginBottom:4}}>{pl.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green||"#a6e3a1",fontSize:8,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</div>}
                   {pl.uniformDesc&&<div style={{color:C.overlay,fontSize:9,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pl.uniformDesc}</div>}
                   <div style={{color:C.overlay,fontSize:10}}>{pl.categories.reduce((a,c)=>a+c.videos.length,0)} clips uploaded</div>
                 </div>
@@ -259,6 +260,9 @@ function AthleteSelect({players,onSelect,onCreate,onBack,onDelete}){
 function AthleteProfileForm({onSubmit,onBack}){
   const[name,setName]=useState("");const[rc,setRc]=useState("2026");const[size,setSize]=useState("");const[dob,setDob]=useState("");
   const[shirtNum,setShirtNum]=useState("");const[uniformDesc,setUniformDesc]=useState("");
+  const ALL_POSITIONS=["GK","LCB","CB","RCB","LB","LWB","RB","RWB","CDM","CM","CAM","LM","RM","LW","RW","ST","CF","SS"];
+  const[positions,setPositions]=useState([]);
+  const togglePos=p=>setPositions(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p]);
   const[profilePic,setProfilePic]=useState(null);const[profilePicPrev,setProfilePicPrev]=useState(null);
   const[playingPic,setPlayingPic]=useState(null);const[playingPicPrev,setPlayingPicPrev]=useState(null);
   const[creating,setCreating]=useState(false);const[createProg,setCreateProg]=useState("");
@@ -275,7 +279,7 @@ function AthleteProfileForm({onSubmit,onBack}){
       if(playingPic){setCreateProg("Uploading playing picture...");const id=uid("apic");playingPicUrl=await uploadVideoToCloud(id,playingPic,()=>{});}
     }catch(e){console.warn("Pic upload failed:",e);}
     setCreateProg("Creating profile...");
-    onSubmit({name:name.trim(),recruitingClass:rc,size:size.trim(),dob,shirtNumber:shirtNum.trim(),uniformDesc:uniformDesc.trim(),profilePicUrl,playingPicUrl});
+    onSubmit({name:name.trim(),recruitingClass:rc,size:size.trim(),dob,shirtNumber:shirtNum.trim(),uniformDesc:uniformDesc.trim(),positions,profilePicUrl,playingPicUrl});
     setCreating(false);
   };
 
@@ -321,6 +325,13 @@ function AthleteProfileForm({onSubmit,onBack}){
               <label style={labelStyle}>Height / Size</label>
               <input value={size} onChange={e=>setSize(e.target.value)} placeholder="5'11&quot;" style={inputStyle}/>
             </div>
+          </div>
+          <div>
+            <label style={labelStyle}>Positions Played</label>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {ALL_POSITIONS.map(p=><button key={p} type="button" onClick={()=>togglePos(p)} style={{padding:"5px 12px",borderRadius:6,fontSize:11,fontWeight:700,cursor:"pointer",border:positions.includes(p)?`2px solid ${C.blue}`:`2px solid ${C.s1}`,background:positions.includes(p)?C.blue+"22":"transparent",color:positions.includes(p)?C.blue:C.sub,transition:"all 0.15s"}}>{p}</button>)}
+            </div>
+            {positions.length>0&&<div style={{color:C.overlay,fontSize:10,marginTop:6}}>Selected: {positions.join(", ")}</div>}
           </div>
           <div>
             <label style={labelStyle}>Uniform Description</label>
@@ -406,8 +417,9 @@ function AthletePortal({player,onUpdatePlayer,onBack}){
               <span style={{fontWeight:800,fontSize:18,color:"#fff"}}>{player.name}</span>
               {player.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:4}}>#{player.shirtNumber}</span>}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2}}>
+            <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
               <span style={{color:C.overlay,fontSize:11}}>Class {player.recruitingClass}</span>
+              {player.positions&&player.positions.length>0&&<><span style={{color:C.s1}}>&bull;</span>{player.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green||"#a6e3a1",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</>}
               {player.uniformDesc&&<><span style={{color:C.s1}}>&bull;</span><span style={{color:C.overlay,fontSize:11}}>{player.uniformDesc}</span></>}
             </div>
           </div>
@@ -849,7 +861,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             <span style={{color:C.overlay,fontSize:9,background:C.s0,padding:"2px 6px",borderRadius:4}}>{totalVids}</span>
           </div>
           {pExp&&<div style={{paddingBottom:4}}>
-            <div style={{padding:"2px 14px 4px 36px",color:C.overlay,fontSize:9}}>Class {pl.recruitingClass}{pl.shirtNumber?" · #"+pl.shirtNumber:""}{pl.size?" · "+pl.size:""}</div>
+            <div style={{padding:"2px 14px 4px 36px",color:C.overlay,fontSize:9}}>Class {pl.recruitingClass}{pl.shirtNumber?" · #"+pl.shirtNumber:""}{pl.size?" · "+pl.size:""}{pl.positions&&pl.positions.length>0?" · "+pl.positions.join(", "):""}</div>
             {pl.categories.map((cat,ci)=>{
               const cColor=CAT_COLORS[ci%CAT_COLORS.length];const cKey=`${pl.id}-${cat.id}`;const cExp=expandedCats[cKey]!==false;
               return(
@@ -1238,7 +1250,7 @@ function App(){
 
   const handleCreateProfile=data=>{
     const newPlayer={id:uid("pl"),name:data.name,recruitingClass:data.recruitingClass,size:data.size,dob:data.dob,
-      shirtNumber:data.shirtNumber||"",uniformDesc:data.uniformDesc||"",profilePicUrl:data.profilePicUrl||"",playingPicUrl:data.playingPicUrl||"",
+      shirtNumber:data.shirtNumber||"",uniformDesc:data.uniformDesc||"",positions:data.positions||[],profilePicUrl:data.profilePicUrl||"",playingPicUrl:data.playingPicUrl||"",
       categories:DEFAULT_CATS.map(n=>({id:uid("cat"),name:n,videos:[]}))};
     setPlayers(p=>[...p,newPlayer]);setActivePlayerId(newPlayer.id);setAthleteStep("portal");
     savePlayerToCloud(newPlayer);
