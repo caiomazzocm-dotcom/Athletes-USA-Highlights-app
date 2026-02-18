@@ -692,7 +692,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(contentEnd<=0)return;
     const el=tlScrollRef.current;if(!el)return;
     const availW=el.clientWidth-20;/* small padding */
-    const newZoom=Math.max(10,Math.min(200,availW/contentEnd));
+    const newZoom=Math.max(2,Math.min(200,availW/contentEnd));
     setZoom(newZoom);
     if(el)el.scrollLeft=0;
   },[tracks,tagTrack,audioTracks]);
@@ -1013,8 +1013,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         </div>}
       </div>
       <div style={{flex:1}}/>
-      <button onClick={()=>setZoom(z=>Math.max(15,z-15))} style={{...ib,color:C.sub}}><ZoomOutIcon size={13}/></button>
-      <span style={{color:C.overlay,fontSize:9,minWidth:28,textAlign:"center"}}>{Math.round(zoom)}px/s</span>
+      <button onClick={()=>setZoom(z=>Math.max(2,z<=15?z-2:z-15))} style={{...ib,color:C.sub}}><ZoomOutIcon size={13}/></button>
+      <input type="range" min={2} max={200} step={1} value={zoom} onChange={e=>setZoom(+e.target.value)} style={{width:100,accentColor:C.blue}}/>
+      <span style={{color:C.overlay,fontSize:9,minWidth:36,textAlign:"center"}}>{Math.round(zoom)}px/s</span>
       <button onClick={()=>setZoom(z=>Math.min(200,z+15))} style={{...ib,color:C.sub}}><ZoomInIcon size={13}/></button>
     </div>
     {selClip&&(
@@ -1077,7 +1078,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     )}
   </div>);
 
-  const handleTlClick=e=>{const r=e.currentTarget.getBoundingClientRect();const scrollL=tlScrollRef.current?.scrollLeft||0;setPlayhead(Math.max(0,(e.clientX-r.left+scrollL)/zoom));setSelectedClipId(null);};
+  const handleTlClick=e=>{const scrollEl=tlScrollRef.current;if(!scrollEl)return;const r=scrollEl.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;setPlayhead(Math.max(0,(e.clientX-r.left+scrollL)/zoom));setSelectedClipId(null);};
+  const handlePlayheadDrag=e=>{e.stopPropagation();e.preventDefault();const scrollEl=tlScrollRef.current;if(!scrollEl)return;
+    const parent=scrollEl.querySelector("[data-tl-area]")||scrollEl;
+    const move=ev=>{const r=parent.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;const x=ev.clientX-r.left+scrollL;setPlayhead(Math.max(0,x/zoom));};
+    const up=()=>{document.removeEventListener("mousemove",move);document.removeEventListener("mouseup",up);};
+    document.addEventListener("mousemove",move);document.addEventListener("mouseup",up);};
   const handleClipMD=(e,trkId,clip,allTrkIds)=>{e.stopPropagation();if(tool==="blade"){cutClip(trkId,clip.id);return;}
     setSelectedClipId(clip.id);const sx=e.clientX,sts=clip.trackStart,tidx=allTrkIds.indexOf(trkId),sy=e.clientY;let curTid=trkId;const th=clip.isAudio?AUDIO_TRACK_H:TRACK_H;const cDur=clip.clipEnd-clip.clipStart;
     const onM=ev=>{const dx=ev.clientX-sx;let ns=Math.max(0,sts+dx/zoom);ns=snapToEdges(ns,clip.id,cDur);const dy=ev.clientY-sy,off=Math.round(dy/th),ni=Math.min(allTrkIds.length-1,Math.max(0,tidx+off)),ntid=allTrkIds[ni];moveClip(curTid,clip.id,ns,ntid);curTid=ntid;};
@@ -1110,7 +1116,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         <button onClick={addAudioTrack} style={{width:"100%",height:24,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:C.overlay,cursor:"pointer",fontSize:9}} title="Add audio track"><PlusIcon size={10}/></button>
       </div>
       <div ref={tlScrollRef} style={{flex:1,overflowX:"auto",overflowY:"auto",position:"relative"}}>
-        <div style={{width:totalW,minWidth:"100%",position:"relative"}}>
+        <div data-tl-area="1" style={{width:totalW,minWidth:"100%",position:"relative"}}>
           <div onClick={handleTlClick} style={{height:RULER_H,position:"relative",borderBottom:`1px solid ${C.s1}`,cursor:"pointer",background:C.mantle,userSelect:"none"}}>
             {ticks.map(t=><div key={`t${t}`} style={{position:"absolute",left:t*zoom,top:0}}><div style={{position:"absolute",left:0,top:RULER_H-14,width:1,height:14,background:C.s2}}/><span style={{position:"absolute",left:4,top:2,color:C.sub,fontSize:9,fontFamily:"monospace",whiteSpace:"nowrap"}}>{fmtTime(t)}</span></div>)}
             {subI>=.5&&ticks.map(t=>{const s=[];for(let x=t+subI;x<t+tickI&&x<=tlDur;x+=subI)s.push(x);return s.map(x=><div key={`s${x}`} style={{position:"absolute",left:x*zoom,bottom:0,width:1,height:6,background:C.s1}}/>);})}
@@ -1141,7 +1147,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 </div>);})}
             </div>
           ))}
-          <div style={{height:TAG_TRACK_H,position:"relative",borderBottom:`1px solid ${C.s0}22`,background:C.s0+"22",cursor:tool==="blade"?"crosshair":"default"}}>
+          <div onClick={handleTlClick} style={{height:TAG_TRACK_H,position:"relative",borderBottom:`1px solid ${C.s0}22`,background:C.s0+"22",cursor:tool==="blade"?"crosshair":"default"}}>
             {tagTrack.clips.map(tag=>{const w=Math.max(MIN_CLIP_W,tag.duration*zoom);
               const isSel=tag.id===selectedClipId;
               const x=tag.trackStart*zoom;
@@ -1183,8 +1189,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             </div>
           ))}
           <div style={{height:24}}/>
-          <div style={{position:"absolute",left:playhead*zoom-1,top:0,width:2,height:RULER_H+totalTracksH+24+1+24,background:C.coral,zIndex:20,pointerEvents:"none"}}>
-            <div style={{position:"absolute",top:-2,left:-5,width:12,height:12,background:C.coral,clipPath:"polygon(0 0,100% 0,50% 100%)"}}/>
+          <div onMouseDown={handlePlayheadDrag} style={{position:"absolute",left:playhead*zoom-6,top:0,width:12,height:RULER_H+totalTracksH+24+1+24,zIndex:20,cursor:"col-resize",display:"flex",justifyContent:"center"}}>
+            <div style={{width:2,height:"100%",background:C.coral}}/>
+            <div style={{position:"absolute",top:-2,left:0,width:12,height:12,background:C.coral,clipPath:"polygon(0 0,100% 0,50% 100%)"}}/>
           </div>
           {snapLine!==null&&<div style={{position:"absolute",left:snapLine*zoom,top:0,width:1,height:RULER_H+totalTracksH+24+1+24,background:C.yellow,zIndex:19,pointerEvents:"none",opacity:0.7}}/>}
         </div>
