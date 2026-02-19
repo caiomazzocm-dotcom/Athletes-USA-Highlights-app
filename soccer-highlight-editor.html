@@ -640,7 +640,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(!clip){console.warn("No video clip at playhead for tag");return;}
     const fo=freezeOffset(clip.trackStart,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
-    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:3.0,spotX,spotY,spotScale:1.0};
+    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:2.0,spotX,spotY,spotScale:1.0};
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
     setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(tag.id);
