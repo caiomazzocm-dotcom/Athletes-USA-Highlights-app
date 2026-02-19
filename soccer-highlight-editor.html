@@ -526,6 +526,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const[history,setHistory]=useState([]);const[clipProps,setClipProps]=useState({});const[clipFeedback,setClipFeedback]=useState(()=>{try{return JSON.parse(localStorage.getItem("aua_clipFeedback")||"{}");}catch(e){return {};}});const[tlDur,setTlDur]=useState(120);
   const[showFeedbackPanel,setShowFeedbackPanel]=useState(false);
   const[expandedPlayers,setExpandedPlayers]=useState({});const[expandedCats,setExpandedCats]=useState({});
+  const[activePlayerId,setActivePlayerId]=useState(null);
   const[editorVideos,setEditorVideos]=useState([]);const[editorMusic,setEditorMusic]=useState([]);const edMediaHydRef=useRef(false);
   const[exporting,setExporting]=useState(false);const[exportProgress,setExportProgress]=useState(0);const[exportFmt,setExportFmt]=useState("");const exportCancelRef=useRef(false);
   const[showEditorSection,setShowEditorSection]=useState(false);
@@ -640,7 +641,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(!clip){console.warn("No video clip at playhead for tag");return;}
     const fo=freezeOffset(clip.trackStart,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
-    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:2.0,spotX,spotY,spotScale:1.0};
+    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:1.5,spotX,spotY,spotScale:1.0};
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
     setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(tag.id);
@@ -919,7 +920,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         const totalVids=pl.categories.reduce((a,c)=>a+c.videos.length,0);
         return(
         <div key={pl.id}>
-          <div onClick={()=>setExpandedPlayers(p=>({...p,[pl.id]:!pExp}))}
+          <div onClick={()=>{setExpandedPlayers(p=>({...p,[pl.id]:!pExp}));if(!pExp)setActivePlayerId(pl.id);}}
             style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",cursor:"pointer",userSelect:"none"}}
             onMouseEnter={e=>e.currentTarget.style.background=C.s0+"66"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
             {pExp?<ChevronDownIcon size={12} color={C.sub}/>:<ChevronRightIcon size={12} color={C.sub}/>}
@@ -1067,10 +1068,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <button onClick={zoomToFit} style={{...ib,color:C.sub}} title="Zoom to fit timeline"><FitIcon size={13}/></button>
       <div style={{width:1,height:18,background:C.s0}}/>
       <div style={{position:"relative"}}>
-        <button onClick={()=>setShowTagMenu(p=>!p)} style={{...tb,background:showTagMenu?C.green:C.green+"22",color:showTagMenu?"#000":C.green,border:`1px solid ${C.green}`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}>&#9673; Add Spotlight</button>
+        <button onClick={()=>{
+          const ap=activePlayerId&&players.find(p=>p.id===activePlayerId);
+          if(ap){setSpotlightMode(ap.id);setShowTagMenu(false);}
+          else if(players.length===1){setSpotlightMode(players[0].id);setShowTagMenu(false);}
+          else{setShowTagMenu(p=>!p);}
+        }} style={{...tb,background:showTagMenu||spotlightMode?C.green:C.green+"22",color:showTagMenu||spotlightMode?"#000":C.green,border:`1px solid ${C.green}`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}>
+          &#9673; {activePlayerId&&players.find(p=>p.id===activePlayerId)?`Tag ${players.find(p=>p.id===activePlayerId).name}`:"Add Spotlight"}
+        </button>
         {showTagMenu&&<div style={{position:"absolute",bottom:"100%",left:0,marginBottom:4,background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:8,padding:6,minWidth:160,zIndex:50,boxShadow:"0 -4px 20px rgba(0,0,0,0.4)"}}>
           {players.length===0?<div style={{padding:"8px 12px",color:C.overlay,fontSize:11}}>No players available</div>:players.map((pl,i)=>(
-            <button key={pl.id} onClick={()=>{setSpotlightMode(pl.id);setShowTagMenu(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",background:"transparent",border:"none",padding:"8px 12px",color:C.text,cursor:"pointer",fontSize:11,borderRadius:4}}
+            <button key={pl.id} onClick={()=>{setSpotlightMode(pl.id);setShowTagMenu(false);setActivePlayerId(pl.id);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",background:"transparent",border:"none",padding:"8px 12px",color:C.text,cursor:"pointer",fontSize:11,borderRadius:4}}
               onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{width:8,height:8,borderRadius:"50%",background:playerColor(i)}}/>
               {pl.name}
