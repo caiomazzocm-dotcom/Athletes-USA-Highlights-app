@@ -23,6 +23,32 @@
   @keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
   .drag-over-cat{outline:2px solid #3b82f6!important;outline-offset:-2px}
+
+  /* ═══ MOBILE RESPONSIVE (athlete-facing pages only) ═══ */
+  @media(max-width:640px){
+    .ath-header{padding:12px 16px 0!important}
+    .ath-header-row{flex-wrap:wrap!important;gap:8px!important}
+    .ath-header-row .ath-brand{display:none!important}
+    .ath-header-row .ath-brand-sep{display:none!important}
+    .ath-header-info{font-size:15px!important}
+    .ath-signout{padding:6px 12px!important;font-size:11px!important}
+    .ath-photos-row{flex-wrap:wrap!important}
+    .ath-desc{font-size:11px!important}
+    .ath-cats-scroll{padding:16px!important;overflow-x:auto!important;overflow-y:auto!important}
+    .ath-cats-flex{flex-direction:column!important;height:auto!important;overflow:visible!important}
+    .ath-cat-card{min-width:100%!important;width:100%!important;max-height:320px!important}
+    .ath-select-grid{grid-template-columns:1fr 1fr!important;gap:12px!important}
+    .ath-select-wrap{padding:16px!important}
+    .ath-form-wrap{padding:16px!important}
+    .ath-form-3col{grid-template-columns:1fr!important;gap:10px!important}
+    .ath-form-2col{grid-template-columns:1fr!important;gap:12px!important}
+    .ath-form-picbox{height:120px!important}
+    .ath-select-header{padding:0 12px!important}
+    .ath-newcat-card{min-width:100%!important;width:100%!important}
+  }
+  @media(max-width:380px){
+    .ath-select-grid{grid-template-columns:1fr!important}
+  }
 </style>
 </head>
 <body>
@@ -291,7 +317,7 @@ function AthleteSelect({players,onSelect,onCreate,onBack,onDelete}){
   const[confirmDel,setConfirmDel]=useState(null);
   return(
   <div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",fontFamily:"'Inter',sans-serif",overflow:"hidden"}}>
-    <div style={{display:"flex",alignItems:"center",padding:"0 16px",height:48,background:C.mantle,borderBottom:`1px solid ${C.s0}`,flexShrink:0}}>
+    <div className="ath-select-header" style={{display:"flex",alignItems:"center",padding:"0 16px",height:48,background:C.mantle,borderBottom:`1px solid ${C.s0}`,flexShrink:0}}>
       <button onClick={onBack} style={{...ib,color:C.sub,marginRight:12}}><ArrowLeftIcon size={18}/></button>
       <div style={{width:1,height:24,background:C.s0,marginRight:14}}/>
       <span style={{fontWeight:900,fontSize:15,color:"#fff",fontStyle:"italic",marginRight:4}}>ATHLETES</span>
@@ -300,13 +326,13 @@ function AthleteSelect({players,onSelect,onCreate,onBack,onDelete}){
         <span style={{fontSize:10,fontWeight:700,color:C.blue,letterSpacing:2}}>ATHLETE</span>
       </div>
     </div>
-    <div style={{flex:1,overflow:"auto",display:"flex",alignItems:"center",justifyContent:"center",padding:32}}>
+    <div className="ath-select-wrap" style={{flex:1,overflow:"auto",display:"flex",alignItems:"center",justifyContent:"center",padding:32}}>
       <div style={{maxWidth:800,width:"100%",textAlign:"center"}}>
         <UsersIcon size={40} color={C.blue} style={{margin:"0 auto 16px",display:"block"}}/>
         <h2 style={{color:C.text,fontSize:24,fontWeight:800,marginBottom:8}}>Welcome, Player</h2>
         <p style={{color:C.sub,fontSize:14,marginBottom:36}}>Select your profile or create a new one to start uploading highlights.</p>
         {players.length>0&&(
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32}}>
+          <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32}}>
             {players.map((pl,i)=>(
               <div key={pl.id} style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"16px 16px 14px",cursor:"pointer",transition:"all 0.2s",textAlign:"center",position:"relative"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=PLAYER_COLORS[i%8]+"66";e.currentTarget.style.transform="translateY(-2px)";}}
@@ -397,7 +423,7 @@ function AthleteProfileForm({onSubmit,onBack}){
       <span style={{fontWeight:900,fontSize:15,color:C.coral,fontStyle:"italic",marginRight:16}}>USA</span>
       <span style={{color:C.sub,fontSize:12}}>New Player Profile</span>
     </div>
-    <div style={{flex:1,overflow:"auto",display:"flex",justifyContent:"center",padding:32}}>
+    <div className="ath-form-wrap" style={{flex:1,overflow:"auto",display:"flex",justifyContent:"center",padding:32}}>
       <div style={{maxWidth:560,width:"100%",animation:"fadeIn 0.5s ease-out"}}>
         <div style={{textAlign:"center",marginBottom:28}}>
           {profilePicPrev?<img src={profilePicPrev} style={{width:72,height:72,borderRadius:"50%",objectFit:"cover",border:`3px solid ${C.blue}`,margin:"0 auto 12px",display:"block"}}/>
@@ -410,7 +436,7 @@ function AthleteProfileForm({onSubmit,onBack}){
             <label style={labelStyle}>Full Name *</label>
             <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Marcus Johnson" style={inputStyle}/>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
+          <div className="ath-form-3col" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12}}>
             <div>
               <label style={labelStyle}>Shirt Number *</label>
               <input value={shirtNum} onChange={e=>setShirtNum(e.target.value.replace(/\D/g,"").slice(0,3))} placeholder="e.g. 10" style={inputStyle} maxLength={3}/>
@@ -441,7 +467,7 @@ function AthleteProfileForm({onSubmit,onBack}){
             <label style={labelStyle}>Date of Birth</label>
             <input type="date" value={dob} onChange={e=>setDob(e.target.value)} style={{...inputStyle,colorScheme:"dark"}}/>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <div className="ath-form-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
             <div>
               <label style={labelStyle}>Profile Picture</label>
               <div onClick={()=>profRef.current?.click()} style={picBoxStyle(!!profilePicPrev)}
@@ -507,14 +533,14 @@ function AthletePortal({player,onUpdatePlayer,onBack}){
   return(
   <div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",fontFamily:"'Inter',sans-serif",overflow:"hidden"}}>
     <input ref={fileRef} type="file" accept="video/*" multiple onChange={onFile} style={{display:"none"}}/>
-    <div style={{padding:"24px 40px 0",flexShrink:0}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          {player.profilePicUrl?<img src={player.profilePicUrl} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover",border:`2px solid ${C.blue}`}}/>
-          :<div style={{width:40,height:40,borderRadius:"50%",background:C.blue+"22",border:`2px solid ${C.blue}`,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:C.blue,fontWeight:800,fontSize:16}}>{player.name.charAt(0)}</span></div>}
-          <div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontWeight:800,fontSize:18,color:"#fff"}}>{player.name}</span>
+    <div className="ath-header" style={{padding:"24px 40px 0",flexShrink:0}}>
+      <div className="ath-header-row" style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+        <div className="ath-header-row" style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}>
+          {player.profilePicUrl?<img src={player.profilePicUrl} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover",border:`2px solid ${C.blue}`,flexShrink:0}}/>
+          :<div style={{width:40,height:40,borderRadius:"50%",background:C.blue+"22",border:`2px solid ${C.blue}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><span style={{color:C.blue,fontWeight:800,fontSize:16}}>{player.name.charAt(0)}</span></div>}
+          <div style={{minWidth:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+              <span className="ath-header-info" style={{fontWeight:800,fontSize:18,color:"#fff"}}>{player.name}</span>
               {player.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:4}}>#{player.shirtNumber}</span>}
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
@@ -523,30 +549,30 @@ function AthletePortal({player,onUpdatePlayer,onBack}){
               {player.uniformDesc&&<><span style={{color:C.s1}}>&bull;</span><span style={{color:C.overlay,fontSize:11}}>{player.uniformDesc}</span></>}
             </div>
           </div>
-          <div style={{width:1,height:28,background:C.s1,margin:"0 4px"}}/>
-          <span style={{fontWeight:900,fontSize:16,color:"#fff",fontStyle:"italic"}}>ATHLETES</span>
-          <span style={{fontWeight:900,fontSize:16,color:C.coral,fontStyle:"italic"}}>USA</span>
+          <div className="ath-brand-sep" style={{width:1,height:28,background:C.s1,margin:"0 4px",flexShrink:0}}/>
+          <span className="ath-brand" style={{fontWeight:900,fontSize:16,color:"#fff",fontStyle:"italic",flexShrink:0}}>ATHLETES</span>
+          <span className="ath-brand" style={{fontWeight:900,fontSize:16,color:C.coral,fontStyle:"italic",flexShrink:0}}>USA</span>
         </div>
-        <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:"8px 18px",color:C.sub,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:1}}>
+        <button className="ath-signout" onClick={onBack} style={{display:"flex",alignItems:"center",gap:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:"8px 18px",color:C.sub,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:1,flexShrink:0}}>
           <LogOutIcon size={14}/> Sign Out
         </button>
       </div>
-      <div style={{display:"flex",gap:8,marginTop:8,marginBottom:4,alignItems:"center"}}>
+      <div className="ath-photos-row" style={{display:"flex",gap:8,marginTop:8,marginBottom:4,alignItems:"center",flexWrap:"wrap"}}>
         <span style={{color:C.overlay,fontSize:11,fontWeight:600}}>Photos:</span>
         {player.profilePicUrl?<button onClick={()=>downloadImage(player.profilePicUrl,`${player.name.replace(/\s+/g,"_")}_profile.jpg`)} style={{...tb,background:C.blue+"18",border:`1px solid ${C.blue}33`,color:C.blue,fontSize:11,padding:"4px 12px"}}><DownloadIcon size={12}/> Profile Pic</button>
         :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No profile pic</span>}
         {player.playingPicUrl?<button onClick={()=>downloadImage(player.playingPicUrl,`${player.name.replace(/\s+/g,"_")}_action.jpg`)} style={{...tb,background:C.coral+"18",border:`1px solid ${C.coral}33`,color:C.coral,fontSize:11,padding:"4px 12px"}}><DownloadIcon size={12}/> Action Pic</button>
         :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No action pic</span>}
       </div>
-      <div style={{color:C.sub,fontSize:13,marginBottom:16}}>Athlete Portal &bull; Media Management &bull; Drag categories to reorder &bull; <span style={{color:C.green}}>&#9679; Cloud Sync</span></div>
+      <div className="ath-desc" style={{color:C.sub,fontSize:13,marginBottom:16}}>Athlete Portal &bull; Media Management &bull; <span style={{color:C.green}}>&#9679; Cloud Sync</span></div>
       <div style={{height:1,background:`linear-gradient(90deg,${C.blue}44,${C.coral}44)`,marginBottom:0}}/>
     </div>
 
-    <div style={{flex:1,overflowX:"auto",overflowY:"hidden",padding:"32px 40px"}}>
-      <div style={{display:"flex",gap:20,height:"100%",alignItems:"stretch"}}>
+    <div className="ath-cats-scroll" style={{flex:1,overflowX:"auto",overflowY:"hidden",padding:"32px 40px"}}>
+      <div className="ath-cats-flex" style={{display:"flex",gap:20,height:"100%",alignItems:"stretch"}}>
         {player.categories.map((cat,ci)=>{const color=CAT_COLORS[ci%CAT_COLORS.length];const isDrag=dragIdx===ci;const isOver=overIdx===ci&&dragIdx!==ci;
         return(
-          <div key={cat.id} draggable onDragStart={e=>handleCatDragStart(e,ci)} onDragOver={e=>handleCatDragOver(e,ci)} onDrop={e=>handleCatDrop(e,ci)} onDragEnd={handleCatDragEnd}
+          <div key={cat.id} className="ath-cat-card" draggable onDragStart={e=>handleCatDragStart(e,ci)} onDragOver={e=>handleCatDragOver(e,ci)} onDrop={e=>handleCatDrop(e,ci)} onDragEnd={handleCatDragEnd}
             style={{minWidth:260,width:260,flexShrink:0,display:"flex",flexDirection:"column",background:C.s0,borderRadius:12,border:isOver?`2px solid ${C.blue}`:`1px solid ${C.s1}`,overflow:"hidden",opacity:isDrag?0.5:1,transition:"opacity 0.2s, border 0.2s"}}>
             <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${C.s1}`,flexShrink:0,cursor:"grab"}}>
               <GripIcon size={14} color={C.overlay} style={{marginRight:8,flexShrink:0}}/>
@@ -590,7 +616,7 @@ function AthletePortal({player,onUpdatePlayer,onBack}){
           </div>
         );})}
         {showAdd?(
-          <div style={{minWidth:260,width:260,flexShrink:0,display:"flex",flexDirection:"column",background:C.s0+"88",borderRadius:12,border:`1px dashed ${C.s1}`,padding:16,gap:8}}>
+          <div className="ath-newcat-card" style={{minWidth:260,width:260,flexShrink:0,display:"flex",flexDirection:"column",background:C.s0+"88",borderRadius:12,border:`1px dashed ${C.s1}`,padding:16,gap:8}}>
             <input value={newCat} onChange={e=>setNewCat(e.target.value)} placeholder="Category name..."
               onKeyDown={e=>{if(e.key==="Enter")addCat(newCat);if(e.key==="Escape")setShowAdd(false);}}
               autoFocus style={{...inputStyle,fontSize:14,fontWeight:600}}/>
