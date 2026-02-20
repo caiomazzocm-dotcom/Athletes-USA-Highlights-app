@@ -985,7 +985,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   const togglePlay=useCallback(()=>{if(isPlaying){setIsPlaying(false);if(animRef.current)cancelAnimationFrame(animRef.current);}else{setIsPlaying(true);lastTRef.current=performance.now();}},[isPlaying]);
 
-  useEffect(()=>{if(!isPlaying)return;const anim=now=>{const dt=(now-lastTRef.current)/1000;lastTRef.current=now;setPlayhead(p=>{const n=p+dt;if(n>tlDur){setIsPlaying(false);return 0;}return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,tlDur]);
+  /* Compute actual content end (not tlDur which includes padding) */
+  const contentEnd=React.useMemo(()=>{
+    let mx=0;
+    tracks.forEach(t=>t.clips.forEach(c=>{const rawD=c.clipEnd-c.clipStart;let fz=0;resolvedTags.forEach(tg=>{if(tg._tlStart>=c.trackStart&&tg._tlStart<c.trackStart+rawD+fz)fz+=tg.duration;});const e=c.trackStart+rawD+fz;if(e>mx)mx=e;}));
+    resolvedTags.forEach(c=>{const e=c._tlStart+c.duration;if(e>mx)mx=e;});
+    audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>mx)mx=e;}));
+    return mx;
+  },[tracks,resolvedTags,audioTracks]);
+
+  useEffect(()=>{if(!isPlaying)return;const anim=now=>{const dt=(now-lastTRef.current)/1000;lastTRef.current=now;setPlayhead(p=>{const n=p+dt;if(contentEnd>0&&n>contentEnd){setIsPlaying(false);return contentEnd;}return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,contentEnd]);
 
   useEffect(()=>{const clip=findActiveClip(playhead);const tag=findActiveTag(playhead);const v=videoRef.current;if(!v)return;
     if(!clip&&!tag){v.pause();if(prevClipRef.current){v.removeAttribute("src");v.load();}prevClipRef.current=null;prevTagRef.current=null;return;}
@@ -1028,7 +1037,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     else if((e.metaKey||e.ctrlKey)&&e.key==="z"){e.preventDefault();undo();}
     else if(e.key==="Delete"||e.key==="Backspace"){e.preventDefault();delClip();}
     else if(e.key==="ArrowLeft"){e.preventDefault();setPlayhead(p=>Math.max(0,p-1));}
-    else if(e.key==="ArrowRight"){e.preventDefault();setPlayhead(p=>Math.min(tlDur,p+1));}
+    else if(e.key==="ArrowRight"){e.preventDefault();setPlayhead(p=>Math.min(contentEnd||tlDur,p+1));}
     else if(e.key==="n"||e.key==="N")setSnapOn(p=>!p);
     else if(e.key==="m"||e.key==="M")setMagnetOn(p=>!p);
     else if(e.key==="s"||e.key==="S"){
@@ -1037,7 +1046,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       if(target){e.preventDefault();addTag(target.id,playhead);}
     }
     else if(e.key==="Escape"){setSpotlightMode(null);setShowTagMenu(false);}};
-    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,tracks,resolvedTags,audioTracks,playhead,exporting,activePlayerId,players,addTag]);
+    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,contentEnd,tracks,resolvedTags,audioTracks,playhead,exporting,activePlayerId,players,addTag]);
 
   useEffect(()=>{if(!isPlaying||!tlScrollRef.current)return;const el=tlScrollRef.current;const px=playhead*zoom;if(px>el.scrollLeft+el.clientWidth-80)el.scrollLeft=px-el.clientWidth/2;},[playhead,isPlaying,zoom]);
 
