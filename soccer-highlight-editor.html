@@ -113,18 +113,61 @@ const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("playe
 const Waveform=({w,h,color,seed=0})=>{const bars=Math.max(4,Math.floor(w/3));const pts=[];let s=seed||1;for(let i=0;i<bars;i++){s=(s*16807+i*13)%2147483647;const n=(s%1000)/1000;const amp=0.2+n*0.8;pts.push(amp);}
   return(<svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{display:"block"}}>{pts.map((a,i)=>{const bw=w/bars;const bh=Math.max(1,a*h);return<rect key={i} x={i*bw} y={(h-bh)/2} width={Math.max(1,bw-1)} height={bh} fill={color} rx={0.5}/>;})}</svg>);};
 
-/* ═══════════ LANDING PAGE ═══════════ */
-function LandingPage({onEnterAthlete,onEnterStudio}){
-  const[showPw,setShowPw]=useState(false);
+/* ═══ DOWNLOAD HELPER ═══ */
+const downloadImage=(url,filename)=>{const a=document.createElement("a");a.href=url;a.download=filename||"image.jpg";a.target="_blank";a.rel="noopener";document.body.appendChild(a);a.click();document.body.removeChild(a);};
+
+/* ═══ HASH ROUTING HELPERS ═══ */
+const getHashRoute=()=>{const h=window.location.hash.replace(/^#\/?/,"").split("/")[0]||"";return h;};
+const setHashRoute=(route)=>{window.location.hash=route?`/${route}`:"";};
+
+/* ═══ PASSWORD MODAL (shared) ═══ */
+function PasswordModal({onSuccess,onCancel}){
   const[pw,setPw]=useState("");const[pwErr,setPwErr]=useState(false);const[showPwText,setShowPwText]=useState(false);
-  const[hov,setHov]=useState(null);
-  const submit=()=>{if(pw===STUDIO_PASSWORD){setShowPw(false);setPw("");saveSession();onEnterStudio();}else{setPwErr(true);setTimeout(()=>setPwErr(false),2000);}};
-  const handleStudioClick=()=>{if(isSessionValid()){saveSession();onEnterStudio();}else{setShowPw(true);}};
-  return(
-  <div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif",position:"relative",overflow:"hidden"}}>
+  const submit=()=>{if(pw===STUDIO_PASSWORD){setPw("");saveSession();onSuccess();}else{setPwErr(true);setTimeout(()=>setPwErr(false),2000);}};
+  return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}
+    onClick={e=>{if(e.target===e.currentTarget){onCancel();}}}>
+    <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:16,padding:"36px 32px",width:360,animation:"fadeIn 0.3s ease-out",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+      <div style={{textAlign:"center",marginBottom:24}}>
+        <div style={{width:56,height:56,borderRadius:"50%",background:"linear-gradient(135deg,rgba(244,63,94,0.15),rgba(244,63,94,0.05))",border:"1px solid rgba(244,63,94,0.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><LockIcon size={24} color={C.coral}/></div>
+        <div style={{fontSize:18,fontWeight:800,color:"#fff",fontStyle:"italic",letterSpacing:1}}>STUDIO ACCESS</div>
+        <div style={{fontSize:12,color:C.sub,marginTop:4}}>Enter the editor password to continue</div>
+      </div>
+      <div style={{position:"relative",marginBottom:16}}>
+        <input type={showPwText?"text":"password"} value={pw} onChange={e=>setPw(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter")submit();if(e.key==="Escape")onCancel();}}
+          placeholder="Password" autoFocus style={{...inputStyle,border:pwErr?"1px solid #ef4444":`1px solid ${C.s1}`,paddingRight:44}}/>
+        <button onClick={()=>setShowPwText(!showPwText)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",...ib,color:C.overlay}}>
+          {showPwText?<EyeOffIcon size={16}/>:<EyeIcon size={16}/>}
+        </button>
+      </div>
+      {pwErr&&<div style={{color:"#ef4444",fontSize:12,marginBottom:12,textAlign:"center"}}>Incorrect password. Try again.</div>}
+      <button onClick={submit} style={{width:"100%",padding:12,background:"linear-gradient(135deg,#f43f5e,#e11d48)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:1}}>ENTER STUDIO</button>
+      <button onClick={onCancel} style={{width:"100%",padding:10,background:"transparent",color:C.sub,border:"none",borderRadius:8,fontSize:13,cursor:"pointer",marginTop:8}}>Cancel</button>
+    </div>
+  </div>);
+}
+
+/* ═══ SHARED LANDING BACKGROUND ═══ */
+function LandingBg({children}){
+  return(<div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif",position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",top:"-20%",left:"-10%",width:"50%",height:"80%",background:"radial-gradient(ellipse,rgba(59,130,246,0.08) 0%,transparent 70%)",pointerEvents:"none"}}/>
     <div style={{position:"absolute",bottom:"-20%",right:"-10%",width:"50%",height:"80%",background:"radial-gradient(ellipse,rgba(244,63,94,0.08) 0%,transparent 70%)",pointerEvents:"none"}}/>
     <div style={{position:"absolute",inset:0,opacity:0.03,pointerEvents:"none",backgroundImage:"linear-gradient(rgba(255,255,255,0.1) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.1) 1px,transparent 1px)",backgroundSize:"60px 60px"}}/>
+    {children}
+    <div style={{position:"absolute",bottom:28,display:"flex",alignItems:"center",gap:8,color:C.overlay,fontSize:11,letterSpacing:2,textTransform:"uppercase"}}>
+      <div style={{width:7,height:7,borderRadius:"50%",background:C.green,animation:"pulse 2s ease-in-out infinite"}}/>
+      <span>System Online</span><span style={{margin:"0 4px"}}>&bull;</span><span>Powered by <span style={{color:C.text,fontWeight:700}}>ATHLETES USA</span></span>
+    </div>
+  </div>);
+}
+
+/* ═══════════ LANDING PAGE (default — both tiles, backward compat) ═══════════ */
+function LandingPage({onEnterAthlete,onEnterStudio}){
+  const[showPw,setShowPw]=useState(false);
+  const[hov,setHov]=useState(null);
+  const handleStudioClick=()=>{if(isSessionValid()){saveSession();onEnterStudio();}else{setShowPw(true);}};
+  return(
+  <LandingBg>
     <div style={{position:"relative",zIndex:1,textAlign:"center",animation:"fadeIn 0.8s ease-out"}}>
       <h1 style={{fontSize:"clamp(48px,8vw,96px)",fontWeight:900,letterSpacing:"-2px",lineHeight:1,marginBottom:8,fontStyle:"italic"}}>
         <span style={{color:"#fff"}}>ATHLETES</span><span style={{color:C.coral}}>USA</span>
@@ -159,32 +202,88 @@ function LandingPage({onEnterAthlete,onEnterStudio}){
         </div>
       </div>
     </div>
-    <div style={{position:"absolute",bottom:28,display:"flex",alignItems:"center",gap:8,color:C.overlay,fontSize:11,letterSpacing:2,textTransform:"uppercase"}}>
-      <div style={{width:7,height:7,borderRadius:"50%",background:C.green,animation:"pulse 2s ease-in-out infinite"}}/>
-      <span>System Online</span><span style={{margin:"0 4px"}}>&bull;</span><span>Powered by <span style={{color:C.text,fontWeight:700}}>ATHLETES USA</span></span>
-    </div>
-    {showPw&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}
-      onClick={e=>{if(e.target===e.currentTarget){setShowPw(false);setPw("");setPwErr(false);}}}>
-      <div style={{background:"#0f0f1a",border:"1px solid #1a1a2e",borderRadius:16,padding:"36px 32px",width:360,animation:"fadeIn 0.3s ease-out",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
-        <div style={{textAlign:"center",marginBottom:24}}>
-          <div style={{width:56,height:56,borderRadius:"50%",background:"linear-gradient(135deg,rgba(244,63,94,0.15),rgba(244,63,94,0.05))",border:"1px solid rgba(244,63,94,0.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><LockIcon size={24} color={C.coral}/></div>
-          <div style={{fontSize:18,fontWeight:800,color:"#fff",fontStyle:"italic",letterSpacing:1}}>STUDIO ACCESS</div>
-          <div style={{fontSize:12,color:C.sub,marginTop:4}}>Enter the editor password to continue</div>
-        </div>
-        <div style={{position:"relative",marginBottom:16}}>
-          <input type={showPwText?"text":"password"} value={pw} onChange={e=>setPw(e.target.value)}
-            onKeyDown={e=>{if(e.key==="Enter")submit();if(e.key==="Escape"){setShowPw(false);setPw("");}}}
-            placeholder="Password" autoFocus style={{...inputStyle,border:pwErr?"1px solid #ef4444":`1px solid ${C.s1}`,paddingRight:44}}/>
-          <button onClick={()=>setShowPwText(!showPwText)} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",...ib,color:C.overlay}}>
-            {showPwText?<EyeOffIcon size={16}/>:<EyeIcon size={16}/>}
-          </button>
-        </div>
-        {pwErr&&<div style={{color:"#ef4444",fontSize:12,marginBottom:12,textAlign:"center"}}>Incorrect password. Try again.</div>}
-        <button onClick={submit} style={{width:"100%",padding:12,background:"linear-gradient(135deg,#f43f5e,#e11d48)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:1}}>ENTER STUDIO</button>
-        <button onClick={()=>{setShowPw(false);setPw("");setPwErr(false);}} style={{width:"100%",padding:10,background:"transparent",color:C.sub,border:"none",borderRadius:8,fontSize:13,cursor:"pointer",marginTop:8}}>Cancel</button>
+    {showPw&&<PasswordModal onSuccess={onEnterStudio} onCancel={()=>setShowPw(false)}/>}
+  </LandingBg>);
+}
+
+/* ═══════════ ATHLETE LANDING PAGE (dedicated #/athlete entry) ═══════════ */
+function AthleteLandingPage({onEnter}){
+  const[hov,setHov]=useState(false);
+  return(
+  <LandingBg>
+    <div style={{position:"relative",zIndex:1,textAlign:"center",animation:"fadeIn 0.8s ease-out"}}>
+      <h1 style={{fontSize:"clamp(48px,8vw,96px)",fontWeight:900,letterSpacing:"-2px",lineHeight:1,marginBottom:8,fontStyle:"italic"}}>
+        <span style={{color:"#fff"}}>ATHLETES</span><span style={{color:C.coral}}>USA</span>
+      </h1>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:48}}>
+        <div style={{width:60,height:1,background:"linear-gradient(90deg,transparent,#64748b)"}}/>
+        <span style={{color:C.blue,fontSize:11}}>&#9889;</span>
+        <span style={{color:C.sub,fontSize:12,fontWeight:600,letterSpacing:3,textTransform:"uppercase"}}>Player Portal</span>
+        <span style={{color:C.blue,fontSize:11}}>&#9889;</span>
+        <div style={{width:60,height:1,background:"linear-gradient(90deg,#64748b,transparent)"}}/>
       </div>
-    </div>}
-  </div>);
+      <div onClick={onEnter} onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
+        style={{width:320,padding:"48px 32px 36px",borderRadius:16,cursor:"pointer",transition:"all 0.3s",margin:"0 auto",
+          background:hov?"linear-gradient(135deg,rgba(59,130,246,0.12),rgba(15,15,26,0.95))":"linear-gradient(135deg,rgba(59,130,246,0.06),rgba(15,15,26,0.9))",
+          border:hov?"1px solid rgba(59,130,246,0.4)":"1px solid rgba(59,130,246,0.15)",
+          boxShadow:hov?"0 0 40px rgba(59,130,246,0.15)":"none",transform:hov?"translateY(-4px)":"none"}}>
+        <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#3b82f6,#2563eb)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 24px",boxShadow:"0 0 30px rgba(59,130,246,0.3)"}}><UserIcon size={32} color="#fff"/></div>
+        <div style={{fontSize:22,fontWeight:800,color:"#fff",letterSpacing:1,marginBottom:4,fontStyle:"italic"}}>ATHLETE ZONE</div>
+        <div style={{fontSize:12,color:C.sub,fontWeight:500,letterSpacing:2,textTransform:"uppercase",marginBottom:24}}>Manage your profile & highlights</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,color:C.blue,fontSize:13,fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>ENTER &rarr;</div>
+      </div>
+    </div>
+  </LandingBg>);
+}
+
+/* ═══════════ STUDIO LANDING PAGE (dedicated #/studio entry) ═══════════ */
+function StudioLandingPage({onEnterStudio,onEnterAthleteReview}){
+  const[showPw,setShowPw]=useState(false);
+  const[hov,setHov]=useState(null);
+  const[authenticated,setAuthenticated]=useState(isSessionValid());
+  const handleStudioClick=()=>{if(isSessionValid()){saveSession();onEnterStudio();}else{setShowPw(true);}};
+  const handleAthleteClick=()=>{if(isSessionValid()){saveSession();onEnterAthleteReview();}else{setShowPw(true);}};
+  const handlePwSuccess=()=>{setAuthenticated(true);setShowPw(false);saveSession();onEnterStudio();};
+  return(
+  <LandingBg>
+    <div style={{position:"relative",zIndex:1,textAlign:"center",animation:"fadeIn 0.8s ease-out"}}>
+      <h1 style={{fontSize:"clamp(48px,8vw,96px)",fontWeight:900,letterSpacing:"-2px",lineHeight:1,marginBottom:8,fontStyle:"italic"}}>
+        <span style={{color:"#fff"}}>ATHLETES</span><span style={{color:C.coral}}>USA</span>
+      </h1>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:48}}>
+        <div style={{width:60,height:1,background:"linear-gradient(90deg,transparent,#64748b)"}}/>
+        <span style={{color:C.coral,fontSize:11}}>&#9889;</span>
+        <span style={{color:C.sub,fontSize:12,fontWeight:600,letterSpacing:3,textTransform:"uppercase"}}>Production Suite</span>
+        <span style={{color:C.coral,fontSize:11}}>&#9889;</span>
+        <div style={{width:60,height:1,background:"linear-gradient(90deg,#64748b,transparent)"}}/>
+      </div>
+      <div style={{display:"flex",gap:28,justifyContent:"center",flexWrap:"wrap",padding:"0 24px"}}>
+        {/* Editor tile */}
+        <div onClick={handleStudioClick} onMouseEnter={()=>setHov("s")} onMouseLeave={()=>setHov(null)}
+          style={{width:280,padding:"48px 32px 36px",borderRadius:16,cursor:"pointer",transition:"all 0.3s",
+            background:hov==="s"?"linear-gradient(135deg,rgba(244,63,94,0.12),rgba(15,15,26,0.95))":"linear-gradient(135deg,rgba(244,63,94,0.04),rgba(15,15,26,0.9))",
+            border:hov==="s"?"1px solid rgba(244,63,94,0.4)":"1px solid rgba(255,255,255,0.06)",
+            boxShadow:hov==="s"?"0 0 40px rgba(244,63,94,0.12)":"none",transform:hov==="s"?"translateY(-4px)":"none"}}>
+          <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#374151,#1f2937)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 24px",border:"1px solid #4b5563"}}><ClapperIcon size={30} color="#9ca3af"/></div>
+          <div style={{fontSize:20,fontWeight:800,color:"#fff",letterSpacing:1,marginBottom:4,fontStyle:"italic"}}>EDITOR</div>
+          <div style={{fontSize:12,color:C.sub,fontWeight:500,letterSpacing:2,textTransform:"uppercase",marginBottom:24}}>Video Editing Suite</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,color:C.coral,fontSize:12,fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>{authenticated?"":<><LockIcon size={12}/>{" "}</>}OPEN EDITOR &rarr;</div>
+        </div>
+        {/* Athlete review tile (editors can review athlete profiles) */}
+        <div onClick={handleAthleteClick} onMouseEnter={()=>setHov("a")} onMouseLeave={()=>setHov(null)}
+          style={{width:280,padding:"48px 32px 36px",borderRadius:16,cursor:"pointer",transition:"all 0.3s",
+            background:hov==="a"?"linear-gradient(135deg,rgba(59,130,246,0.12),rgba(15,15,26,0.95))":"linear-gradient(135deg,rgba(59,130,246,0.06),rgba(15,15,26,0.9))",
+            border:hov==="a"?"1px solid rgba(59,130,246,0.4)":"1px solid rgba(59,130,246,0.15)",
+            boxShadow:hov==="a"?"0 0 40px rgba(59,130,246,0.15)":"none",transform:hov==="a"?"translateY(-4px)":"none"}}>
+          <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#3b82f6,#2563eb)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 24px",boxShadow:"0 0 30px rgba(59,130,246,0.3)"}}><UsersIcon size={30} color="#fff"/></div>
+          <div style={{fontSize:20,fontWeight:800,color:"#fff",letterSpacing:1,marginBottom:4,fontStyle:"italic"}}>ATHLETES</div>
+          <div style={{fontSize:12,color:C.sub,fontWeight:500,letterSpacing:2,textTransform:"uppercase",marginBottom:24}}>Review & Support</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,color:C.blue,fontSize:12,fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>{authenticated?"":<><LockIcon size={12}/>{" "}</>}VIEW ATHLETES &rarr;</div>
+        </div>
+      </div>
+    </div>
+    {showPw&&<PasswordModal onSuccess={handlePwSuccess} onCancel={()=>setShowPw(false)}/>}
+  </LandingBg>);
 }
 
 /* ═══════════ ATHLETE: PROFILE SELECT ═══════════ */
@@ -431,6 +530,13 @@ function AthletePortal({player,onUpdatePlayer,onBack}){
         <button onClick={onBack} style={{display:"flex",alignItems:"center",gap:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:"8px 18px",color:C.sub,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:1}}>
           <LogOutIcon size={14}/> Sign Out
         </button>
+      </div>
+      <div style={{display:"flex",gap:8,marginTop:8,marginBottom:4,alignItems:"center"}}>
+        <span style={{color:C.overlay,fontSize:11,fontWeight:600}}>Photos:</span>
+        {player.profilePicUrl?<button onClick={()=>downloadImage(player.profilePicUrl,`${player.name.replace(/\s+/g,"_")}_profile.jpg`)} style={{...tb,background:C.blue+"18",border:`1px solid ${C.blue}33`,color:C.blue,fontSize:11,padding:"4px 12px"}}><DownloadIcon size={12}/> Profile Pic</button>
+        :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No profile pic</span>}
+        {player.playingPicUrl?<button onClick={()=>downloadImage(player.playingPicUrl,`${player.name.replace(/\s+/g,"_")}_action.jpg`)} style={{...tb,background:C.coral+"18",border:`1px solid ${C.coral}33`,color:C.coral,fontSize:11,padding:"4px 12px"}}><DownloadIcon size={12}/> Action Pic</button>
+        :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No action pic</span>}
       </div>
       <div style={{color:C.sub,fontSize:13,marginBottom:16}}>Athlete Portal &bull; Media Management &bull; Drag categories to reorder &bull; <span style={{color:C.green}}>&#9679; Cloud Sync</span></div>
       <div style={{height:1,background:`linear-gradient(90deg,${C.blue}44,${C.coral}44)`,marginBottom:0}}/>
@@ -937,6 +1043,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           </div>
           {pExp&&<div style={{paddingBottom:4}}>
             <div style={{padding:"2px 14px 4px 36px",color:C.overlay,fontSize:9}}>Class {pl.recruitingClass}{pl.shirtNumber?" · #"+pl.shirtNumber:""}{pl.size?" · "+pl.size:""}{pl.positions&&pl.positions.length>0?" · "+pl.positions.join(", "):""}</div>
+            <div style={{display:"flex",gap:4,padding:"3px 14px 4px 36px",flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{color:C.overlay,fontSize:8,fontWeight:600,marginRight:2}}>PICS:</span>
+              {pl.profilePicUrl?<button onClick={e=>{e.stopPropagation();downloadImage(pl.profilePicUrl,`${pl.name.replace(/\s+/g,"_")}_profile.jpg`);}} style={{...ib,color:C.blue,fontSize:8,gap:3,display:"flex",alignItems:"center",background:C.blue+"12",borderRadius:4,padding:"2px 6px"}} title="Download profile pic"><DownloadIcon size={9}/><span style={{fontSize:8,fontWeight:600}}>Profile</span></button>
+              :<span style={{color:C.overlay,fontSize:8,fontStyle:"italic",padding:"2px 6px"}}>No profile pic</span>}
+              {pl.playingPicUrl?<button onClick={e=>{e.stopPropagation();downloadImage(pl.playingPicUrl,`${pl.name.replace(/\s+/g,"_")}_action.jpg`);}} style={{...ib,color:C.coral,fontSize:8,gap:3,display:"flex",alignItems:"center",background:C.coral+"12",borderRadius:4,padding:"2px 6px"}} title="Download action pic"><DownloadIcon size={9}/><span style={{fontSize:8,fontWeight:600}}>Action</span></button>
+              :<span style={{color:C.overlay,fontSize:8,fontStyle:"italic",padding:"2px 6px"}}>No action pic</span>}
+            </div>
             {pl.categories.map((cat,ci)=>{
               const cColor=CAT_COLORS[ci%CAT_COLORS.length];const cKey=`${pl.id}-${cat.id}`;const cExp=expandedCats[cKey]!==false;
               return(
@@ -1343,21 +1456,30 @@ const isSessionValid=()=>{try{const ts=localStorage.getItem(STORAGE_KEY_SESSION)
 const saveSession=()=>{try{localStorage.setItem(STORAGE_KEY_SESSION,String(Date.now()));}catch(e){}};
 
 function App(){
-  const[screen,setScreen]=useState("landing");
+  /* ── Hash-based routing ──
+     Routes: "" or "/" = combined landing (backward compat)
+             "athlete" = athlete-only entry (NO studio access)
+             "studio"  = studio entry (password-gated, CAN access athlete pages) */
+  const[route,setRoute]=useState(getHashRoute);
+  const[screen,setScreen]=useState("landing"); /* "landing"|"athlete"|"editor" */
   const[players,setPlayers]=useState([]);
   const[activePlayerId,setActivePlayerId]=useState(null);
   const[athleteStep,setAthleteStep]=useState("select");
   const[hydrated,setHydrated]=useState(false);
   const[cloudLoading,setCloudLoading]=useState(true);
+  const[studioAuth,setStudioAuth]=useState(isSessionValid()); /* editor authenticated? */
 
-  /* Load players from Firestore on mount, then ALWAYS hydrate from IndexedDB for local blobs.
-     This ensures: (a) videos uploaded before Firebase get blob URLs from IndexedDB,
-     (b) videos with cloudUrl keep it if no local blob exists,
-     (c) local blobs are preferred for faster playback on same machine. */
+  /* Listen for hash changes */
+  useEffect(()=>{
+    const onHash=()=>{const r=getHashRoute();setRoute(r);};
+    window.addEventListener("hashchange",onHash);
+    return()=>window.removeEventListener("hashchange",onHash);
+  },[]);
+
+  /* Load players from Firestore on mount */
   useEffect(()=>{(async()=>{try{
     const cloud=await loadPlayersFromCloud();
     if(cloud.length>0){const hp=await hydratePlayerVideos(cloud);setPlayers(hp);setHydrated(true);setCloudLoading(false);return;}
-    /* fallback: localStorage + IndexedDB hydration for existing local data */
     const local=loadPlayers();
     if(local.length>0){const hp=await hydratePlayerVideos(local);setPlayers(hp);setHydrated(true);setCloudLoading(false);return;}
     setHydrated(true);setCloudLoading(false);
@@ -1366,7 +1488,6 @@ function App(){
     setHydrated(true);setCloudLoading(false);
   }})();},[]);
 
-  /* Save to localStorage as backup whenever players change */
   useEffect(()=>{if(hydrated)savePlayers(players);},[players,hydrated]);
 
   const activePlayer=players.find(p=>p.id===activePlayerId)||null;
@@ -1380,18 +1501,20 @@ function App(){
   };
   const handleDeletePlayer=async(playerId)=>{
     const pl=players.find(p=>p.id===playerId);
-    if(pl){/* delete all videos from cloud */
-      for(const cat of pl.categories)for(const v of cat.videos){deleteBlob(v.id).catch(()=>{});deleteVideoFromCloud(v.id).catch(()=>{});}
-    }
+    if(pl){for(const cat of pl.categories)for(const v of cat.videos){deleteBlob(v.id).catch(()=>{});deleteVideoFromCloud(v.id).catch(()=>{});}}
     deletePlayerFromCloud(playerId).catch(()=>{});
     setPlayers(p=>p.filter(pl=>pl.id!==playerId));
     if(activePlayerId===playerId){setActivePlayerId(null);setAthleteStep("select");}
   };
   const handleUpdatePlayer=updated=>{setPlayers(p=>p.map(pl=>pl.id===updated.id?updated:pl));};
-  const enterAthlete=()=>{setScreen("athlete");setAthleteStep("select");};
-  const enterStudio=()=>setScreen("editor");
 
-  /* Loading screen while fetching from cloud */
+  /* ── Navigation helpers ── */
+  const goToLanding=()=>{setScreen("landing");setAthleteStep("select");setActivePlayerId(null);};
+  const enterAthlete=()=>{setScreen("athlete");setAthleteStep("select");};
+  const enterStudio=()=>{setStudioAuth(true);setScreen("editor");};
+  const refreshPlayers=async()=>{try{const cp=await loadPlayersFromCloud();if(cp.length>0){const hp=await hydratePlayerVideos(cp);setPlayers(hp);}}catch(e){console.warn("Refresh failed:",e);}};
+
+  /* Loading screen */
   if(cloudLoading)return(
     <div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
       <h1 style={{fontSize:48,fontWeight:900,fontStyle:"italic",marginBottom:8}}>
@@ -1403,12 +1526,30 @@ function App(){
       <div style={{color:C.sub,fontSize:12,marginTop:12}}>Connecting to cloud...</div>
     </div>);
 
-  if(screen==="landing")return<LandingPage onEnterAthlete={enterAthlete} onEnterStudio={enterStudio}/>;
-  if(screen==="editor")return<StudioApp players={players} onLogout={()=>setScreen("landing")} onRefreshPlayers={async()=>{try{const cp=await loadPlayersFromCloud();if(cp.length>0){const hp=await hydratePlayerVideos(cp);setPlayers(hp);}}catch(e){console.warn("Refresh failed:",e);}}}/>;
-  if(athleteStep==="select")return<AthleteSelect players={players} onSelect={id=>{setActivePlayerId(id);setAthleteStep("portal");}} onCreate={()=>setAthleteStep("form")} onBack={()=>setScreen("landing")} onDelete={handleDeletePlayer}/>;
-  if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")}/>;
-  if(athleteStep==="portal"&&activePlayer)return<AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer} onBack={()=>{setAthleteStep("select");setActivePlayerId(null);}}/>;
-  return null;
+  /* ── INNER SCREENS (athlete flow + editor) ── */
+  if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers}/>;
+  if(screen==="athlete"){
+    if(athleteStep==="select")return<AthleteSelect players={players} onSelect={id=>{setActivePlayerId(id);setAthleteStep("portal");}} onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
+    if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")}/>;
+    if(athleteStep==="portal"&&activePlayer)return<AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer} onBack={()=>{setAthleteStep("select");setActivePlayerId(null);}}/>;
+  }
+
+  /* ── LANDING SCREENS (based on hash route) ── */
+
+  /* #/athlete → Athlete-only entry (NO studio access) */
+  if(route==="athlete"){
+    return<AthleteLandingPage onEnter={enterAthlete}/>;
+  }
+
+  /* #/studio → Studio entry (password-gated, editors CAN also view athlete pages) */
+  if(route==="studio"){
+    return<StudioLandingPage
+      onEnterStudio={enterStudio}
+      onEnterAthleteReview={()=>{setStudioAuth(true);enterAthlete();}}/>;
+  }
+
+  /* Default (no hash or #/) → combined landing with both tiles (backward compat) */
+  return<LandingPage onEnterAthlete={enterAthlete} onEnterStudio={enterStudio}/>;
 }
 
 ReactDOM.render(<App/>,document.getElementById("root"));
