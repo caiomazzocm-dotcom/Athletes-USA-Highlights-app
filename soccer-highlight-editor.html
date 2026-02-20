@@ -1005,10 +1005,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     return mx;
   },[tracks,resolvedTags,audioTracks]);
 
-  useEffect(()=>{if(!isPlaying)return;const anim=now=>{const dt=(now-lastTRef.current)/1000;lastTRef.current=now;setPlayhead(p=>{const n=p+dt;if(contentEnd>0&&n>contentEnd){setIsPlaying(false);return contentEnd;}return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,contentEnd]);
+  useEffect(()=>{if(!isPlaying){
+    /* When playback stops, pause the video/audio elements immediately */
+    const v=videoRef.current;if(v&&!v.paused)v.pause();
+    const a=audioRef.current;if(a&&!a.paused)a.pause();
+    return;
+  }const anim=now=>{const dt=(now-lastTRef.current)/1000;lastTRef.current=now;setPlayhead(p=>{const n=p+dt;if(contentEnd>0&&n>=contentEnd){setIsPlaying(false);
+    const v=videoRef.current;if(v)v.pause();const a=audioRef.current;if(a)a.pause();
+    return contentEnd;}return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,contentEnd]);
 
   useEffect(()=>{const clip=findActiveClip(playhead);const tag=findActiveTag(playhead);const v=videoRef.current;if(!v)return;
-    if(!clip&&!tag){v.pause();if(prevClipRef.current){v.removeAttribute("src");v.load();}prevClipRef.current=null;prevTagRef.current=null;return;}
+    if(!clip&&!tag){v.pause();prevClipRef.current=null;prevTagRef.current=null;v.removeAttribute("src");v.load();return;}
     if(tag){
       if(prevTagRef.current===tag.id){v.pause();return;}
       prevTagRef.current=tag.id;
