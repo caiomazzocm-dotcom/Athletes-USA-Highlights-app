@@ -313,8 +313,10 @@ function StudioLandingPage({onEnterStudio,onEnterAthleteReview}){
 }
 
 /* ═══════════ ATHLETE: PROFILE SELECT ═══════════ */
-function AthleteSelect({players,onSelect,onCreate,onBack,onDelete}){
+function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete}){
   const[confirmDel,setConfirmDel]=useState(null);
+  /* Athletes see only "Create Profile" (no list). Editors see all players. */
+  const visiblePlayers=isEditorMode?players:[];
   return(
   <div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",fontFamily:"'Inter',sans-serif",overflow:"hidden"}}>
     <div className="ath-select-header" style={{display:"flex",alignItems:"center",padding:"0 16px",height:48,background:C.mantle,borderBottom:`1px solid ${C.s0}`,flexShrink:0}}>
@@ -322,23 +324,23 @@ function AthleteSelect({players,onSelect,onCreate,onBack,onDelete}){
       <div style={{width:1,height:24,background:C.s0,marginRight:14}}/>
       <span style={{fontWeight:900,fontSize:15,color:"#fff",fontStyle:"italic",marginRight:4}}>ATHLETES</span>
       <span style={{fontWeight:900,fontSize:15,color:C.coral,fontStyle:"italic",marginRight:16}}>USA</span>
-      <div style={{padding:"3px 10px",background:C.blue+"18",border:`1px solid ${C.blue}33`,borderRadius:6}}>
-        <span style={{fontSize:10,fontWeight:700,color:C.blue,letterSpacing:2}}>ATHLETE</span>
+      <div style={{padding:"3px 10px",background:isEditorMode?C.coral+"18":C.blue+"18",border:`1px solid ${isEditorMode?C.coral:C.blue}33`,borderRadius:6}}>
+        <span style={{fontSize:10,fontWeight:700,color:isEditorMode?C.coral:C.blue,letterSpacing:2}}>{isEditorMode?"EDITOR VIEW":"ATHLETE"}</span>
       </div>
     </div>
     <div className="ath-select-wrap" style={{flex:1,overflow:"auto",display:"flex",alignItems:"center",justifyContent:"center",padding:32}}>
       <div style={{maxWidth:800,width:"100%",textAlign:"center"}}>
         <UsersIcon size={40} color={C.blue} style={{margin:"0 auto 16px",display:"block"}}/>
-        <h2 style={{color:C.text,fontSize:24,fontWeight:800,marginBottom:8}}>Welcome, Player</h2>
-        <p style={{color:C.sub,fontSize:14,marginBottom:36}}>Select your profile or create a new one to start uploading highlights.</p>
-        {players.length>0&&(
+        <h2 style={{color:C.text,fontSize:24,fontWeight:800,marginBottom:8}}>{isEditorMode?"All Athletes":"Welcome, Player"}</h2>
+        <p style={{color:C.sub,fontSize:14,marginBottom:36}}>{isEditorMode?"Review and manage athlete profiles.":"Create your profile to start uploading highlights."}</p>
+        {visiblePlayers.length>0&&(
           <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32}}>
-            {players.map((pl,i)=>(
+            {visiblePlayers.map((pl,i)=>(
               <div key={pl.id} style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"16px 16px 14px",cursor:"pointer",transition:"all 0.2s",textAlign:"center",position:"relative"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=PLAYER_COLORS[i%8]+"66";e.currentTarget.style.transform="translateY(-2px)";}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=C.s0;e.currentTarget.style.transform="none";}}>
-                <button onClick={e=>{e.stopPropagation();setConfirmDel(pl.id);}} style={{position:"absolute",top:8,right:8,...ib,color:C.overlay,padding:3,zIndex:2}} title="Delete profile"
-                  onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.overlay}><Trash2Icon size={13}/></button>
+                {isEditorMode&&<button onClick={e=>{e.stopPropagation();setConfirmDel(pl.id);}} style={{position:"absolute",top:8,right:8,...ib,color:C.overlay,padding:3,zIndex:2}} title="Delete profile"
+                  onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.overlay}><Trash2Icon size={13}/></button>}
                 <div onClick={()=>onSelect(pl.id)}>
                   {pl.profilePicUrl?
                     <img src={pl.profilePicUrl} style={{width:56,height:56,borderRadius:"50%",objectFit:"cover",border:`2px solid ${PLAYER_COLORS[i%8]}`,margin:"0 auto 10px",display:"block"}}/>
@@ -1481,6 +1483,11 @@ const savePlayers=players=>{try{const safe=players.map(p=>({...p,categories:p.ca
 const isSessionValid=()=>{try{const ts=localStorage.getItem(STORAGE_KEY_SESSION);if(!ts)return false;return(Date.now()-parseInt(ts,10))<SESSION_DURATION_MS;}catch(e){return false;}};
 const saveSession=()=>{try{localStorage.setItem(STORAGE_KEY_SESSION,String(Date.now()));}catch(e){}};
 
+/* ═══ ATHLETE IDENTITY (localStorage) ═══ */
+const STORAGE_KEY_ATHLETE_ID="aua_my_player_id";
+const getMyPlayerId=()=>{try{return localStorage.getItem(STORAGE_KEY_ATHLETE_ID)||null;}catch(e){return null;}};
+const setMyPlayerId=(id)=>{try{if(id)localStorage.setItem(STORAGE_KEY_ATHLETE_ID,id);else localStorage.removeItem(STORAGE_KEY_ATHLETE_ID);}catch(e){}};
+
 function App(){
   /* ── Hash-based routing ──
      Routes: "" or "/" = combined landing (backward compat)
@@ -1494,6 +1501,7 @@ function App(){
   const[hydrated,setHydrated]=useState(false);
   const[cloudLoading,setCloudLoading]=useState(true);
   const[studioAuth,setStudioAuth]=useState(isSessionValid()); /* editor authenticated? */
+  const[isEditorMode,setIsEditorMode]=useState(false); /* true when entering from studio route */
 
   /* Listen for hash changes */
   useEffect(()=>{
@@ -1523,6 +1531,8 @@ function App(){
       shirtNumber:data.shirtNumber||"",uniformDesc:data.uniformDesc||"",positions:data.positions||[],profilePicUrl:data.profilePicUrl||"",playingPicUrl:data.playingPicUrl||"",
       categories:DEFAULT_CATS.map(n=>({id:uid("cat"),name:n,videos:[]}))};
     setPlayers(p=>[...p,newPlayer]);setActivePlayerId(newPlayer.id);setAthleteStep("portal");
+    /* Save this player ID so the athlete auto-logs in next time */
+    if(!isEditorMode)setMyPlayerId(newPlayer.id);
     savePlayerToCloud(newPlayer);
   };
   const handleDeletePlayer=async(playerId)=>{
@@ -1536,8 +1546,24 @@ function App(){
 
   /* ── Navigation helpers ── */
   const goToLanding=()=>{setScreen("landing");setAthleteStep("select");setActivePlayerId(null);};
-  const enterAthlete=()=>{setScreen("athlete");setAthleteStep("select");};
+  const enterAthlete=()=>{
+    setIsEditorMode(false);
+    /* Auto-login: if athlete has a stored player ID and that player exists, go straight to portal */
+    const myId=getMyPlayerId();
+    if(myId){
+      const myPlayer=players.find(p=>p.id===myId);
+      if(myPlayer){setActivePlayerId(myId);setScreen("athlete");setAthleteStep("portal");return;}
+      /* Player ID stored but player not found (deleted by editor?) — clear it */
+      setMyPlayerId(null);
+    }
+    setScreen("athlete");setAthleteStep("select");
+  };
+  const enterAthleteAsEditor=()=>{setIsEditorMode(true);setScreen("athlete");setAthleteStep("select");};
   const enterStudio=()=>{setStudioAuth(true);setScreen("editor");};
+  const athleteSignOut=()=>{
+    if(!isEditorMode)setMyPlayerId(null); /* Clear stored identity on sign-out */
+    goToLanding();
+  };
   const refreshPlayers=async()=>{try{const cp=await loadPlayersFromCloud();if(cp.length>0){const hp=await hydratePlayerVideos(cp);setPlayers(hp);}}catch(e){console.warn("Refresh failed:",e);}};
 
   /* Loading screen */
@@ -1555,9 +1581,12 @@ function App(){
   /* ── INNER SCREENS (athlete flow + editor) ── */
   if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers}/>;
   if(screen==="athlete"){
-    if(athleteStep==="select")return<AthleteSelect players={players} onSelect={id=>{setActivePlayerId(id);setAthleteStep("portal");}} onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
+    if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode}
+      onSelect={id=>{if(!isEditorMode)setMyPlayerId(id);setActivePlayerId(id);setAthleteStep("portal");}}
+      onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
     if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")}/>;
-    if(athleteStep==="portal"&&activePlayer)return<AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer} onBack={()=>{setAthleteStep("select");setActivePlayerId(null);}}/>;
+    if(athleteStep==="portal"&&activePlayer)return<AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
+      onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}/>;
   }
 
   /* ── LANDING SCREENS (based on hash route) ── */
@@ -1571,7 +1600,7 @@ function App(){
   if(route==="studio"){
     return<StudioLandingPage
       onEnterStudio={enterStudio}
-      onEnterAthleteReview={()=>{setStudioAuth(true);enterAthlete();}}/>;
+      onEnterAthleteReview={()=>{setStudioAuth(true);enterAthleteAsEditor();}}/>;
   }
 
   /* Default (no hash or #/) → combined landing with both tiles (backward compat) */
