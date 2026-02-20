@@ -735,7 +735,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   const freezeOffset=useCallback((clipStart,ph)=>{let total=0;for(const tg of resolvedTags){const tEnd=tg._tlStart+tg.duration;if(tEnd<=clipStart||tg._tlStart>=ph)continue;const s=Math.max(tg._tlStart,clipStart);const e=Math.min(tEnd,ph);if(e>s)total+=e-s;}return total;},[resolvedTags]);
 
-  const findActiveClip=useCallback(ph=>{for(let i=tracks.length-1;i>=0;i--)for(const cl of tracks[i].clips){const rawD=cl.clipEnd-cl.clipStart;let fz=0;for(const tg of resolvedTags){const tEnd=tg._tlStart+tg.duration;if(tEnd<=cl.trackStart)continue;if(tg._tlStart>=cl.trackStart+rawD+fz)continue;const s=Math.max(tg._tlStart,cl.trackStart);const e=Math.min(tEnd,cl.trackStart+rawD+fz);if(e>s)fz+=tg.duration;}const effectiveD=rawD+fz;if(ph>=cl.trackStart&&ph<cl.trackStart+effectiveD)return cl;}return null;},[tracks,resolvedTags]);
+  const findActiveClip=useCallback(ph=>{for(let i=tracks.length-1;i>=0;i--)for(const cl of tracks[i].clips){const rawD=cl.clipEnd-cl.clipStart;
+    /* Count only tags that belong to THIS clip */
+    let fz=0;for(const tg of resolvedTags){if(tg.clipId&&tg.clipId!==cl.id)continue;if(!tg.clipId){const tEnd=tg._tlStart+tg.duration;if(tEnd<=cl.trackStart||tg._tlStart>=cl.trackStart+rawD)continue;}fz+=tg.duration;}
+    const effectiveD=rawD+fz;if(ph>=cl.trackStart&&ph<cl.trackStart+effectiveD)return cl;}return null;},[tracks,resolvedTags]);
 
   const findActiveAudio=useCallback(ph=>{for(const t of audioTracks)for(const cl of t.clips){const d=cl.clipEnd-cl.clipStart;if(ph>=cl.trackStart&&ph<cl.trackStart+d)return cl;}return null;},[audioTracks]);
 
@@ -999,7 +1002,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* Compute actual content end (not tlDur which includes padding) */
   const contentEnd=React.useMemo(()=>{
     let mx=0;
-    tracks.forEach(t=>t.clips.forEach(c=>{const rawD=c.clipEnd-c.clipStart;let fz=0;resolvedTags.forEach(tg=>{if(tg._tlStart>=c.trackStart&&tg._tlStart<c.trackStart+rawD+fz)fz+=tg.duration;});const e=c.trackStart+rawD+fz;if(e>mx)mx=e;}));
+    tracks.forEach(t=>t.clips.forEach(c=>{const rawD=c.clipEnd-c.clipStart;
+      let fz=0;resolvedTags.forEach(tg=>{if(tg.clipId&&tg.clipId!==c.id)return;if(!tg.clipId){if(tg._tlStart<c.trackStart||tg._tlStart>=c.trackStart+rawD)return;}fz+=tg.duration;});
+      const e=c.trackStart+rawD+fz;if(e>mx)mx=e;}));
     resolvedTags.forEach(c=>{const e=c._tlStart+c.duration;if(e>mx)mx=e;});
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>mx)mx=e;}));
     return mx;
@@ -1029,7 +1034,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const wasInTag=prevTagRef.current!==null;prevTagRef.current=null;
     const pr=clipProps[clip.id]||{volume:100,scale:1};const fo=freezeOffset(clip.trackStart,playhead);const vt=clip.clipStart+(playhead-clip.trackStart-fo);
     v.volume=pr.volume/100;
-    if(prevClipRef.current!==clip.id){prevClipRef.current=clip.id;v.src=clip.url;v.currentTime=Math.max(0,vt);if(isPlaying)v.play().catch(()=>{});}
+    if(prevClipRef.current!==clip.id){
+      prevClipRef.current=clip.id;v.src=clip.url;
+      const seekAndPlay=()=>{v.currentTime=Math.max(0,vt);if(isPlaying)v.play().catch(()=>{});};
+      if(v.readyState>=2)seekAndPlay();
+      else v.addEventListener("loadeddata",seekAndPlay,{once:true});
+    }
     else if(wasInTag){v.currentTime=Math.max(0,vt);if(isPlaying)v.play().catch(()=>{});}
     else if(!isPlaying){v.pause();if(Math.abs(v.currentTime-vt)>.1)v.currentTime=Math.max(0,vt);}
     else{if(v.paused)v.play().catch(()=>{});}},[playhead,isPlaying,findActiveClip,findActiveTag,freezeOffset,clipProps]);
