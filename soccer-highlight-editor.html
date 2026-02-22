@@ -736,13 +736,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[]);
 
   /* ═══ VIDEO POOL MANAGEMENT ═══
-     Professional NLE technique: keep one pre-loaded <video> per clip on the timeline.
-     Never change .src during playback — just toggle visibility.
-     This eliminates the black-screen delay when switching between clips. */
+     Professional NLE technique: one pre-loaded <video> per clip on the timeline.
+     Key insight: use OPACITY (not display:none) so browsers actually buffer the video.
+     display:none tells the browser "this doesn't exist" and it won't download/decode.
+     opacity:0 keeps the element "alive" — browser buffers it in the background.
+     We also force-buffer by doing a brief muted play+pause cycle. */
   useEffect(()=>{
     const container=videoContainerRef.current;if(!container)return;
     const pool=videoPoolRef.current;
-    /* Collect every clip across all video tracks */
     const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
     const currentIds=new Set(allClips.map(c=>c.id));
     /* Remove video elements for clips no longer on the timeline */
@@ -757,13 +758,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     allClips.forEach(c=>{
       if(!pool[c.id]){
         const vel=document.createElement("video");
-        vel.preload="auto";vel.playsInline=true;vel.muted=false;
-        vel.style.cssText="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:none;";
-        vel.src=c.url;vel.load();
+        vel.preload="auto";vel.playsInline=true;vel.muted=true;
+        /* CRITICAL: Use opacity:0 NOT display:none — browser must buffer this element */
+        vel.style.cssText="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;opacity:0;z-index:0;pointer-events:none;";
+        vel.src=c.url;
+        /* Force-buffer: seek to clip start, play briefly muted, then pause.
+           This forces the browser to actually download and decode video frames. */
+        vel.addEventListener("loadeddata",function onld(){
+          vel.removeEventListener("loadeddata",onld);
+          vel.currentTime=c.clipStart||0;
+          vel.play().then(()=>{setTimeout(()=>{vel.pause();vel.muted=false;},150);}).catch(()=>{vel.muted=false;});
+        },{once:true});
+        vel.load();
         container.appendChild(vel);
         pool[c.id]=vel;
       } else {
-        /* If URL changed (e.g. blob re-hydrated), update it */
         const vel=pool[c.id];
         if(vel.getAttribute("src")!==c.url){vel.src=c.url;vel.load();}
       }
@@ -1061,33 +1070,35 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     return contentEnd;}return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,contentEnd]);
 
   /* ═══ VIDEO POOL SYNC — the core NLE playback engine ═══
-     Instead of changing src on one <video>, we have one pre-loaded <video> per clip.
-     We just show/hide and seek — instant switching, zero black frames. */
+     Uses opacity + z-index layering (NOT display:none) so every video stays buffered.
+     Active clip: opacity:1, z-index:2 (visible on top)
+     Inactive clips: opacity:0, z-index:0 (invisible but still buffered by browser)
+     Result: instant clip switching with zero black frames. */
   useEffect(()=>{
     const pool=videoPoolRef.current;
     const clip=findActiveClip(playhead);
     const tag=findActiveTag(playhead);
 
-    /* Helper: show one video element, hide all others */
+    /* Helper: bring one video to front, push all others back */
     const showOnly=(clipId,seekTo,vol,shouldPlay)=>{
       Object.entries(pool).forEach(([cid,vel])=>{
         if(cid===clipId){
-          vel.style.display="block";
+          vel.style.opacity="1";vel.style.zIndex="2";vel.style.pointerEvents="auto";
           vel.volume=vol;
           if(Math.abs(vel.currentTime-seekTo)>0.15)vel.currentTime=Math.max(0,seekTo);
           if(shouldPlay&&vel.paused)vel.play().catch(()=>{});
           if(!shouldPlay&&!vel.paused)vel.pause();
           activeVideoRef.current=vel;
         } else {
-          vel.style.display="none";
+          vel.style.opacity="0";vel.style.zIndex="0";vel.style.pointerEvents="none";
           if(!vel.paused)vel.pause();
         }
       });
     };
 
-    /* Helper: hide all videos */
+    /* Helper: push all videos back (none visible) */
     const hideAll=()=>{
-      Object.values(pool).forEach(vel=>{vel.style.display="none";if(!vel.paused)vel.pause();});
+      Object.values(pool).forEach(vel=>{vel.style.opacity="0";vel.style.zIndex="0";vel.style.pointerEvents="none";if(!vel.paused)vel.pause();});
       activeVideoRef.current=null;
     };
 
@@ -1096,7 +1107,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
     /* TAG (freeze/spotlight) — show parent clip's video, paused at sourceTime */
     if(tag){
-      if(prevTagRef.current===tag.id)return;/* same tag, no change needed */
+      if(prevTagRef.current===tag.id)return;
       prevTagRef.current=tag.id;
       let clip2=null;
       if(tag.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tag.clipId)clip2=c;}));}
@@ -1116,22 +1127,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const vol=pr.volume/100;
 
     if(prevClipRef.current!==clip.id){
-      /* CLIP SWITCH — just toggle visibility, video is already preloaded! */
+      /* ══ CLIP SWITCH ══ Just swap z-index layers — video is pre-buffered! */
       prevClipRef.current=clip.id;
       showOnly(clip.id,vt,vol,isPlaying);
     } else if(wasInTag){
-      /* Returning from a tag — resume playback */
       showOnly(clip.id,vt,vol,isPlaying);
     } else if(!isPlaying){
       /* Scrubbing — seek to correct position */
       const vel=pool[clip.id];
       if(vel){
-        vel.style.display="block";vel.volume=vol;
+        vel.style.opacity="1";vel.style.zIndex="2";vel.style.pointerEvents="auto";
+        vel.volume=vol;
         if(!vel.paused)vel.pause();
         if(Math.abs(vel.currentTime-vt)>0.1)vel.currentTime=Math.max(0,vt);
         activeVideoRef.current=vel;
-        /* Hide others */
-        Object.entries(pool).forEach(([cid,v2])=>{if(cid!==clip.id){v2.style.display="none";if(!v2.paused)v2.pause();}});
+        Object.entries(pool).forEach(([cid,v2])=>{if(cid!==clip.id){v2.style.opacity="0";v2.style.zIndex="0";v2.style.pointerEvents="none";if(!v2.paused)v2.pause();}});
       }
     } else {
       /* Same clip, playing — just ensure it's playing and correct volume */
