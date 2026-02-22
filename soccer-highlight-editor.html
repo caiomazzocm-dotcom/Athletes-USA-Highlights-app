@@ -945,7 +945,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(el)el.scrollLeft=0;
   },[tracks,resolvedTags,audioTracks]);
 
-  /* ═══ VIDEO EXPORT ═══ */
+  /* ═══ VIDEO EXPORT ═══
+     Uses the pre-buffered video pool elements for drawing (they already have video data).
+     For CORS safety, we also pre-download all remote URLs as blobs via XHR (not fetch,
+     which has stricter CORS). Creates dedicated export video elements from blob URLs
+     so drawImage always works on the canvas without tainting it. */
   const exportVideo=useCallback(async()=>{
     setIsPlaying(false);if(animRef.current)cancelAnimationFrame(animRef.current);
     setExporting(true);setExportProgress(0);exportCancelRef.current=false;
@@ -957,36 +961,77 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     resolvedTags.forEach(c=>{const e=c._tlStart+c.duration;if(e>cEnd)cEnd=e;});
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>cEnd)cEnd=e;}));
     if(cEnd<=0){setExporting(false);return;}
-    /* Pre-fetch all remote video/audio URLs as local blobs to bypass CORS for canvas export */
-    setExportFmt("Preparing media...");
-    const urlMap={};
+
+    /* ── Step 1: Download ALL remote video/audio URLs as local blobs ── */
+    setExportFmt("Downloading media...");
+    const blobUrlMap={};/* originalUrl → blobUrl */
     const allUrls=new Set();
-    tracks.forEach(t=>t.clips.forEach(c=>{if(c.url&&!c.url.startsWith("blob:"))allUrls.add(c.url);}));
-    audioTracks.forEach(t=>t.clips.forEach(c=>{if(c.url&&!c.url.startsWith("blob:"))allUrls.add(c.url);}));
+    tracks.forEach(t=>t.clips.forEach(c=>{if(c.url)allUrls.add(c.url);}));
+    audioTracks.forEach(t=>t.clips.forEach(c=>{if(c.url)allUrls.add(c.url);}));
+
+    /* Download via XHR (works better with CORS for Firebase Storage than fetch) */
+    const downloadAsBlob=(url)=>new Promise((resolve)=>{
+      if(url.startsWith("blob:")){resolve(url);return;}
+      const xhr=new XMLHttpRequest();
+      xhr.open("GET",url,true);xhr.responseType="blob";
+      xhr.onload=()=>{if(xhr.status===200){resolve(URL.createObjectURL(xhr.response));}else{resolve(null);}};
+      xhr.onerror=()=>{resolve(null);};
+      xhr.send();
+    });
+
+    let dlCount=0;const dlTotal=allUrls.size;
     for(const u of allUrls){
-      try{const resp=await fetch(u);const blob=await resp.blob();urlMap[u]=URL.createObjectURL(blob);}
-      catch(e){console.warn("Failed to prefetch for export:",u,e);urlMap[u]=u;}
+      dlCount++;setExportFmt(`Downloading ${dlCount}/${dlTotal}...`);
+      const blobUrl=await downloadAsBlob(u);
+      blobUrlMap[u]=blobUrl||u;/* fallback to original if download fails */
     }
-    const getExportUrl=(origUrl)=>urlMap[origUrl]||origUrl;
-    /* canvas 1920×1080 */
+
+    /* ── Step 2: Create dedicated export video elements from blob URLs ── */
+    setExportFmt("Preparing export...");
+    const exportVids={};/* clipId → {el, ready} */
+    const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
+
+    /* Create one video element per clip and wait for it to be ready */
+    const hideCss="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none";
+    await Promise.all(allClips.map(c=>new Promise(resolve=>{
+      const vel=document.createElement("video");
+      vel.playsInline=true;vel.preload="auto";vel.muted=true;
+      vel.style.cssText=hideCss;
+      vel.src=blobUrlMap[c.url]||c.url;
+      vel.addEventListener("canplaythrough",function onr(){vel.removeEventListener("canplaythrough",onr);exportVids[c.id]={el:vel,ready:true};resolve();},{once:true});
+      /* Timeout fallback — don't hang forever */
+      setTimeout(()=>{if(!exportVids[c.id]){exportVids[c.id]={el:vel,ready:true};resolve();}},8000);
+      document.body.appendChild(vel);vel.load();
+    })));
+
+    const getExVid=(clipId)=>exportVids[clipId]?exportVids[clipId].el:null;
+
+    /* ── Step 3: Canvas + MediaRecorder setup ── */
     const cvs=document.createElement("canvas");cvs.width=1920;cvs.height=1080;const cx=cvs.getContext("2d");
-    /* audio graph — attach elements to DOM for reliable playback */
     const actx=new(window.AudioContext||window.webkitAudioContext)();await actx.resume();const aDst=actx.createMediaStreamDestination();
-    const hideCss="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none";
-    const eV=document.createElement("video");eV.playsInline=true;eV.volume=1;eV.style.cssText=hideCss;document.body.appendChild(eV);
     const eA=document.createElement("audio");eA.volume=1;eA.style.cssText=hideCss;document.body.appendChild(eA);
-    const vSrc=actx.createMediaElementSource(eV);const vGain=actx.createGain();vSrc.connect(vGain).connect(aDst);
+    /* We need a silent video source for the audio context — use first clip */
+    const firstVel=allClips.length>0?getExVid(allClips[0].id):null;
+    let vSrc=null,vGain=null;
+    if(firstVel){vSrc=actx.createMediaElementSource(firstVel);vGain=actx.createGain();vSrc.connect(vGain).connect(aDst);}
     const aSrc=actx.createMediaElementSource(eA);const aGain=actx.createGain();aSrc.connect(aGain).connect(aDst);
-    /* recorder — prefer MP4 H.264 for universal compatibility */
+
     const cStream=cvs.captureStream(30);
     const mStream=new MediaStream([...cStream.getVideoTracks(),...aDst.stream.getAudioTracks()]);
     const mimes=["video/mp4;codecs=avc1.42E01E,mp4a.40.2","video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
     let mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||"video/webm";
     const isMP4=mime.startsWith("video/mp4");const ext=isMP4?"mp4":"webm";
-    setExportFmt(isMP4?"MP4 · H.264":"WebM · VP9");
+    setExportFmt(isMP4?"Exporting MP4":"Exporting WebM");
     const rec=new MediaRecorder(mStream,{mimeType:mime,videoBitsPerSecond:isMP4?25000000:20000000,audioBitsPerSecond:320000});
     const chunks=[];rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
-    const cleanup=()=>{try{actx.close();}catch(e){}eV.pause();eV.removeAttribute("src");eV.load();eA.pause();eA.removeAttribute("src");eA.load();try{document.body.removeChild(eV);}catch(e){}try{document.body.removeChild(eA);}catch(e){}Object.values(urlMap).forEach(u=>{try{URL.revokeObjectURL(u);}catch(e){}});};
+
+    const cleanup=()=>{
+      try{actx.close();}catch(e){}
+      Object.values(exportVids).forEach(v=>{try{v.el.pause();v.el.removeAttribute("src");v.el.load();document.body.removeChild(v.el);}catch(e){}});
+      try{eA.pause();eA.removeAttribute("src");eA.load();document.body.removeChild(eA);}catch(e){}
+      Object.values(blobUrlMap).forEach(u=>{if(u.startsWith("blob:"))try{URL.revokeObjectURL(u);}catch(e){}});
+    };
+
     await new Promise(resolve=>{
       rec.onstop=()=>{
         const blob=new Blob(chunks,{type:mime.split(";")[0]});
@@ -994,7 +1039,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         cleanup();setExporting(false);resolve();
       };
       rec.start(1000);
-      let ph=0,lt=performance.now(),pC=null,pT=null,pA=null;
+      let ph=0,lt=performance.now(),pC=null,pT=null,pA=null,activeExVel=null;
+
       /* draw spotlight overlay on canvas */
       const drawSpot=(tag)=>{
         const tp=clipProps[tag.id]||{};const ss=tp.spotScale||tag.spotScale||1;
@@ -1010,7 +1056,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         cx.fillStyle="#22c55e";cx.fillRect(960-80,20,160,36);cx.font="bold 16px Inter,sans-serif";cx.fillStyle="#000";cx.fillText("SPOTLIGHT",960,44);
         cx.restore();
       };
-      /* animation loop — real-time playback to canvas */
+
+      /* animation loop — real-time playback to canvas, using per-clip video elements */
       const step=(now)=>{
         if(exportCancelRef.current){rec.stop();return;}
         const dt=Math.min((now-lt)/1000,0.1);lt=now;ph+=dt;
@@ -1018,27 +1065,34 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         setExportProgress(ph/cEnd);
         const cl=findActiveClip(ph),tg=findActiveTag(ph),au=findActiveAudio(ph);
         cx.fillStyle="#000";cx.fillRect(0,0,1920,1080);
+
         if(tg){
           if(pT!==tg.id){pT=tg.id;
             let c2=null;if(tg.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tg.clipId)c2=c;}));}
             if(!c2)c2=findActiveClip(tg._tlStart);
-            if(c2){pC=c2.id;eV.src=getExportUrl(c2.url);eV.currentTime=Math.max(0,tg.sourceTime||c2.clipStart);eV.pause();}
-            vGain.gain.value=0;}
-          try{cx.drawImage(eV,0,0,1920,1080);}catch(e){}
+            if(c2){pC=c2.id;activeExVel=getExVid(c2.id);if(activeExVel){activeExVel.currentTime=Math.max(0,tg.sourceTime||c2.clipStart);activeExVel.pause();}}
+            if(vGain)vGain.gain.value=0;}
+          if(activeExVel)try{cx.drawImage(activeExVel,0,0,1920,1080);}catch(e){}
           drawSpot(tg);aGain.gain.value=0;if(pA){eA.pause();pA=null;}
         }else if(cl){
           const wt=pT!==null;pT=null;
           const pr=clipProps[cl.id]||{volume:100,scale:1};const fo=freezeOffset(cl.trackStart,ph);const vt=cl.clipStart+(ph-cl.trackStart-fo);
-          if(pC!==cl.id){pC=cl.id;eV.src=getExportUrl(cl.url);eV.currentTime=Math.max(0,vt);eV.play().catch(()=>{});}
-          else if(wt){eV.currentTime=Math.max(0,vt);eV.play().catch(()=>{});}
-          vGain.gain.value=pr.volume/100;
+          if(pC!==cl.id){
+            pC=cl.id;
+            /* Switch to this clip's dedicated video element — already loaded! */
+            activeExVel=getExVid(cl.id);
+            if(activeExVel){activeExVel.muted=false;activeExVel.currentTime=Math.max(0,vt);activeExVel.play().catch(()=>{});}
+          } else if(wt&&activeExVel){activeExVel.currentTime=Math.max(0,vt);activeExVel.play().catch(()=>{});}
+          if(vGain)vGain.gain.value=pr.volume/100;
           const sc=pr.scale||1;
-          if(sc!==1){cx.save();cx.translate(960,540);cx.scale(sc,sc);cx.translate(-960,-540);try{cx.drawImage(eV,0,0,1920,1080);}catch(e){}cx.restore();}
-          else{try{cx.drawImage(eV,0,0,1920,1080);}catch(e){}}
+          if(activeExVel){
+            if(sc!==1){cx.save();cx.translate(960,540);cx.scale(sc,sc);cx.translate(-960,-540);try{cx.drawImage(activeExVel,0,0,1920,1080);}catch(e){}cx.restore();}
+            else{try{cx.drawImage(activeExVel,0,0,1920,1080);}catch(e){}}
+          }
           if(au){const ap=clipProps[au.id]||{volume:100};const af=freezeOffset(au.trackStart,ph);const at=au.clipStart+(ph-au.trackStart-af);
-            if(pA!==au.id){pA=au.id;eA.src=getExportUrl(au.url);eA.currentTime=Math.max(0,at);eA.play().catch(()=>{});}aGain.gain.value=ap.volume/100;}
+            if(pA!==au.id){pA=au.id;eA.src=blobUrlMap[au.url]||au.url;eA.currentTime=Math.max(0,at);eA.play().catch(()=>{});}aGain.gain.value=ap.volume/100;}
           else{if(pA){eA.pause();pA=null;}aGain.gain.value=0;}
-        }else{pC=null;pT=null;vGain.gain.value=0;eV.pause();if(pA){eA.pause();pA=null;}aGain.gain.value=0;}
+        }else{pC=null;pT=null;activeExVel=null;if(vGain)vGain.gain.value=0;if(pA){eA.pause();pA=null;}aGain.gain.value=0;}
         requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
