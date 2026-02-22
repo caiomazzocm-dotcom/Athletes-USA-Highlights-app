@@ -946,12 +946,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[tracks,resolvedTags,audioTracks]);
 
   /* ═══ VIDEO EXPORT ═══
-     Frame-stepping approach: instead of real-time rAF (which races ahead of video decoding),
-     we step frame-by-frame and WAIT for each video seek to complete before drawing.
-     This guarantees every frame has actual video content — no black frames.
+     KEY DESIGN: Video elements for drawImage are NEVER connected to AudioContext.
+     createMediaElementSource() can cause browsers to stop decoding video frames.
+     Instead we use SEPARATE audio elements for sound capture.
 
-     For CORS: downloads videos as blobs first. If download fails, tests drawImage
-     and warns the user about Firebase CORS configuration if needed. */
+     Architecture:
+     - videoEls{} = per-clip <video> for canvas drawImage (pure video, no AudioContext)
+     - audioEls{} = per-clip <audio> connected to AudioContext for sound capture
+     - Both load from same blob URLs (downloaded from Firebase Storage)
+     - Frame-by-frame stepping with seek+wait for guaranteed frame accuracy */
   const exportVideo=useCallback(async()=>{
     setIsPlaying(false);if(animRef.current)cancelAnimationFrame(animRef.current);
     setExporting(true);setExportProgress(0);exportCancelRef.current=false;
@@ -965,6 +968,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>cEnd)cEnd=e;}));
     if(cEnd<=0){setExporting(false);return;}
 
+    const hideCss="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none";
+
     /* ── Step 1: Download ALL media URLs as local blobs ── */
     setExportFmt("Downloading media...");
     const blobUrlMap={};
@@ -972,135 +977,140 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     tracks.forEach(t=>t.clips.forEach(c=>{if(c.url)allUrls.add(c.url);}));
     audioTracks.forEach(t=>t.clips.forEach(c=>{if(c.url)allUrls.add(c.url);}));
 
-    const downloadAsBlob=(url)=>new Promise((resolve)=>{
-      if(url.startsWith("blob:")){resolve(url);return;}
-      /* Try fetch first, then XHR as fallback */
-      fetch(url).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.blob();})
-        .then(b=>resolve(URL.createObjectURL(b)))
-        .catch(()=>{
-          /* Fallback: try XHR */
-          const xhr=new XMLHttpRequest();
-          xhr.open("GET",url,true);xhr.responseType="blob";
-          xhr.onload=()=>{if(xhr.status===200)resolve(URL.createObjectURL(xhr.response));else resolve(null);};
-          xhr.onerror=()=>resolve(null);
-          xhr.send();
-        });
-    });
-
     let dlCount=0,dlFailed=0;const dlTotal=allUrls.size;
     for(const u of allUrls){
       dlCount++;setExportFmt(`Downloading ${dlCount}/${dlTotal}...`);
-      const blobUrl=await downloadAsBlob(u);
-      if(blobUrl){blobUrlMap[u]=blobUrl;}else{dlFailed++;blobUrlMap[u]=u;}
+      if(u.startsWith("blob:")){blobUrlMap[u]=u;continue;}
+      try{
+        const resp=await fetch(u);
+        if(!resp.ok)throw new Error("HTTP "+resp.status);
+        const blob=await resp.blob();
+        blobUrlMap[u]=URL.createObjectURL(blob);
+      }catch(fetchErr){
+        /* fetch failed — try XHR */
+        const blobUrl=await new Promise(r=>{
+          const xhr=new XMLHttpRequest();xhr.open("GET",u,true);xhr.responseType="blob";
+          xhr.onload=()=>r(xhr.status===200?URL.createObjectURL(xhr.response):null);
+          xhr.onerror=()=>r(null);xhr.send();
+        });
+        if(blobUrl){blobUrlMap[u]=blobUrl;}else{dlFailed++;blobUrlMap[u]=u;}
+      }
     }
 
-    /* If any downloads failed, warn about CORS */
     if(dlFailed>0){
-      const msg="⚠️ Could not download "+dlFailed+" video(s) for export.\n\n"+
-        "This is likely a Firebase Storage CORS issue. To fix it:\n\n"+
+      alert("⚠️ Could not download "+dlFailed+" video(s) for export.\n\n"+
+        "Firebase Storage CORS must be configured:\n\n"+
         "1. Install Google Cloud CLI: https://cloud.google.com/sdk/docs/install\n"+
-        "2. Create a file called cors.json with:\n"+
+        "2. Create cors.json:\n"+
         '[{"origin":["*"],"method":["GET"],"maxAgeSeconds":3600}]\n\n'+
-        "3. Run: gsutil cors set cors.json gs://YOUR-BUCKET-NAME.appspot.com\n\n"+
-        "Export will continue but video frames may appear black.";
-      alert(msg);
+        "3. Run: gsutil cors set cors.json gs://YOUR-BUCKET.appspot.com\n\n"+
+        "Export will try to continue but may produce a black video.");
     }
 
-    /* ── Step 2: Create export video elements from blob URLs + verify they load ── */
-    setExportFmt("Preparing clips...");
+    /* ── Step 2: Create VIDEO elements (for drawImage — NOT connected to AudioContext) ── */
+    setExportFmt("Preparing video...");
     const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
-    const hideCss="position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none";
-    const exportVids={};
-
-    /* Helper: create a video element and wait until it has decodable frames */
-    const createExportVid=(c)=>new Promise(resolve=>{
-      const vel=document.createElement("video");
-      vel.playsInline=true;vel.preload="auto";vel.muted=true;
-      vel.crossOrigin="anonymous";/* safe for blob URLs (same-origin) */
-      vel.style.cssText=hideCss;
-      const src=blobUrlMap[c.url]||c.url;
-      vel.src=src;
-      document.body.appendChild(vel);
-
-      /* Wait for video to have decodable data (readyState >= 3) */
-      const checkReady=()=>{
-        if(vel.readyState>=3){
-          exportVids[c.id]=vel;resolve();return;
-        }
-        /* Try play+pause to force decode */
-        vel.play().then(()=>{vel.pause();
-          if(vel.readyState>=2){exportVids[c.id]=vel;resolve();}
-          else{setTimeout(checkReady,200);}
-        }).catch(()=>{setTimeout(checkReady,200);});
-      };
-
-      vel.addEventListener("loadeddata",()=>checkReady(),{once:true});
-      vel.load();
-
-      /* Timeout: 15 seconds per clip */
-      setTimeout(()=>{if(!exportVids[c.id]){exportVids[c.id]=vel;resolve();}},15000);
-    });
+    const videoEls={};/* clipId → HTMLVideoElement (for drawing only) */
 
     for(let i=0;i<allClips.length;i++){
-      setExportFmt(`Loading clip ${i+1}/${allClips.length}...`);
-      await createExportVid(allClips[i]);
+      const c=allClips[i];
+      setExportFmt(`Loading video ${i+1}/${allClips.length}...`);
+      const vel=document.createElement("video");
+      vel.playsInline=true;vel.preload="auto";vel.muted=true;/* muted — audio handled separately */
+      vel.style.cssText=hideCss;
+      vel.src=blobUrlMap[c.url]||c.url;
+      document.body.appendChild(vel);
+
+      /* Wait for video to have actual decodable frames */
+      await new Promise(resolve=>{
+        let resolved=false;
+        const done=()=>{if(!resolved){resolved=true;videoEls[c.id]=vel;resolve();}};
+        vel.addEventListener("canplaythrough",done,{once:true});
+        vel.addEventListener("loadeddata",()=>{
+          /* Force-decode: play briefly then pause to trigger frame decode */
+          vel.play().then(()=>{setTimeout(()=>{vel.pause();done();},100);}).catch(()=>done());
+        },{once:true});
+        vel.load();
+        setTimeout(done,15000);/* 15s safety timeout */
+      });
     }
 
-    /* ── Step 3: Verify drawImage actually works (CORS test) ── */
-    setExportFmt("Verifying...");
-    const testCvs=document.createElement("canvas");testCvs.width=4;testCvs.height=4;
+    /* ── Step 3: Verify drawImage actually works ── */
+    setExportFmt("Verifying canvas...");
+    const testCvs=document.createElement("canvas");testCvs.width=16;testCvs.height=16;
     const testCx=testCvs.getContext("2d");
-    let canDraw=true;
-    const firstClip=allClips[0];const firstVel=exportVids[firstClip?.id];
+    const firstVel=videoEls[allClips[0]?.id];
+    let drawWorks=false;
     if(firstVel&&firstVel.readyState>=2){
-      testCx.fillStyle="#000";testCx.fillRect(0,0,4,4);
-      try{testCx.drawImage(firstVel,0,0,4,4);
-        /* Check if pixels are non-black */
-        const px=testCx.getImageData(0,0,4,4).data;
-        let allBlack=true;for(let i=0;i<px.length;i+=4){if(px[i]>5||px[i+1]>5||px[i+2]>5){allBlack=false;break;}}
-        if(allBlack){canDraw=false;}
-      }catch(e){canDraw=false;}
-    }
-    if(!canDraw&&dlFailed>0){
-      alert("Export cannot draw video frames (CORS restriction). Please configure Firebase Storage CORS and try again.");
-      Object.values(exportVids).forEach(v=>{try{v.pause();document.body.removeChild(v);}catch(e){}});
-      Object.values(blobUrlMap).forEach(u=>{if(u&&u.startsWith("blob:"))try{URL.revokeObjectURL(u);}catch(e){}});
-      setExporting(false);return;
+      testCx.fillStyle="#000";testCx.fillRect(0,0,16,16);
+      try{
+        testCx.drawImage(firstVel,0,0,16,16);
+        const px=testCx.getImageData(0,0,16,16).data;
+        for(let i=0;i<px.length;i+=4){if(px[i]>3||px[i+1]>3||px[i+2]>3){drawWorks=true;break;}}
+      }catch(e){/* SecurityError = tainted canvas = CORS problem */}
     }
 
-    /* ── Step 4: Canvas + MediaRecorder setup ── */
-    const cvs=document.createElement("canvas");cvs.width=1920;cvs.height=1080;const cx=cvs.getContext("2d");
-    /* Use captureStream(0) — manual frame capture mode for precise control */
-    const cStream=cvs.captureStream(0);
-    const vTrack=cStream.getVideoTracks()[0];
+    if(!drawWorks){
+      const proceed=confirm(
+        "⚠️ Canvas draw test failed — exported video may be black.\n\n"+
+        "This usually means Firebase Storage CORS is not configured.\n"+
+        "See console for details.\n\n"+
+        "Press OK to try anyway, or Cancel to abort.");
+      console.error("[Export] drawImage test failed. readyState=",firstVel?.readyState,
+        "dlFailed=",dlFailed,"blobUrl=",blobUrlMap[allClips[0]?.url]);
+      if(!proceed){
+        Object.values(videoEls).forEach(v=>{try{v.pause();document.body.removeChild(v);}catch(e){}});
+        Object.values(blobUrlMap).forEach(u=>{if(u&&u.startsWith("blob:")&&!allUrls.has(u))try{URL.revokeObjectURL(u);}catch(e){}});
+        setExporting(false);return;
+      }
+    }
 
-    /* Audio context for mixing clip audio */
+    /* ── Step 4: Create AUDIO elements (connected to AudioContext for sound capture) ── */
+    setExportFmt("Preparing audio...");
     const actx=new(window.AudioContext||window.webkitAudioContext)();await actx.resume();
     const aDst=actx.createMediaStreamDestination();
-    /* Connect ALL export video elements to audio graph */
-    const audioNodes={};
-    Object.entries(exportVids).forEach(([cid,vel])=>{
-      try{const src=actx.createMediaElementSource(vel);const gain=actx.createGain();gain.gain.value=0;src.connect(gain).connect(aDst);audioNodes[cid]={src,gain};}catch(e){}
-    });
-    const eA=document.createElement("audio");eA.volume=1;eA.style.cssText=hideCss;document.body.appendChild(eA);
-    const aSrc=actx.createMediaElementSource(eA);const aGain=actx.createGain();aSrc.connect(aGain).connect(aDst);
 
+    /* Per-clip audio elements — these ARE connected to AudioContext (but never drawn to canvas) */
+    const audioEls={};const audioGains={};
+    allClips.forEach(c=>{
+      try{
+        const ael=document.createElement("audio");
+        ael.preload="auto";ael.style.cssText=hideCss;
+        ael.src=blobUrlMap[c.url]||c.url;
+        document.body.appendChild(ael);ael.load();
+        const src=actx.createMediaElementSource(ael);
+        const gain=actx.createGain();gain.gain.value=0;
+        src.connect(gain).connect(aDst);
+        audioEls[c.id]=ael;audioGains[c.id]=gain;
+      }catch(e){}
+    });
+
+    /* Separate audio track element for A1/A2 music tracks */
+    const eA=document.createElement("audio");eA.volume=1;eA.style.cssText=hideCss;document.body.appendChild(eA);
+    let eASrc=null,eAGain=null;
+    try{eASrc=actx.createMediaElementSource(eA);eAGain=actx.createGain();eASrc.connect(eAGain).connect(aDst);}catch(e){}
+
+    /* ── Step 5: Canvas + MediaRecorder ── */
+    const cvs=document.createElement("canvas");cvs.width=1920;cvs.height=1080;
+    const cx=cvs.getContext("2d");
+    const cStream=cvs.captureStream(30);
     const mStream=new MediaStream([...cStream.getVideoTracks(),...aDst.stream.getAudioTracks()]);
     const mimes=["video/mp4;codecs=avc1.42E01E,mp4a.40.2","video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
     let mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||"video/webm";
     const isMP4=mime.startsWith("video/mp4");const ext=isMP4?"mp4":"webm";
-    setExportFmt(isMP4?"Exporting MP4":"Exporting WebM");
+    setExportFmt(isMP4?"Exporting MP4…":"Exporting WebM…");
     const rec=new MediaRecorder(mStream,{mimeType:mime,videoBitsPerSecond:isMP4?25000000:20000000,audioBitsPerSecond:320000});
     const chunks=[];rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
 
     const cleanup=()=>{
       try{actx.close();}catch(e){}
-      Object.values(exportVids).forEach(v=>{try{v.pause();v.removeAttribute("src");v.load();document.body.removeChild(v);}catch(e){}});
+      Object.values(videoEls).forEach(v=>{try{v.pause();v.removeAttribute("src");v.load();document.body.removeChild(v);}catch(e){}});
+      Object.values(audioEls).forEach(a=>{try{a.pause();a.removeAttribute("src");a.load();document.body.removeChild(a);}catch(e){}});
       try{eA.pause();eA.removeAttribute("src");eA.load();document.body.removeChild(eA);}catch(e){}
-      Object.values(blobUrlMap).forEach(u=>{if(u&&u.startsWith("blob:"))try{URL.revokeObjectURL(u);}catch(e){}});
+      Object.values(blobUrlMap).forEach(u=>{if(u&&u.startsWith("blob:")&&!allUrls.has(u))try{URL.revokeObjectURL(u);}catch(e){}});
     };
 
-    /* draw spotlight overlay on canvas */
+    /* draw spotlight overlay */
     const drawSpot=(tag)=>{
       const tp=clipProps[tag.id]||{};const ss=tp.spotScale||tag.spotScale||1;
       const sx=(tag.spotX||50)/100*1920,sy=(tag.spotY||50)/100*1080;
@@ -1116,106 +1126,100 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       cx.restore();
     };
 
-    /* Helper: seek a video and WAIT for the seek to complete */
-    const seekAndWait=(vel,time)=>new Promise(resolve=>{
-      if(!vel||vel.readyState<1){resolve();return;}
-      const t=Math.max(0,time);
-      if(Math.abs(vel.currentTime-t)<0.05){resolve();return;}
-      vel.addEventListener("seeked",()=>resolve(),{once:true});
-      vel.currentTime=t;
-      setTimeout(resolve,500);/* safety timeout */
+    /* seek helper — waits for seeked event */
+    const seekWait=(el,t)=>new Promise(r=>{
+      if(!el||el.readyState<1){r();return;}
+      const tm=Math.max(0,t);if(Math.abs(el.currentTime-tm)<0.05){r();return;}
+      el.addEventListener("seeked",r,{once:true});el.currentTime=tm;setTimeout(r,400);
     });
 
-    /* ── Step 5: Frame-by-frame export loop ──
-       Steps through time at 30fps. For each frame:
-       1. Find active clip/tag
-       2. Seek the video element and WAIT for it
-       3. Draw to canvas
-       4. Manually capture the frame
-       This is slower than real-time but guarantees every frame has content. */
-    rec.start(1000);
-    const FPS=30;const frameDur=1/FPS;
-    let ph=0,pC=null,pT=null,pA=null,activeExVel=null;
-
-    const processFrame=async()=>{
-      if(exportCancelRef.current){rec.stop();return false;}
-      if(ph>=cEnd){rec.stop();return false;}
-      setExportProgress(ph/cEnd);
-      const cl=findActiveClip(ph),tg=findActiveTag(ph),au=findActiveAudio(ph);
-      cx.fillStyle="#000";cx.fillRect(0,0,1920,1080);
-
-      if(tg){
-        if(pT!==tg.id){pT=tg.id;
-          let c2=null;if(tg.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tg.clipId)c2=c;}));}
-          if(!c2)c2=findActiveClip(tg._tlStart);
-          if(c2){pC=c2.id;activeExVel=exportVids[c2.id]||null;
-            /* Mute all audio, pause active */
-            Object.values(audioNodes).forEach(n=>n.gain.gain.value=0);
-            if(activeExVel){await seekAndWait(activeExVel,tg.sourceTime||c2.clipStart);activeExVel.pause();}
-          }
-        }
-        if(activeExVel&&activeExVel.readyState>=2)try{cx.drawImage(activeExVel,0,0,1920,1080);}catch(e){}
-        drawSpot(tg);
-        aGain.gain.value=0;if(pA){eA.pause();pA=null;}
-
-      }else if(cl){
-        const wt=pT!==null;pT=null;
-        const pr=clipProps[cl.id]||{volume:100,scale:1};
-        const fo=freezeOffset(cl.trackStart,ph);
-        const vt=cl.clipStart+(ph-cl.trackStart-fo);
-
-        if(pC!==cl.id||wt){
-          pC=cl.id;
-          /* Mute previous, switch to new clip */
-          Object.values(audioNodes).forEach(n=>n.gain.gain.value=0);
-          activeExVel=exportVids[cl.id]||null;
-          if(activeExVel){
-            activeExVel.muted=false;
-            await seekAndWait(activeExVel,vt);
-            activeExVel.play().catch(()=>{});
-          }
-        }
-        /* Set volume for active clip */
-        if(audioNodes[cl.id])audioNodes[cl.id].gain.gain.value=pr.volume/100;
-
-        const sc=pr.scale||1;
-        if(activeExVel&&activeExVel.readyState>=2){
-          if(sc!==1){cx.save();cx.translate(960,540);cx.scale(sc,sc);cx.translate(-960,-540);try{cx.drawImage(activeExVel,0,0,1920,1080);}catch(e){}cx.restore();}
-          else{try{cx.drawImage(activeExVel,0,0,1920,1080);}catch(e){}}
-        }
-
-        if(au){const ap=clipProps[au.id]||{volume:100};const af=freezeOffset(au.trackStart,ph);const at=au.clipStart+(ph-au.trackStart-af);
-          if(pA!==au.id){pA=au.id;eA.src=blobUrlMap[au.url]||au.url;eA.currentTime=Math.max(0,at);eA.play().catch(()=>{});}aGain.gain.value=ap.volume/100;}
-        else{if(pA){eA.pause();pA=null;}aGain.gain.value=0;}
-
-      }else{
-        pC=null;pT=null;activeExVel=null;
-        Object.values(audioNodes).forEach(n=>n.gain.gain.value=0);
-        aGain.gain.value=0;if(pA){eA.pause();pA=null;}
-      }
-
-      /* Manually capture this frame to the stream */
-      if(vTrack&&vTrack.requestFrame)vTrack.requestFrame();
-      ph+=frameDur;
-      return true;
-    };
-
-    /* Run the frame loop — use setTimeout to keep UI responsive */
+    /* ── Step 6: Real-time animation loop ──
+       Uses rAF for proper timing + audio sync.
+       Video elements are pure (no AudioContext) so drawImage works.
+       Audio elements handle sound capture separately. */
     await new Promise(resolve=>{
       rec.onstop=()=>{
         const blob=new Blob(chunks,{type:mime.split(";")[0]});
-        if(!exportCancelRef.current){const u=URL.createObjectURL(blob);const a=document.createElement("a");a.href=u;a.download=`AthletesUSA_Highlight_${new Date().toISOString().slice(0,10)}.${ext}`;document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(u),2000);}
+        if(!exportCancelRef.current){
+          const u=URL.createObjectURL(blob);const a=document.createElement("a");
+          a.href=u;a.download=`AthletesUSA_Highlight_${new Date().toISOString().slice(0,10)}.${ext}`;
+          document.body.appendChild(a);a.click();document.body.removeChild(a);
+          setTimeout(()=>URL.revokeObjectURL(u),2000);
+        }
         cleanup();setExporting(false);resolve();
       };
-      const runFrames=async()=>{
-        /* Process multiple frames per batch for speed */
-        for(let i=0;i<3;i++){
-          const cont=await processFrame();
-          if(!cont)return;
+      rec.start(1000);
+
+      let ph=0,lt=performance.now(),pC=null,pT=null,pA=null;
+      let curVidEl=null;/* current video element being drawn */
+      let curAudEl=null;/* current audio element playing */
+
+      const step=(now)=>{
+        if(exportCancelRef.current){rec.stop();return;}
+        const dt=Math.min((now-lt)/1000,0.1);lt=now;ph+=dt;
+        if(ph>=cEnd){rec.stop();return;}
+        setExportProgress(ph/cEnd);
+
+        const cl=findActiveClip(ph),tg=findActiveTag(ph),au=findActiveAudio(ph);
+        cx.fillStyle="#000";cx.fillRect(0,0,1920,1080);
+
+        if(tg){
+          if(pT!==tg.id){pT=tg.id;
+            let c2=null;if(tg.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tg.clipId)c2=c;}));}
+            if(!c2)c2=findActiveClip(tg._tlStart);
+            if(c2){
+              pC=c2.id;
+              curVidEl=videoEls[c2.id]||null;
+              if(curVidEl){curVidEl.currentTime=Math.max(0,tg.sourceTime||c2.clipStart);curVidEl.pause();}
+              /* Mute all clip audio */
+              Object.values(audioGains).forEach(g=>g.gain.value=0);
+              if(curAudEl){curAudEl.pause();curAudEl=null;}
+            }
+          }
+          if(curVidEl&&curVidEl.readyState>=2)try{cx.drawImage(curVidEl,0,0,1920,1080);}catch(e){}
+          drawSpot(tg);
+          if(eAGain)eAGain.gain.value=0;if(pA){eA.pause();pA=null;}
+
+        }else if(cl){
+          const wt=pT!==null;pT=null;
+          const pr=clipProps[cl.id]||{volume:100,scale:1};
+          const fo=freezeOffset(cl.trackStart,ph);
+          const vt=cl.clipStart+(ph-cl.trackStart-fo);
+
+          if(pC!==cl.id||wt){
+            pC=cl.id;
+            /* Switch VIDEO element (pure, for drawing) */
+            curVidEl=videoEls[cl.id]||null;
+            if(curVidEl){curVidEl.currentTime=Math.max(0,vt);curVidEl.play().catch(()=>{});}
+            /* Switch AUDIO element (connected to AudioContext) */
+            Object.values(audioGains).forEach(g=>g.gain.value=0);
+            if(curAudEl)curAudEl.pause();
+            curAudEl=audioEls[cl.id]||null;
+            if(curAudEl){curAudEl.currentTime=Math.max(0,vt);curAudEl.play().catch(()=>{});}
+          }
+          if(audioGains[cl.id])audioGains[cl.id].gain.value=pr.volume/100;
+
+          const sc=pr.scale||1;
+          if(curVidEl&&curVidEl.readyState>=2){
+            if(sc!==1){cx.save();cx.translate(960,540);cx.scale(sc,sc);cx.translate(-960,-540);try{cx.drawImage(curVidEl,0,0,1920,1080);}catch(e){}cx.restore();}
+            else{try{cx.drawImage(curVidEl,0,0,1920,1080);}catch(e){}}
+          }
+
+          if(au){const ap=clipProps[au.id]||{volume:100};const af=freezeOffset(au.trackStart,ph);const at=au.clipStart+(ph-au.trackStart-af);
+            if(pA!==au.id){pA=au.id;eA.src=blobUrlMap[au.url]||au.url;eA.currentTime=Math.max(0,at);eA.play().catch(()=>{});}
+            if(eAGain)eAGain.gain.value=ap.volume/100;}
+          else{if(pA){eA.pause();pA=null;}if(eAGain)eAGain.gain.value=0;}
+
+        }else{
+          pC=null;pT=null;
+          if(curVidEl){curVidEl.pause();curVidEl=null;}
+          if(curAudEl){curAudEl.pause();curAudEl=null;}
+          Object.values(audioGains).forEach(g=>g.gain.value=0);
+          if(eAGain)eAGain.gain.value=0;if(pA){eA.pause();pA=null;}
         }
-        setTimeout(runFrames,1);/* yield to UI */
+        requestAnimationFrame(step);
       };
-      runFrames();
+      requestAnimationFrame(step);
     });
   },[tracks,tagTrack,audioTracks,resolvedTags,findActiveClip,findActiveTag,findActiveAudio,freezeOffset,clipProps]);
 
