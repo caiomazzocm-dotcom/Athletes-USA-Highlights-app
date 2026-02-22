@@ -669,7 +669,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const[resizingClipId,setResizingClipId]=useState(null);const[resizingEdge,setResizingEdge]=useState(null);const[resizingTrackId,setResizingTrackId]=useState(null);
   const[spotlightMode,setSpotlightMode]=useState(null);
   const[magnetOn,setMagnetOn]=useState(true);const[snapOn,setSnapOn]=useState(true);const[snapLine,setSnapLine]=useState(null);const snapLineTimer=useRef(null);
-  const videoRef=useRef(null);const audioRef=useRef(null);const tlScrollRef=useRef(null);const animRef=useRef(null);const lastTRef=useRef(null);const prevClipRef=useRef(null);const prevAudioRef=useRef(null);const prevTagRef=useRef(null);const previewRef=useRef(null);
+  const audioRef=useRef(null);const tlScrollRef=useRef(null);const animRef=useRef(null);const lastTRef=useRef(null);const prevClipRef=useRef(null);const prevAudioRef=useRef(null);const prevTagRef=useRef(null);const previewRef=useRef(null);
+  /* ═══ VIDEO POOL: one <video> per unique clip URL — never change src during playback ═══ */
+  const videoPoolRef=useRef({});/* { [clipId]: HTMLVideoElement } */
+  const videoContainerRef=useRef(null);
+  const activeVideoRef=useRef(null);/* currently-visible video element */
   const edVidRef=useRef(null);const edMusicRef=useRef(null);
 
   const playerColor=i=>PLAYER_COLORS[i%PLAYER_COLORS.length];
@@ -730,6 +734,41 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     at.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>mx)mx=e;}));
     setTlDur(mx+30);
   },[]);
+
+  /* ═══ VIDEO POOL MANAGEMENT ═══
+     Professional NLE technique: keep one pre-loaded <video> per clip on the timeline.
+     Never change .src during playback — just toggle visibility.
+     This eliminates the black-screen delay when switching between clips. */
+  useEffect(()=>{
+    const container=videoContainerRef.current;if(!container)return;
+    const pool=videoPoolRef.current;
+    /* Collect every clip across all video tracks */
+    const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
+    const currentIds=new Set(allClips.map(c=>c.id));
+    /* Remove video elements for clips no longer on the timeline */
+    Object.keys(pool).forEach(cid=>{
+      if(!currentIds.has(cid)){
+        const vel=pool[cid];if(vel.parentNode)vel.parentNode.removeChild(vel);
+        try{vel.pause();vel.removeAttribute("src");vel.load();}catch(e){}
+        delete pool[cid];
+      }
+    });
+    /* Create/update video elements for every timeline clip */
+    allClips.forEach(c=>{
+      if(!pool[c.id]){
+        const vel=document.createElement("video");
+        vel.preload="auto";vel.playsInline=true;vel.muted=false;
+        vel.style.cssText="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:none;";
+        vel.src=c.url;vel.load();
+        container.appendChild(vel);
+        pool[c.id]=vel;
+      } else {
+        /* If URL changed (e.g. blob re-hydrated), update it */
+        const vel=pool[c.id];
+        if(vel.getAttribute("src")!==c.url){vel.src=c.url;vel.load();}
+      }
+    });
+  },[tracks]);
 
   const findActiveTag=useCallback(ph=>{for(const tg of resolvedTags){if(ph>=tg._tlStart&&ph<tg._tlStart+tg.duration)return tg;}return null;},[resolvedTags]);
 
@@ -1010,39 +1049,96 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     return mx;
   },[tracks,resolvedTags,audioTracks]);
 
+  /* ═══ PLAYBACK ANIMATION LOOP ═══ */
   useEffect(()=>{if(!isPlaying){
-    /* When playback stops, pause the video/audio elements immediately */
-    const v=videoRef.current;if(v&&!v.paused)v.pause();
+    /* When playback stops, pause ALL pool videos + audio immediately */
+    const pool=videoPoolRef.current;Object.values(pool).forEach(vel=>{if(!vel.paused)vel.pause();});
     const a=audioRef.current;if(a&&!a.paused)a.pause();
     return;
   }const anim=now=>{const dt=(now-lastTRef.current)/1000;lastTRef.current=now;setPlayhead(p=>{const n=p+dt;if(contentEnd>0&&n>=contentEnd){setIsPlaying(false);
-    const v=videoRef.current;if(v)v.pause();const a=audioRef.current;if(a)a.pause();
+    const pool=videoPoolRef.current;Object.values(pool).forEach(vel=>{vel.pause();});
+    const a=audioRef.current;if(a)a.pause();
     return contentEnd;}return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,contentEnd]);
 
-  useEffect(()=>{const clip=findActiveClip(playhead);const tag=findActiveTag(playhead);const v=videoRef.current;if(!v)return;
-    if(!clip&&!tag){v.pause();prevClipRef.current=null;prevTagRef.current=null;v.removeAttribute("src");v.load();return;}
+  /* ═══ VIDEO POOL SYNC — the core NLE playback engine ═══
+     Instead of changing src on one <video>, we have one pre-loaded <video> per clip.
+     We just show/hide and seek — instant switching, zero black frames. */
+  useEffect(()=>{
+    const pool=videoPoolRef.current;
+    const clip=findActiveClip(playhead);
+    const tag=findActiveTag(playhead);
+
+    /* Helper: show one video element, hide all others */
+    const showOnly=(clipId,seekTo,vol,shouldPlay)=>{
+      Object.entries(pool).forEach(([cid,vel])=>{
+        if(cid===clipId){
+          vel.style.display="block";
+          vel.volume=vol;
+          if(Math.abs(vel.currentTime-seekTo)>0.15)vel.currentTime=Math.max(0,seekTo);
+          if(shouldPlay&&vel.paused)vel.play().catch(()=>{});
+          if(!shouldPlay&&!vel.paused)vel.pause();
+          activeVideoRef.current=vel;
+        } else {
+          vel.style.display="none";
+          if(!vel.paused)vel.pause();
+        }
+      });
+    };
+
+    /* Helper: hide all videos */
+    const hideAll=()=>{
+      Object.values(pool).forEach(vel=>{vel.style.display="none";if(!vel.paused)vel.pause();});
+      activeVideoRef.current=null;
+    };
+
+    /* No clip and no tag at playhead — hide everything */
+    if(!clip&&!tag){hideAll();prevClipRef.current=null;prevTagRef.current=null;return;}
+
+    /* TAG (freeze/spotlight) — show parent clip's video, paused at sourceTime */
     if(tag){
-      if(prevTagRef.current===tag.id){v.pause();return;}
+      if(prevTagRef.current===tag.id)return;/* same tag, no change needed */
       prevTagRef.current=tag.id;
-      /* Tag is source-anchored — find its parent clip by clipId and seek to sourceTime */
-      let clip2=null;if(tag.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tag.clipId)clip2=c;}));}
+      let clip2=null;
+      if(tag.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tag.clipId)clip2=c;}));}
       if(!clip2)clip2=findActiveClip(tag._tlStart);
-      if(clip2){prevClipRef.current=clip2.id;v.src=clip2.url;v.currentTime=Math.max(0,tag.sourceTime||clip2.clipStart);v.volume=0;v.pause();}
-      else{prevClipRef.current=null;v.pause();v.removeAttribute("src");v.load();}
+      if(clip2){
+        prevClipRef.current=clip2.id;
+        showOnly(clip2.id,Math.max(0,tag.sourceTime||clip2.clipStart),0,false);
+      } else {hideAll();prevClipRef.current=null;}
       return;
     }
+
+    /* NORMAL CLIP playback */
     const wasInTag=prevTagRef.current!==null;prevTagRef.current=null;
-    const pr=clipProps[clip.id]||{volume:100,scale:1};const fo=freezeOffset(clip.trackStart,playhead);const vt=clip.clipStart+(playhead-clip.trackStart-fo);
-    v.volume=pr.volume/100;
+    const pr=clipProps[clip.id]||{volume:100,scale:1};
+    const fo=freezeOffset(clip.trackStart,playhead);
+    const vt=clip.clipStart+(playhead-clip.trackStart-fo);
+    const vol=pr.volume/100;
+
     if(prevClipRef.current!==clip.id){
-      prevClipRef.current=clip.id;v.src=clip.url;
-      const seekAndPlay=()=>{v.currentTime=Math.max(0,vt);if(isPlaying)v.play().catch(()=>{});};
-      if(v.readyState>=2)seekAndPlay();
-      else v.addEventListener("loadeddata",seekAndPlay,{once:true});
+      /* CLIP SWITCH — just toggle visibility, video is already preloaded! */
+      prevClipRef.current=clip.id;
+      showOnly(clip.id,vt,vol,isPlaying);
+    } else if(wasInTag){
+      /* Returning from a tag — resume playback */
+      showOnly(clip.id,vt,vol,isPlaying);
+    } else if(!isPlaying){
+      /* Scrubbing — seek to correct position */
+      const vel=pool[clip.id];
+      if(vel){
+        vel.style.display="block";vel.volume=vol;
+        if(!vel.paused)vel.pause();
+        if(Math.abs(vel.currentTime-vt)>0.1)vel.currentTime=Math.max(0,vt);
+        activeVideoRef.current=vel;
+        /* Hide others */
+        Object.entries(pool).forEach(([cid,v2])=>{if(cid!==clip.id){v2.style.display="none";if(!v2.paused)v2.pause();}});
+      }
+    } else {
+      /* Same clip, playing — just ensure it's playing and correct volume */
+      const vel=pool[clip.id];
+      if(vel){vel.volume=vol;if(vel.paused)vel.play().catch(()=>{});}
     }
-    else if(wasInTag){v.currentTime=Math.max(0,vt);if(isPlaying)v.play().catch(()=>{});}
-    else if(!isPlaying){v.pause();if(Math.abs(v.currentTime-vt)>.1)v.currentTime=Math.max(0,vt);}
-    else{if(v.paused)v.play().catch(()=>{});}},[playhead,isPlaying,findActiveClip,findActiveTag,freezeOffset,clipProps]);
+  },[playhead,isPlaying,findActiveClip,findActiveTag,freezeOffset,clipProps,tracks]);
 
   const prevAudioTagRef=useRef(null);
   useEffect(()=>{const tag=findActiveTag(playhead);const clip=findActiveAudio(playhead);const a=audioRef.current;
@@ -1188,7 +1284,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     <audio ref={audioRef} preload="auto"/>
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",minHeight:0,padding:8}}>
       <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}} style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":"default"}}>
-        <video ref={videoRef} preload="auto" style={{width:"100%",height:"100%",objectFit:"contain",transform:actProps?`scale(${actProps.scale})`:undefined}} playsInline/>
+        {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
+        <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`scale(${actProps.scale})`:undefined}}/>
         {activeTag&&(()=>{const tProps=clipProps[activeTag.id]||{spotScale:1.0};const ss=tProps.spotScale||activeTag.spotScale||1.0;const sx=activeTag.spotX||50;const sy=activeTag.spotY||50;const rad=Math.round(80*ss);const diam=rad*2;
           const handleSpotDrag=e=>{e.preventDefault();e.stopPropagation();const container=previewRef.current;if(!container)return;const rect=container.getBoundingClientRect();const tagId=activeTag.id;
             const onMove=ev=>{const nx=((ev.clientX-rect.left)/rect.width*100);const ny=((ev.clientY-rect.top)/rect.height*100);updateTagPos(tagId,nx,ny);};
