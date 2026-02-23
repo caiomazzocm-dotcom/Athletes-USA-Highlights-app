@@ -1154,27 +1154,52 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       let curVidEl=null;/* current video element being drawn */
       let curAudEl=null;/* current audio element playing */
 
-      /* ── drawVideoContain: replicates CSS object-fit:contain on canvas ──
-         Centers the video preserving aspect ratio, with black bars (pillarbox/letterbox).
-         Then applies the editor's scale (zoom) around the center. */
+      /* ── drawVideoContain: replicates CSS object-fit:contain + transform:scale() ──
+         Uses 9-arg drawImage with source-region cropping for maximum quality.
+         Instead of draw-small-then-scale (2 passes, quality loss), this computes
+         exactly which portion of the source video is visible and draws it directly
+         to the output canvas in one pass — the browser's built-in scaler handles it. */
+      cx.imageSmoothingEnabled=true;cx.imageSmoothingQuality="high";
       const drawVideoContain=(vel,scale)=>{
         if(!vel||vel.readyState<2)return;
         const vw=vel.videoWidth||1920,vh=vel.videoHeight||1080;
         const cw=1920,ch=1080;
-        /* Compute contain dimensions */
+        const s=scale||1;
+
+        /* Step 1: compute "contained" size (same as object-fit:contain) */
         const vidAspect=vw/vh,canAspect=cw/ch;
         let dw,dh;
-        if(vidAspect>canAspect){dw=cw;dh=cw/vidAspect;}/* wider than canvas → pillarbox top/bottom */
-        else{dh=ch;dw=ch*vidAspect;}/* taller than canvas → pillarbox left/right */
-        const dx=(cw-dw)/2,dy=(ch-dh)/2;
+        if(vidAspect>canAspect){dw=cw;dh=cw/vidAspect;}
+        else{dh=ch;dw=ch*vidAspect;}
+
+        /* Step 2: after scaling, the video occupies sdw×sdh on canvas, centered */
+        const sdw=dw*s,sdh=dh*s;
+        const svx=(cw-sdw)/2,svy=(ch-sdh)/2;/* top-left of scaled video on canvas */
+
+        /* Step 3: compute source crop — what region of the source video is visible
+           on the 1920×1080 canvas. This avoids double-scaling for better quality. */
+        /* Canvas pixel (cpx,cpy) → source pixel:
+           srcPx = (cpx - svx) / sdw * vw
+           srcPy = (cpy - svy) / sdh * vh */
+        let sx=(0-svx)/sdw*vw, sy=(0-svy)/sdh*vh;
+        let sx2=(cw-svx)/sdw*vw, sy2=(ch-svy)/sdh*vh;
+
+        /* Step 4: clamp source to valid video region, adjust dest accordingly */
+        let destX=0,destY=0,destX2=cw,destY2=ch;
+        if(sx<0){destX=(-sx)/(sx2-sx)*cw;sx=0;}
+        if(sy<0){destY=(-sy)/(sy2-sy)*ch;sy=0;}
+        if(sx2>vw){destX2=cw-(sx2-vw)/(sx2-sx)*cw;sx2=vw;}
+        if(sy2>vh){destY2=ch-(sy2-vh)/(sy2-sy)*ch;sy2=vh;}
+
+        const srcW=sx2-sx,srcH=sy2-sy;
+        const dstW=destX2-destX,dstH=destY2-destY;
+        if(srcW<=0||srcH<=0||dstW<=0||dstH<=0)return;
+
         try{
-          if(scale&&scale!==1){
-            cx.save();cx.translate(cw/2,ch/2);cx.scale(scale,scale);cx.translate(-cw/2,-ch/2);
-            cx.drawImage(vel,dx,dy,dw,dh);cx.restore();
-          }else{cx.drawImage(vel,dx,dy,dw,dh);}
+          /* Single-pass draw: source crop → dest region. Browser handles scaling internally. */
+          cx.drawImage(vel, sx,sy,srcW,srcH, destX,destY,dstW,dstH);
         }catch(e){}
       };
-      cx.imageSmoothingEnabled=true;cx.imageSmoothingQuality="high";
 
       const step=(now)=>{
         if(exportCancelRef.current){rec.stop();return;}
