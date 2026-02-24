@@ -10,6 +10,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
@@ -32,6 +33,7 @@
     .ath-header-row .ath-brand-sep{display:none!important}
     .ath-header-info{font-size:15px!important}
     .ath-signout{padding:6px 12px!important;font-size:11px!important}
+    .ath-zip-btn{padding:6px 10px!important;font-size:10px!important}
     .ath-photos-row{flex-wrap:wrap!important}
     .ath-desc{font-size:11px!important}
     .ath-cats-scroll{padding:16px!important;overflow-x:auto!important;overflow-y:auto!important}
@@ -139,8 +141,51 @@ const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("playe
 const Waveform=({w,h,color,seed=0})=>{const bars=Math.max(4,Math.floor(w/3));const pts=[];let s=seed||1;for(let i=0;i<bars;i++){s=(s*16807+i*13)%2147483647;const n=(s%1000)/1000;const amp=0.2+n*0.8;pts.push(amp);}
   return(<svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{display:"block"}}>{pts.map((a,i)=>{const bw=w/bars;const bh=Math.max(1,a*h);return<rect key={i} x={i*bw} y={(h-bh)/2} width={Math.max(1,bw-1)} height={bh} fill={color} rx={0.5}/>;})}</svg>);};
 
-/* ═══ DOWNLOAD HELPER ═══ */
+/* ═══ DOWNLOAD HELPERS ═══ */
 const downloadImage=(url,filename)=>{const a=document.createElement("a");a.href=url;a.download=filename||"image.jpg";a.target="_blank";a.rel="noopener";document.body.appendChild(a);a.click();document.body.removeChild(a);};
+
+const sanitizeName=(s)=>s.replace(/[^a-zA-Z0-9_\-]/g,"_").replace(/_+/g,"_").replace(/^_|_$/g,"")||"Unnamed";
+
+const downloadPlayerZip=async(player,onProgress)=>{
+  if(typeof JSZip==="undefined"){alert("JSZip library not loaded. Please refresh and try again.");return{total:0,downloaded:0,missing:0};}
+  const zip=new JSZip();
+  const today=new Date().toISOString().slice(0,10);
+  const rootName=sanitizeName(player.name)+"_Clips_"+today;
+  const root=zip.folder(rootName);
+  const missing=[];
+  let totalFiles=0;let processed=0;
+  player.categories.forEach(cat=>totalFiles+=cat.videos.length);
+  if(onProgress)onProgress({phase:"fetching",pct:0,fetched:0,total:totalFiles});
+  for(const cat of player.categories){
+    const catFolder=root.folder(sanitizeName(cat.name));
+    for(const vid of cat.videos){
+      const url=vid.cloudUrl||vid.url;
+      if(!url){missing.push({id:vid.id,name:vid.name,category:cat.name,reason:"No URL"});processed++;if(onProgress)onProgress({phase:"fetching",pct:Math.round(processed/Math.max(1,totalFiles)*100),fetched:processed,total:totalFiles});continue;}
+      try{
+        const resp=await fetch(url);
+        if(!resp.ok)throw new Error("HTTP "+resp.status);
+        const blob=await resp.blob();
+        const ext=blob.type.includes("mp4")?"mp4":blob.type.includes("webm")?"webm":blob.type.includes("quicktime")?"mov":"mp4";
+        const fname=sanitizeName(cat.name)+"_"+sanitizeName(vid.name)+"_"+vid.id+"."+ext;
+        catFolder.file(fname,blob);
+      }catch(e){
+        missing.push({id:vid.id,name:vid.name,category:cat.name,reason:e.message});
+      }
+      processed++;
+      if(onProgress)onProgress({phase:"fetching",pct:Math.round(processed/Math.max(1,totalFiles)*100),fetched:processed,total:totalFiles});
+    }
+  }
+  if(missing.length>0){
+    let txt="MISSING FILES REPORT\nGenerated: "+new Date().toISOString()+"\nAthlete: "+player.name+"\n\n";
+    missing.forEach(m=>{txt+="- ["+m.category+"] "+m.name+" (id: "+m.id+") — "+m.reason+"\n";});
+    root.file("MISSING_FILES.txt",txt);
+  }
+  if(onProgress)onProgress({phase:"zipping",pct:0,fetched:processed,total:totalFiles});
+  const zipBlob=await zip.generateAsync({type:"blob",compression:"STORE"},{update(meta){if(onProgress)onProgress({phase:"zipping",pct:Math.round(meta.percent),fetched:processed,total:totalFiles});}});
+  const a=document.createElement("a");a.href=URL.createObjectURL(zipBlob);a.download=rootName+".zip";document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href);document.body.removeChild(a);},1000);
+  return{total:totalFiles,downloaded:totalFiles-missing.length,missing:missing.length};
+};
 
 /* ═══ HASH ROUTING HELPERS ═══ */
 const getHashRoute=()=>{const h=window.location.hash.replace(/^#\/?/,"").split("/")[0]||"";return h;};
@@ -499,12 +544,23 @@ function AthleteProfileForm({onSubmit,onBack}){
 }
 
 /* ═══════════ ATHLETE: UPLOAD PORTAL ═══════════ */
-function AthletePortal({player,onUpdatePlayer,onBack}){
+function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode}){
   const[editCat,setEditCat]=useState(null);const[editName,setEditName]=useState("");
   const[showAdd,setShowAdd]=useState(false);const[newCat,setNewCat]=useState("");
   const[uploadCat,setUploadCat]=useState(null);const fileRef=useRef(null);
   const[dragIdx,setDragIdx]=useState(null);const[overIdx,setOverIdx]=useState(null);
   const[uploadProg,setUploadProg]=useState(null);
+  const[zipProg,setZipProg]=useState(null);
+  const handleZipDownload=async()=>{
+    const totalClips=player.categories.reduce((s,c)=>s+c.videos.length,0);
+    if(totalClips===0&&!confirm("This athlete has no clips. Download zip with empty category folders?"))return;
+    setZipProg({phase:"fetching",pct:0,fetched:0,total:totalClips});
+    try{
+      const result=await downloadPlayerZip(player,setZipProg);
+      setZipProg(null);
+      if(result.missing>0)alert("Download complete. "+result.downloaded+"/"+result.total+" clips downloaded. "+result.missing+" file(s) missing — see MISSING_FILES.txt in the zip.");
+    }catch(e){console.error("Zip error:",e);setZipProg(null);alert("Zip download failed: "+e.message);}
+  };
 
   const handleUpload=async(catId,files)=>{
     const vids=[];
@@ -555,9 +611,16 @@ function AthletePortal({player,onUpdatePlayer,onBack}){
           <span className="ath-brand" style={{fontWeight:900,fontSize:16,color:"#fff",fontStyle:"italic",flexShrink:0}}>ATHLETES</span>
           <span className="ath-brand" style={{fontWeight:900,fontSize:16,color:C.coral,fontStyle:"italic",flexShrink:0}}>USA</span>
         </div>
-        <button className="ath-signout" onClick={onBack} style={{display:"flex",alignItems:"center",gap:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:"8px 18px",color:C.sub,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:1,flexShrink:0}}>
-          <LogOutIcon size={14}/> Sign Out
-        </button>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+          {isEditorMode&&<button className="ath-zip-btn" onClick={handleZipDownload} disabled={!!zipProg}
+            style={{display:"flex",alignItems:"center",gap:6,background:C.green+"18",border:`1px solid ${C.green}44`,borderRadius:8,padding:"8px 16px",color:C.green,cursor:zipProg?"wait":"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0,opacity:zipProg?0.6:1}}
+            onMouseEnter={e=>{if(!zipProg)e.currentTarget.style.background=C.green+"30";}} onMouseLeave={e=>{e.currentTarget.style.background=C.green+"18";}}>
+            <DownloadIcon size={14}/> Download All Clips
+          </button>}
+          <button className="ath-signout" onClick={onBack} style={{display:"flex",alignItems:"center",gap:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:"8px 18px",color:C.sub,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:1,flexShrink:0}}>
+            <LogOutIcon size={14}/> Sign Out
+          </button>
+        </div>
       </div>
       <div className="ath-photos-row" style={{display:"flex",gap:8,marginTop:8,marginBottom:4,alignItems:"center",flexWrap:"wrap"}}>
         <span style={{color:C.overlay,fontSize:11,fontWeight:600}}>Photos:</span>
@@ -645,6 +708,17 @@ function AthletePortal({player,onUpdatePlayer,onBack}){
           <div style={{height:"100%",background:"linear-gradient(90deg,#3b82f6,#2563eb)",borderRadius:6,transition:"width 0.2s ease",width:`${Math.round((uploadProg.pct||0)*100)}%`}}/>
         </div>
         <div style={{color:C.overlay,fontSize:10}}>{Math.round((uploadProg.pct||0)*100)}% uploaded</div>
+      </div>
+    </div>}
+    {zipProg&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
+      <div style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:16,padding:"36px 44px",width:420,textAlign:"center",animation:"fadeIn 0.3s ease-out",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+        <div style={{width:56,height:56,borderRadius:"50%",background:"linear-gradient(135deg,#22c55e22,#22c55e08)",border:"1px solid #22c55e33",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><DownloadIcon size={26} color={C.green}/></div>
+        <div style={{fontSize:16,fontWeight:800,color:"#fff",marginBottom:4,letterSpacing:0.5}}>{zipProg.phase==="fetching"?"DOWNLOADING CLIPS":"BUILDING ZIP"}</div>
+        <div style={{color:C.sub,fontSize:11,marginBottom:20}}>{zipProg.phase==="fetching"?`Clip ${zipProg.fetched} of ${zipProg.total}`:"Compressing files..."}</div>
+        <div style={{background:C.s0,borderRadius:6,height:8,overflow:"hidden",marginBottom:8}}>
+          <div style={{height:"100%",background:"linear-gradient(90deg,#22c55e,#16a34a)",borderRadius:6,transition:"width 0.2s ease",width:`${zipProg.pct||0}%`}}/>
+        </div>
+        <div style={{color:C.overlay,fontSize:10}}>{zipProg.pct||0}%</div>
       </div>
     </div>}
   </div>);
@@ -1985,7 +2059,7 @@ function App(){
       onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
     if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")}/>;
     if(athleteStep==="portal"&&activePlayer)return<AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
-      onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}/>;
+      isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}/>;
   }
 
   /* ── LANDING SCREENS (based on hash route) ── */
