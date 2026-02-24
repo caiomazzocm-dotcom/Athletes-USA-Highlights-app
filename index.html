@@ -1540,6 +1540,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             <span style={{color:C.text,fontSize:12,fontWeight:700,flex:1}}>{pl.name}</span>
             {pl.shirtNumber&&<span style={{color:pColor,fontSize:8,fontWeight:700,marginRight:2}}>#{pl.shirtNumber}</span>}
             <span style={{color:C.overlay,fontSize:9,background:C.s0,padding:"2px 6px",borderRadius:4}}>{totalVids}</span>
+            <button onClick={e=>{e.stopPropagation();downloadPlayerZip(pl,prog=>{}).then(r=>{if(r&&r.missing>0)alert(r.downloaded+"/"+r.total+" clips downloaded. "+r.missing+" missing — see MISSING_FILES.txt");}).catch(err=>alert("Zip failed: "+err.message));}}
+              style={{...ib,color:C.green,padding:2,marginLeft:2,opacity:0.7}} title="Download all clips as ZIP"
+              onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.7"}>
+              <DownloadIcon size={12}/>
+            </button>
           </div>
           {pExp&&<div style={{paddingBottom:4}}>
             <div style={{padding:"2px 14px 4px 36px",color:C.overlay,fontSize:9}}>Class {pl.recruitingClass}{pl.shirtNumber?" · #"+pl.shirtNumber:""}{pl.size?" · "+pl.size:""}{pl.positions&&pl.positions.length>0?" · "+pl.positions.join(", "):""}</div>
