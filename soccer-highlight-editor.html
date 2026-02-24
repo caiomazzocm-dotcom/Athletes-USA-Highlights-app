@@ -959,143 +959,143 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setIsPlaying(false);if(animRef.current)cancelAnimationFrame(animRef.current);
     setExporting(true);setExportProgress(0);exportCancelRef.current=false;
 
-    /* calc content end */
+    /* Master try/catch — ensures UI is ALWAYS restored even if export throws */
+    let exportContainer=null;
+    try{
+
+    /* ── PRE-COMPUTE A FLAT RENDER LIST ──
+       Instead of using findActiveClip/freezeOffset during export (which causes timing
+       bugs at cut boundaries), we pre-compute the exact render instruction for every
+       frame. This eliminates pauses/freezes at cuts. */
+    const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
+
+    /* Build a flat segment list: [{clipId, tlStart, tlEnd, srcStart, srcEnd, isTag, tag}] */
+    const segments=[];
+    allClips.forEach(cl=>{
+      const rawD=cl.clipEnd-cl.clipStart;
+      /* Find tags that belong to this clip */
+      const clipTags=resolvedTags.filter(tg=>tg.clipId===cl.id&&tg.sourceTime>=cl.clipStart&&tg.sourceTime<cl.clipEnd).sort((a,b)=>a.sourceTime-b.sourceTime);
+      let tlPos=cl.trackStart;let srcPos=cl.clipStart;
+      clipTags.forEach(tg=>{
+        const tagSrcT=tg.sourceTime;
+        /* Video segment before this tag */
+        if(tagSrcT>srcPos){
+          segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+(tagSrcT-srcPos),srcStart:srcPos,srcEnd:tagSrcT,isTag:false});
+          tlPos+=tagSrcT-srcPos;
+        }
+        /* Tag segment (frozen frame) */
+        segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+tg.duration,srcStart:tagSrcT,srcEnd:tagSrcT,isTag:true,tag:tg});
+        tlPos+=tg.duration;
+        srcPos=tagSrcT;
+      });
+      /* Remaining video after last tag */
+      if(srcPos<cl.clipEnd){
+        segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+(cl.clipEnd-srcPos),srcStart:srcPos,srcEnd:cl.clipEnd,isTag:false});
+      }
+    });
+    /* Also add tags not bound to a clip */
+    resolvedTags.filter(tg=>!tg.clipId).forEach(tg=>{
+      const parentClip=allClips.find(c=>tg._tlStart>=c.trackStart);
+      segments.push({clipId:parentClip?.id,url:parentClip?.url,tlStart:tg._tlStart,tlEnd:tg._tlStart+tg.duration,srcStart:tg.sourceTime||0,srcEnd:tg.sourceTime||0,isTag:true,tag:tg});
+    });
+    segments.sort((a,b)=>a.tlStart-b.tlStart);
+
+    /* Compute content end */
     let cEnd=0;
-    tracks.forEach(t=>t.clips.forEach(c=>{const rd=c.clipEnd-c.clipStart;let fz=0;
-      resolvedTags.forEach(tg=>{const te=tg._tlStart+tg.duration;if(te<=c.trackStart)return;if(tg._tlStart>=c.trackStart+rd+fz)return;fz+=tg.duration;});
-      const e=c.trackStart+rd+fz;if(e>cEnd)cEnd=e;}));
-    resolvedTags.forEach(c=>{const e=c._tlStart+c.duration;if(e>cEnd)cEnd=e;});
+    segments.forEach(s=>{if(s.tlEnd>cEnd)cEnd=s.tlEnd;});
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>cEnd)cEnd=e;}));
     if(cEnd<=0){setExporting(false);return;}
 
+    const fps=30;const totalFrames=Math.ceil(cEnd*fps);
     const hideCss="position:fixed;left:0;bottom:0;width:1px;height:1px;pointer-events:none;z-index:-1;";
+
+    /* Lookup: given a frame time, find the segment */
+    const findSeg=(t)=>{for(let i=segments.length-1;i>=0;i--){const s=segments[i];if(t>=s.tlStart&&t<s.tlEnd)return s;}return null;};
 
     /* ── Step 1: Download ALL media URLs as local blobs ── */
     setExportFmt("Downloading media...");
-    const blobUrlMap={};
-    const allUrls=new Set();
+    const blobUrlMap={};const allUrls=new Set();
     tracks.forEach(t=>t.clips.forEach(c=>{if(c.url)allUrls.add(c.url);}));
     audioTracks.forEach(t=>t.clips.forEach(c=>{if(c.url)allUrls.add(c.url);}));
-
     let dlCount=0,dlFailed=0;const dlTotal=allUrls.size;
     for(const u of allUrls){
       dlCount++;setExportFmt(`Downloading ${dlCount}/${dlTotal}...`);
       if(u.startsWith("blob:")){blobUrlMap[u]=u;continue;}
-      try{
-        const resp=await fetch(u);
-        if(!resp.ok)throw new Error("HTTP "+resp.status);
-        const blob=await resp.blob();
-        blobUrlMap[u]=URL.createObjectURL(blob);
+      try{const resp=await fetch(u);if(!resp.ok)throw new Error("HTTP "+resp.status);const blob=await resp.blob();blobUrlMap[u]=URL.createObjectURL(blob);
       }catch(fetchErr){
-        const blobUrl=await new Promise(r=>{
-          const xhr=new XMLHttpRequest();xhr.open("GET",u,true);xhr.responseType="blob";
-          xhr.onload=()=>r(xhr.status===200?URL.createObjectURL(xhr.response):null);
-          xhr.onerror=()=>r(null);xhr.send();
-        });
+        const blobUrl=await new Promise(r=>{const xhr=new XMLHttpRequest();xhr.open("GET",u,true);xhr.responseType="blob";xhr.onload=()=>r(xhr.status===200?URL.createObjectURL(xhr.response):null);xhr.onerror=()=>r(null);xhr.send();});
         if(blobUrl){blobUrlMap[u]=blobUrl;}else{dlFailed++;blobUrlMap[u]=u;}
       }
     }
+    if(dlFailed>0){alert("⚠️ Could not download "+dlFailed+" video(s). CORS may not be configured. Export may produce black video.");}
 
-    if(dlFailed>0){
-      alert("⚠️ Could not download "+dlFailed+" video(s) for export.\n\n"+
-        "Firebase Storage CORS must be configured.\n"+
-        "Export will try to continue but may produce a black video.");
-    }
-
-    /* ── Step 2: Create a VISIBLE container for export video elements ──
-       Browsers throttle/stop decoding frames for hidden video elements.
-       We make them fully visible but behind an overlay so the user doesn't see them. */
+    /* ── Step 2: Create video elements for export drawing ──
+       Elements are small, nearly transparent, and don't block the UI.
+       pointer-events:none ensures they can't be clicked.
+       They sit at the bottom-left corner, invisible to the user but
+       "visible" enough for the browser to decode frames. */
     setExportFmt("Preparing video...");
-    const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
-
-    /* Full-screen backdrop behind export overlay — video elements go here */
-    const exportContainer=document.createElement("div");
-    exportContainer.style.cssText="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:99998;background:#000;overflow:hidden;";
+    exportContainer=document.createElement("div");
+    exportContainer.style.cssText="position:fixed;bottom:0;left:0;width:320px;height:180px;z-index:-1;overflow:hidden;pointer-events:none;opacity:0.01;";
     document.body.appendChild(exportContainer);
-
-    const videoEls={};/* clipId → HTMLVideoElement (for drawing only) */
-
+    const videoEls={};
     for(let i=0;i<allClips.length;i++){
-      const c=allClips[i];
-      setExportFmt(`Loading video ${i+1}/${allClips.length}...`);
+      const c=allClips[i];setExportFmt(`Loading video ${i+1}/${allClips.length}...`);
       const vel=document.createElement("video");
       vel.playsInline=true;vel.preload="auto";vel.muted=true;
-      /* VISIBLE: 640×360 in the export container so the browser fully decodes frames */
-      vel.style.cssText="width:640px;height:360px;position:absolute;top:0;left:0;opacity:0.99;";
+      vel.style.cssText="width:320px;height:180px;position:absolute;top:0;left:0;";
       vel.src=blobUrlMap[c.url]||c.url;
       exportContainer.appendChild(vel);
-
       await new Promise(resolve=>{
-        let resolved=false;
-        const done=()=>{if(!resolved){resolved=true;videoEls[c.id]=vel;resolve();}};
-        vel.addEventListener("canplaythrough",done,{once:true});
-        vel.addEventListener("loadeddata",()=>{
-          vel.currentTime=c.clipStart||0;
-          vel.play().then(()=>{setTimeout(()=>{vel.pause();done();},200);}).catch(()=>done());
-        },{once:true});
-        vel.load();
-        setTimeout(done,15000);
+        let done2=false;const finish=()=>{if(!done2){done2=true;videoEls[c.id]=vel;resolve();}};
+        vel.addEventListener("canplaythrough",finish,{once:true});
+        vel.addEventListener("loadeddata",()=>{vel.currentTime=c.clipStart||0;vel.play().then(()=>{setTimeout(()=>{vel.pause();finish();},200);}).catch(()=>finish());},{once:true});
+        vel.load();setTimeout(finish,15000);
       });
     }
 
-    /* ── Step 3: Verify drawImage works ── */
-    setExportFmt("Verifying canvas...");
-    const testCvs=document.createElement("canvas");testCvs.width=16;testCvs.height=16;
-    const testCx=testCvs.getContext("2d");
-    const firstVel=videoEls[allClips[0]?.id];
-    let drawWorks=false;
+    /* ── Step 3: Verify drawImage (CORS check) ──
+       Fill canvas with bright red, then drawImage. If getImageData still shows red,
+       drawImage didn't work (CORS/tainted). If pixels changed at all, it's working
+       — even if the video frame is very dark (nighttime footage). */
+    const testCvs=document.createElement("canvas");testCvs.width=16;testCvs.height=16;const testCx=testCvs.getContext("2d");
+    const firstVel=videoEls[allClips[0]?.id];let drawWorks=false;
     if(firstVel&&firstVel.readyState>=2){
-      testCx.fillStyle="#000";testCx.fillRect(0,0,16,16);
+      testCx.fillStyle="#ff0000";testCx.fillRect(0,0,16,16);
       try{
         testCx.drawImage(firstVel,0,0,16,16);
         const px=testCx.getImageData(0,0,16,16).data;
-        for(let i=0;i<px.length;i+=4){if(px[i]>3||px[i+1]>3||px[i+2]>3){drawWorks=true;break;}}
-      }catch(e){}
-    }
-    console.log("[Export] drawImage test:",drawWorks?"PASS":"FAIL","readyState:",firstVel?.readyState,"videoWidth:",firstVel?.videoWidth,"videoHeight:",firstVel?.videoHeight);
+        /* If ANY pixel is NOT pure red (#ff0000), drawImage overwrote it = working */
+        for(let i=0;i<px.length;i+=4){if(px[i]!==255||px[i+1]!==0||px[i+2]!==0){drawWorks=true;break;}}
+      }catch(e){/* SecurityError = tainted canvas = CORS issue */}
+    }else if(firstVel){drawWorks=true;/* readyState may catch up — proceed optimistically */}
+    console.log("[Export] drawImage test:",drawWorks?"PASS":"FAIL","readyState:",firstVel?.readyState,"dim:",firstVel?.videoWidth+"x"+firstVel?.videoHeight);
+    if(!drawWorks){if(!confirm("⚠️ Canvas CORS test failed. Export may be black.\nThis usually means Firebase CORS is not configured.\nOK=try anyway, Cancel=abort")){
+      Object.values(videoEls).forEach(v=>{try{v.pause();}catch(e){}});exportContainer.remove();
+      Object.values(blobUrlMap).forEach(u=>{if(u&&u.startsWith("blob:")&&!allUrls.has(u))try{URL.revokeObjectURL(u);}catch(e){}});
+      setExporting(false);return;}}
 
-    if(!drawWorks){
-      const proceed=confirm("⚠️ Canvas draw test failed — exported video may be black.\nPress OK to try anyway, or Cancel to abort.");
-      if(!proceed){
-        Object.values(videoEls).forEach(v=>{try{v.pause();}catch(e){}});
-        exportContainer.remove();
-        Object.values(blobUrlMap).forEach(u=>{if(u&&u.startsWith("blob:")&&!allUrls.has(u))try{URL.revokeObjectURL(u);}catch(e){}});
-        setExporting(false);return;
-      }
-    }
-
-    /* ── Step 4: Audio elements (connected to AudioContext for sound capture) ── */
+    /* ── Step 4: Audio elements (AudioContext for capture) ── */
     setExportFmt("Preparing audio...");
     const actx=new(window.AudioContext||window.webkitAudioContext)();await actx.resume();
     const aDst=actx.createMediaStreamDestination();
-
     const audioEls={};const audioGains={};
-    allClips.forEach(c=>{
-      try{
-        const ael=document.createElement("audio");
-        ael.preload="auto";ael.style.cssText=hideCss;
-        ael.src=blobUrlMap[c.url]||c.url;
-        document.body.appendChild(ael);ael.load();
-        const src=actx.createMediaElementSource(ael);
-        const gain=actx.createGain();gain.gain.value=0;
-        src.connect(gain).connect(aDst);
-        audioEls[c.id]=ael;audioGains[c.id]=gain;
-      }catch(e){}
-    });
-
+    allClips.forEach(c=>{try{const ael=document.createElement("audio");ael.preload="auto";ael.style.cssText=hideCss;ael.src=blobUrlMap[c.url]||c.url;document.body.appendChild(ael);ael.load();
+      const src=actx.createMediaElementSource(ael);const gain=actx.createGain();gain.gain.value=0;src.connect(gain).connect(aDst);audioEls[c.id]=ael;audioGains[c.id]=gain;}catch(e){}});
     const eA=document.createElement("audio");eA.volume=1;eA.style.cssText=hideCss;document.body.appendChild(eA);
     let eASrc=null,eAGain=null;
     try{eASrc=actx.createMediaElementSource(eA);eAGain=actx.createGain();eASrc.connect(eAGain).connect(aDst);}catch(e){}
 
     /* ── Step 5: Canvas + MediaRecorder ── */
-    const cvs=document.createElement("canvas");cvs.width=1920;cvs.height=1080;
+    const W=1920,H=1080;
+    const cvs=document.createElement("canvas");cvs.width=W;cvs.height=H;
     const cx=cvs.getContext("2d");cx.imageSmoothingEnabled=true;cx.imageSmoothingQuality="high";
-    const cStream=cvs.captureStream(30);/* auto 30fps capture */
+    const cStream=cvs.captureStream(fps);
     const mStream=new MediaStream([...cStream.getVideoTracks(),...aDst.stream.getAudioTracks()]);
     const mimes=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm","video/mp4;codecs=avc1.42E01E,mp4a.40.2","video/mp4"];
     let mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||"video/webm";
     const isMP4=mime.startsWith("video/mp4");const ext=isMP4?"mp4":"webm";
-    setExportFmt(isMP4?"Exporting MP4…":"Exporting WebM…");
+    setExportFmt(ext.toUpperCase()+" 0%");
     const rec=new MediaRecorder(mStream,{mimeType:mime,videoBitsPerSecond:20000000,audioBitsPerSecond:320000});
     const chunks=[];rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
 
@@ -1108,40 +1108,67 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       Object.values(blobUrlMap).forEach(u=>{if(u&&u.startsWith("blob:")&&!allUrls.has(u))try{URL.revokeObjectURL(u);}catch(e){}});
     };
 
-    const drawSpot=(tag)=>{
-      const tp=clipProps[tag.id]||{};const ss=tp.spotScale||tag.spotScale||1;
-      const sx2=(tag.spotX||50)/100*1920,sy2=(tag.spotY||50)/100*1080;
-      const r=Math.round(80*ss*1920/720);
+    /* ── Drawing helpers ── */
+
+    /* drawVideoFit: draws video onto 1920×1080 canvas with correct aspect ratio + scale.
+       Replicates the preview's object-fit:contain + transform:scale behavior exactly. */
+    const drawVideoFit=(vel,scale)=>{
+      if(!vel||vel.readyState<2)return;
+      const vw=vel.videoWidth,vh=vel.videoHeight;
+      if(!vw||!vh)return;
+      const s=scale||1;
+      const vidAsp=vw/vh,canAsp=W/H;
+      let dw,dh;
+      if(vidAsp>canAsp){dw=W;dh=W/vidAsp;}
+      else{dh=H;dw=H*vidAsp;}
+      /* Apply scale (zoom) centered on canvas */
+      dw*=s;dh*=s;
+      const dx=(W-dw)/2,dy=(H-dh)/2;
+      try{cx.drawImage(vel,dx,dy,dw,dh);}catch(e){}
+    };
+
+    /* drawSpotlight: resolution-independent overlay rendering.
+       All positions stored as percentages (0-100), sizes scaled to canvas dimensions.
+       Must match preview appearance exactly. */
+    const drawSpotlight=(tag)=>{
+      const tp=clipProps[tag.id]||{};
+      const ss=tp.spotScale||tag.spotScale||1;
+      /* Convert percentage position to canvas pixels */
+      const spotX=(tag.spotX||50)/100*W;
+      const spotY=(tag.spotY||50)/100*H;
+      /* Circle radius: base 80px at 720p preview → scale to 1080p export */
+      const baseR=80*(H/720);
+      const r=Math.round(baseR*ss);
       cx.save();
-      cx.beginPath();cx.rect(0,0,1920,1080);cx.arc(sx2,sy2,r,0,Math.PI*2,true);cx.fillStyle="rgba(0,0,0,0.55)";cx.fill("evenodd");
-      cx.beginPath();cx.arc(sx2,sy2,r,0,Math.PI*2);cx.strokeStyle="#22c55e";cx.lineWidth=5;cx.shadowColor="rgba(34,197,94,0.4)";cx.shadowBlur=30;cx.stroke();cx.shadowBlur=0;
-      cx.font="bold 32px Inter,sans-serif";cx.textAlign="center";
-      const txt=tag.playerName.toUpperCase();const tw=cx.measureText(txt).width;const ly=Math.min(sy2+r+50,1040);
-      cx.fillStyle="rgba(0,0,0,0.85)";cx.fillRect(sx2-tw/2-24,ly-24,tw+48,48);
-      cx.fillStyle="#fff";cx.fillText(txt,sx2,ly+10);
-      cx.fillStyle="#22c55e";cx.fillRect(960-80,20,160,36);cx.font="bold 16px Inter,sans-serif";cx.fillStyle="#000";cx.fillText("SPOTLIGHT",960,44);
+      /* Vignette mask */
+      cx.beginPath();cx.rect(0,0,W,H);cx.arc(spotX,spotY,r,0,Math.PI*2,true);
+      cx.fillStyle="rgba(0,0,0,0.55)";cx.fill("evenodd");
+      /* Circle border */
+      cx.beginPath();cx.arc(spotX,spotY,r,0,Math.PI*2);
+      cx.strokeStyle="#22c55e";cx.lineWidth=Math.round(5*(H/720));
+      cx.shadowColor="rgba(34,197,94,0.4)";cx.shadowBlur=Math.round(30*(H/720));
+      cx.stroke();cx.shadowBlur=0;
+      /* Player name label */
+      const fontSize=Math.round(32*(H/720));
+      cx.font=`bold ${fontSize}px Inter,sans-serif`;cx.textAlign="center";
+      const txt=tag.playerName.toUpperCase();
+      const tw=cx.measureText(txt).width;
+      const ly=Math.min(spotY+r+Math.round(50*(H/720)),H-40);
+      const pad=Math.round(24*(H/720));
+      cx.fillStyle="rgba(0,0,0,0.85)";cx.fillRect(spotX-tw/2-pad,ly-pad,tw+pad*2,pad*2);
+      cx.fillStyle="#fff";cx.fillText(txt,spotX,ly+fontSize*0.3);
+      /* SPOTLIGHT badge */
+      const badgeW=Math.round(160*(W/1920)),badgeH=Math.round(36*(H/1080));
+      const badgeFontSz=Math.round(16*(H/720));
+      cx.fillStyle="#22c55e";cx.fillRect(W/2-badgeW/2,Math.round(20*(H/1080)),badgeW,badgeH);
+      cx.font=`bold ${badgeFontSz}px Inter,sans-serif`;cx.fillStyle="#000";
+      cx.fillText("SPOTLIGHT",W/2,Math.round(20*(H/1080))+badgeH*0.7);
       cx.restore();
     };
 
-    /* Draw video to canvas: object-fit:contain + scale */
-    const drawVC=(vel,scale)=>{
-      if(!vel||vel.readyState<2)return false;
-      const vw=vel.videoWidth||1920,vh=vel.videoHeight||1080;
-      const s=scale||1;
-      const vidAsp=vw/vh,canAsp=1920/1080;
-      let dw,dh;
-      if(vidAsp>canAsp){dw=1920;dh=1920/vidAsp;}
-      else{dh=1080;dw=1080*vidAsp;}
-      dw*=s;dh*=s;
-      const dx=(1920-dw)/2,dy=(1080-dh)/2;
-      try{cx.drawImage(vel,dx,dy,dw,dh);return true;}catch(e){return false;}
-    };
-
-    /* ── Step 6: Real-time playback export ──
-       Video elements are VISIBLE in the export container so the browser decodes frames.
-       We play the video normally and draw each frame via rAF.
-       captureStream(30) auto-captures the canvas at 30fps.
-       Audio elements play in real-time via AudioContext. */
+    /* ── Step 6: Real-time export loop ──
+       Uses pre-computed segment list for frame-accurate timing.
+       No findActiveClip/freezeOffset during rendering = no timing bugs at cuts. */
     await new Promise(resolve=>{
       rec.onstop=()=>{
         const blob=new Blob(chunks,{type:mime.split(";")[0]});
@@ -1155,81 +1182,96 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       };
       rec.start(1000);
 
-      let ph=0,lt=performance.now(),pC=null,pT=null,pA=null;
-      let curVidEl=null,curAudEl=null;
+      let ph=0,lt=performance.now();
+      let curSegIdx=-1,curVidEl=null,curAudEl=null;
+      let pAudioClipId=null;
 
       const step=(now)=>{
         if(exportCancelRef.current){rec.stop();return;}
         const dt=Math.min((now-lt)/1000,0.1);lt=now;ph+=dt;
         if(ph>=cEnd){rec.stop();return;}
         setExportProgress(ph/cEnd);
-        if(Math.round(ph*10)%10===0)setExportFmt(`${isMP4?"MP4":"WebM"} ${Math.round(ph/cEnd*100)}%`);
+        if(Math.round(ph*fps)%fps===0)setExportFmt(`${ext.toUpperCase()} ${Math.round(ph/cEnd*100)}%`);
 
-        const cl=findActiveClip(ph),tg=findActiveTag(ph),au=findActiveAudio(ph);
-        cx.fillStyle="#000";cx.fillRect(0,0,1920,1080);
+        cx.fillStyle="#000";cx.fillRect(0,0,W,H);
 
-        if(tg){
-          if(pT!==tg.id){pT=tg.id;
-            let c2=null;if(tg.clipId){tracks.forEach(t=>t.clips.forEach(c=>{if(c.id===tg.clipId)c2=c;}));}
-            if(!c2)c2=findActiveClip(tg._tlStart);
-            if(c2){
-              pC=c2.id;
-              curVidEl=videoEls[c2.id]||null;
-              if(curVidEl){curVidEl.currentTime=Math.max(0,tg.sourceTime||c2.clipStart);curVidEl.pause();}
+        /* Find current segment from pre-computed list */
+        const seg=findSeg(ph);
+
+        if(seg&&seg.isTag){
+          /* TAG SEGMENT: frozen frame + spotlight overlay */
+          const vel=videoEls[seg.clipId];
+          if(vel){
+            /* Seek to exact source time (tag is a freeze frame) */
+            const targetT=Math.max(0,seg.srcStart);
+            if(Math.abs(vel.currentTime-targetT)>0.05)vel.currentTime=targetT;
+            if(!vel.paused)vel.pause();
+            drawVideoFit(vel,1);
+          }
+          if(seg.tag)drawSpotlight(seg.tag);
+          /* Mute all clip audio during tags */
+          Object.values(audioGains).forEach(g=>g.gain.value=0);
+          if(curAudEl){curAudEl.pause();curAudEl=null;}
+
+        }else if(seg){
+          /* VIDEO SEGMENT: play video from srcStart→srcEnd mapped to tlStart→tlEnd */
+          const pr=clipProps[seg.clipId]||{volume:100,scale:1};
+          const progress=(ph-seg.tlStart)/(seg.tlEnd-seg.tlStart);
+          const srcTime=seg.srcStart+progress*(seg.srcEnd-seg.srcStart);
+          const vel=videoEls[seg.clipId];
+
+          if(vel){
+            /* On segment switch: seek to exact source position and start playing */
+            const segIdx=segments.indexOf(seg);
+            if(segIdx!==curSegIdx){
+              curSegIdx=segIdx;
+              /* Pause all other videos */
+              Object.entries(videoEls).forEach(([cid,v])=>{if(cid!==seg.clipId&&!v.paused)v.pause();});
+              vel.currentTime=Math.max(0,srcTime);
+              vel.play().catch(()=>{});
+              /* Switch audio */
               Object.values(audioGains).forEach(g=>g.gain.value=0);
-              if(curAudEl){curAudEl.pause();curAudEl=null;}
+              if(curAudEl)curAudEl.pause();
+              curAudEl=audioEls[seg.clipId]||null;
+              if(curAudEl){curAudEl.currentTime=Math.max(0,srcTime);curAudEl.play().catch(()=>{});}
+            }else{
+              /* Same segment — keep playing, periodic sync */
+              if(vel.paused)vel.play().catch(()=>{});
+              if(Math.abs(vel.currentTime-srcTime)>0.3)vel.currentTime=Math.max(0,srcTime);
             }
+            if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100;
+            drawVideoFit(vel,pr.scale||1);
           }
-          drawVC(curVidEl,1);
-          drawSpot(tg);
-          if(eAGain)eAGain.gain.value=0;if(pA){eA.pause();pA=null;}
 
-        }else if(cl){
-          const wt=pT!==null;pT=null;
-          const pr=clipProps[cl.id]||{volume:100,scale:1};
-          const fo=freezeOffset(cl.trackStart,ph);
-          const vt=cl.clipStart+(ph-cl.trackStart-fo);
-
-          if(pC!==cl.id||wt){
-            /* New clip — seek, play, switch audio */
-            pC=cl.id;
-            /* Pause ALL other video elements */
-            Object.entries(videoEls).forEach(([cid,v])=>{if(cid!==cl.id&&!v.paused)v.pause();});
-            curVidEl=videoEls[cl.id]||null;
-            if(curVidEl){
-              curVidEl.currentTime=Math.max(0,vt);
-              curVidEl.play().catch(()=>{});
-            }
-            Object.values(audioGains).forEach(g=>g.gain.value=0);
-            if(curAudEl)curAudEl.pause();
-            curAudEl=audioEls[cl.id]||null;
-            if(curAudEl){curAudEl.currentTime=Math.max(0,vt);curAudEl.play().catch(()=>{});}
-          }else if(curVidEl){
-            /* Same clip — ensure video is playing and synced */
-            if(curVidEl.paused)curVidEl.play().catch(()=>{});
-            if(Math.abs(curVidEl.currentTime-vt)>0.25){
-              curVidEl.currentTime=Math.max(0,vt);
-            }
-          }
-          if(audioGains[cl.id])audioGains[cl.id].gain.value=pr.volume/100;
-          drawVC(curVidEl,pr.scale||1);
-
-          if(au){const ap=clipProps[au.id]||{volume:100};const af=freezeOffset(au.trackStart,ph);const at=au.clipStart+(ph-au.trackStart-af);
-            if(pA!==au.id){pA=au.id;eA.src=blobUrlMap[au.url]||au.url;eA.currentTime=Math.max(0,at);eA.play().catch(()=>{});}
+          /* Audio track (A1/A2 music) */
+          const au=findActiveAudio(ph);
+          if(au){const ap=clipProps[au.id]||{volume:100};
+            if(pAudioClipId!==au.id){pAudioClipId=au.id;eA.src=blobUrlMap[au.url]||au.url;
+              const afo=freezeOffset(au.trackStart,ph);const at2=au.clipStart+(ph-au.trackStart-afo);
+              eA.currentTime=Math.max(0,at2);eA.play().catch(()=>{});}
             if(eAGain)eAGain.gain.value=ap.volume/100;}
-          else{if(pA){eA.pause();pA=null;}if(eAGain)eAGain.gain.value=0;}
+          else{if(pAudioClipId){eA.pause();pAudioClipId=null;}if(eAGain)eAGain.gain.value=0;}
 
         }else{
-          pC=null;pT=null;
-          if(curVidEl){curVidEl.pause();curVidEl=null;}
-          if(curAudEl){curAudEl.pause();curAudEl=null;}
+          /* GAP — no content */
+          curSegIdx=-1;
           Object.values(audioGains).forEach(g=>g.gain.value=0);
-          if(eAGain)eAGain.gain.value=0;if(pA){eA.pause();pA=null;}
+          if(curAudEl){curAudEl.pause();curAudEl=null;}
+          Object.values(videoEls).forEach(v=>{if(!v.paused)v.pause();});
+          if(eAGain)eAGain.gain.value=0;if(pAudioClipId){eA.pause();pAudioClipId=null;}
         }
         requestAnimationFrame(step);
       };
       requestAnimationFrame(step);
     });
+
+    }catch(exportErr){
+      /* Safety net: always clean up and restore UI */
+      console.error("[Export] Error:",exportErr);
+      try{if(exportContainer)exportContainer.remove();}catch(e){}
+      setExporting(false);setExportProgress(0);
+      alert("Export failed: "+exportErr.message);
+    }
   },[tracks,tagTrack,audioTracks,resolvedTags,findActiveClip,findActiveTag,findActiveAudio,freezeOffset,clipProps]);
 
   const togglePlay=useCallback(()=>{if(isPlaying){setIsPlaying(false);if(animRef.current)cancelAnimationFrame(animRef.current);}else{setIsPlaying(true);lastTRef.current=performance.now();}},[isPlaying]);
