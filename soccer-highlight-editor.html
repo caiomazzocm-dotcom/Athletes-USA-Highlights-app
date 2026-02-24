@@ -1092,7 +1092,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const cx=cvs.getContext("2d");cx.imageSmoothingEnabled=true;cx.imageSmoothingQuality="high";
     const cStream=cvs.captureStream(fps);
     const mStream=new MediaStream([...cStream.getVideoTracks(),...aDst.stream.getAudioTracks()]);
-    const mimes=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm","video/mp4;codecs=avc1.42E01E,mp4a.40.2","video/mp4"];
+    /* Prefer MP4 (H.264/AAC) for YouTube compatibility, fall back to WebM.
+       Chrome 120+ supports MP4 in MediaRecorder. Older browsers get WebM. */
+    const mimes=["video/mp4;codecs=avc1.42E01E,mp4a.40.2","video/mp4;codecs=avc1,mp4a.40.2","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
     let mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||"video/webm";
     const isMP4=mime.startsWith("video/mp4");const ext=isMP4?"mp4":"webm";
     setExportFmt(ext.toUpperCase()+" 0%");
@@ -1110,59 +1112,83 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
     /* ── Drawing helpers ── */
 
-    /* drawVideoFit: draws video onto 1920×1080 canvas with correct aspect ratio + scale.
-       Replicates the preview's object-fit:contain + transform:scale behavior exactly. */
+    /* CANONICAL TRANSFORM: one function used by both preview and export.
+       Computes where the video lands on the output canvas, replicating
+       CSS object-fit:contain + transform:scale exactly.
+       Returns {dx, dy, dw, dh} — the destination rectangle on the canvas. */
+    const computeVideoTransform=(srcW,srcH,outW,outH,scale)=>{
+      const s=scale||1;
+      const vidAsp=srcW/srcH,canAsp=outW/outH;
+      let dw,dh;
+      if(vidAsp>canAsp){dw=outW;dh=outW/vidAsp;}
+      else{dh=outH;dw=outH*vidAsp;}
+      /* CSS transform:scale() scales visually around center without changing layout.
+         We replicate this by scaling dw/dh then re-centering. */
+      dw*=s;dh*=s;
+      return{dx:(outW-dw)/2,dy:(outH-dh)/2,dw,dh};
+    };
+
+    /* drawVideoFit: draws video onto canvas using the canonical transform. */
     const drawVideoFit=(vel,scale)=>{
       if(!vel||vel.readyState<2)return;
       const vw=vel.videoWidth,vh=vel.videoHeight;
       if(!vw||!vh)return;
-      const s=scale||1;
-      const vidAsp=vw/vh,canAsp=W/H;
-      let dw,dh;
-      if(vidAsp>canAsp){dw=W;dh=W/vidAsp;}
-      else{dh=H;dw=H*vidAsp;}
-      /* Apply scale (zoom) centered on canvas */
-      dw*=s;dh*=s;
-      const dx=(W-dw)/2,dy=(H-dh)/2;
-      try{cx.drawImage(vel,dx,dy,dw,dh);}catch(e){}
+      const t=computeVideoTransform(vw,vh,W,H,scale);
+      try{cx.drawImage(vel,t.dx,t.dy,t.dw,t.dh);}catch(e){}
     };
 
-    /* drawSpotlight: resolution-independent overlay rendering.
-       All positions stored as percentages (0-100), sizes scaled to canvas dimensions.
-       Must match preview appearance exactly. */
+    /* drawSpotlight: overlay rendering that matches preview EXACTLY.
+
+       KEY INSIGHT: In the preview, spotX/spotY are percentages of the
+       PREVIEW CONTAINER (a 16:9 box), NOT percentages of the video frame.
+       The spotlight overlay is positioned with CSS left:${sx}%, top:${sy}%
+       relative to the container — same coordinate space as the canvas.
+
+       The preview container IS 16:9 (same as the export canvas 1920×1080).
+       So spotX% of container width = spotX% of 1920 in export. This is correct.
+
+       The preview spotlight circle radius is 80px * spotScale at a ~720px wide
+       preview container. We scale this to 1920px export width proportionally. */
     const drawSpotlight=(tag)=>{
       const tp=clipProps[tag.id]||{};
       const ss=tp.spotScale||tag.spotScale||1;
-      /* Convert percentage position to canvas pixels */
-      const spotX=(tag.spotX||50)/100*W;
-      const spotY=(tag.spotY||50)/100*H;
-      /* Circle radius: base 80px at 720p preview → scale to 1080p export */
-      const baseR=80*(H/720);
-      const r=Math.round(baseR*ss);
+      /* Convert percentage position to canvas pixels (same space as preview CSS %) */
+      const sx=(tag.spotX||50)/100*W;
+      const sy=(tag.spotY||50)/100*H;
+      /* Preview container is maxWidth:720px. 80px radius at 720px wide.
+         Export is 1920px wide. Scale factor = 1920/720 = 2.667 */
+      const previewToExport=W/720;
+      const r=Math.round(80*ss*previewToExport);
       cx.save();
       /* Vignette mask */
-      cx.beginPath();cx.rect(0,0,W,H);cx.arc(spotX,spotY,r,0,Math.PI*2,true);
+      cx.beginPath();cx.rect(0,0,W,H);cx.arc(sx,sy,r,0,Math.PI*2,true);
       cx.fillStyle="rgba(0,0,0,0.55)";cx.fill("evenodd");
       /* Circle border */
-      cx.beginPath();cx.arc(spotX,spotY,r,0,Math.PI*2);
-      cx.strokeStyle="#22c55e";cx.lineWidth=Math.round(5*(H/720));
-      cx.shadowColor="rgba(34,197,94,0.4)";cx.shadowBlur=Math.round(30*(H/720));
+      cx.beginPath();cx.arc(sx,sy,r,0,Math.PI*2);
+      cx.strokeStyle="#22c55e";cx.lineWidth=Math.round(3*previewToExport);
+      cx.shadowColor="rgba(34,197,94,0.4)";cx.shadowBlur=Math.round(20*previewToExport);
       cx.stroke();cx.shadowBlur=0;
-      /* Player name label */
-      const fontSize=Math.round(32*(H/720));
+      /* Player name label — positioned below circle, same as preview CSS */
+      const fontSize=Math.round(13*previewToExport);
       cx.font=`bold ${fontSize}px Inter,sans-serif`;cx.textAlign="center";
       const txt=tag.playerName.toUpperCase();
       const tw=cx.measureText(txt).width;
-      const ly=Math.min(spotY+r+Math.round(50*(H/720)),H-40);
-      const pad=Math.round(24*(H/720));
-      cx.fillStyle="rgba(0,0,0,0.85)";cx.fillRect(spotX-tw/2-pad,ly-pad,tw+pad*2,pad*2);
-      cx.fillStyle="#fff";cx.fillText(txt,spotX,ly+fontSize*0.3);
-      /* SPOTLIGHT badge */
-      const badgeW=Math.round(160*(W/1920)),badgeH=Math.round(36*(H/1080));
-      const badgeFontSz=Math.round(16*(H/720));
-      cx.fillStyle="#22c55e";cx.fillRect(W/2-badgeW/2,Math.round(20*(H/1080)),badgeW,badgeH);
-      cx.font=`bold ${badgeFontSz}px Inter,sans-serif`;cx.fillStyle="#000";
-      cx.fillText("SPOTLIGHT",W/2,Math.round(20*(H/1080))+badgeH*0.7);
+      const labelY=Math.min(sy+r+Math.round(12*previewToExport)+fontSize,H-20);
+      const padX=Math.round(16*previewToExport),padY=Math.round(4*previewToExport);
+      cx.fillStyle="rgba(0,0,0,0.8)";
+      cx.fillRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
+      cx.strokeStyle="rgba(34,197,94,0.33)";cx.lineWidth=Math.round(1*previewToExport);
+      cx.strokeRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
+      cx.fillStyle="#fff";cx.fillText(txt,sx,labelY);
+      /* SPOTLIGHT badge — top center, same as preview */
+      const badgeFontSz=Math.round(10*previewToExport);
+      const badgePadX=Math.round(14*previewToExport),badgePadY=Math.round(3*previewToExport);
+      cx.font=`bold ${badgeFontSz}px Inter,sans-serif`;
+      const badgeTw=cx.measureText("SPOTLIGHT").width;
+      const badgeY=Math.round(8*previewToExport);
+      cx.fillStyle="#22c55e";
+      cx.fillRect(W/2-badgeTw/2-badgePadX,badgeY,badgeTw+badgePadX*2,badgeFontSz+badgePadY*2);
+      cx.fillStyle="#000";cx.fillText("SPOTLIGHT",W/2,badgeY+badgeFontSz+badgePadY*0.5);
       cx.restore();
     };
 
