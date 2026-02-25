@@ -110,7 +110,7 @@ const C={base:"#0a0a14",mantle:"#0f0f1a",crust:"#080810",s0:"#1a1a2e",s1:"#2a2a4
   text:"#e2e8f0",sub:"#94a3b8",overlay:"#64748b",blue:"#3b82f6",red:"#ef4444",green:"#22c55e",
   yellow:"#eab308",lavender:"#a78bfa",peach:"#fb923c",coral:"#f43f5e"};
 const STUDIO_PASSWORD="admin";
-const DEFAULT_CATS=["Full Highlights","Goals","Assists","Defensive Actions","Attacking Actions"];
+const DEFAULT_CATS=["Goals","Assists","Defensive Actions","Attacking Actions","Full Highlights"];
 let _id=0;const uid=(p="id")=>`${p}-${++_id}-${Date.now().toString(36)}`;
 const fmtTime=s=>{if(!isFinite(s)||s<0)s=0;const m=Math.floor(s/60),sec=Math.floor(s%60),fr=Math.floor((s%1)*30);return`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}:${String(fr).padStart(2,"0")}`};
 const TRACK_H=74,AUDIO_TRACK_H=48,TAG_TRACK_H=36,RULER_H=28,MIN_CLIP_W=4;
@@ -615,6 +615,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode}){
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
               <span style={{color:C.overlay,fontSize:11}}>Class {player.recruitingClass}</span>
+              {player.size&&<><span style={{color:C.s1}}>&bull;</span><span style={{color:C.overlay,fontSize:11}}>{player.size}</span></>}
               {player.positions&&player.positions.length>0&&<><span style={{color:C.s1}}>&bull;</span>{player.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green||"#a6e3a1",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</>}
               {player.uniformDesc&&<><span style={{color:C.s1}}>&bull;</span><span style={{color:C.overlay,fontSize:11}}>{player.uniformDesc}</span></>}
             </div>
