@@ -181,7 +181,7 @@ const downloadPlayerZip=async(player,onProgress)=>{
     root.file("MISSING_FILES.txt",txt);
   }
   if(onProgress)onProgress({phase:"zipping",pct:0,fetched:processed,total:totalFiles});
-  const zipBlob=await zip.generateAsync({type:"blob",compression:"STORE"},{update(meta){if(onProgress)onProgress({phase:"zipping",pct:Math.round(meta.percent),fetched:processed,total:totalFiles});}});
+  const zipBlob=await zip.generateAsync({type:"blob",compression:"STORE"},meta=>{if(onProgress)onProgress({phase:"zipping",pct:Math.round(meta.percent),fetched:processed,total:totalFiles});});
   const a=document.createElement("a");a.href=URL.createObjectURL(zipBlob);a.download=rootName+".zip";document.body.appendChild(a);a.click();
   setTimeout(()=>{URL.revokeObjectURL(a.href);document.body.removeChild(a);},1000);
   return{total:totalFiles,downloaded:totalFiles-missing.length,missing:missing.length};
