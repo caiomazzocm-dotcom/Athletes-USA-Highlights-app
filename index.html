@@ -447,6 +447,12 @@ function AthleteProfileForm({onSubmit,onBack}){
   const[creating,setCreating]=useState(false);const[createProg,setCreateProg]=useState("");
   const profRef=useRef(null);const playRef=useRef(null);
 
+  const cmToFeet=(cm)=>{const totalIn=cm/2.54;const ft=Math.floor(totalIn/12);const inch=Math.round(totalIn%12);return inch===12?`${ft+1}'0"`:`${ft}'${inch}"`;};
+  const handleSizeChange=(val)=>{
+    const cmMatch=val.match(/^(\d+(?:\.\d+)?)\s*cm$/i);
+    if(cmMatch){const cm=parseFloat(cmMatch[1]);if(cm>0&&cm<300){setSize(cmToFeet(cm));return;}}
+    setSize(val);
+  };
   const onPickProfile=e=>{const f=e.target.files[0];if(!f)return;setProfilePic(f);setProfilePicPrev(URL.createObjectURL(f));};
   const onPickPlaying=e=>{const f=e.target.files[0];if(!f)return;setPlayingPic(f);setPlayingPicPrev(URL.createObjectURL(f));};
 
@@ -502,7 +508,7 @@ function AthleteProfileForm({onSubmit,onBack}){
             </div>
             <div>
               <label style={labelStyle}>Height / Size *</label>
-              <input value={size} onChange={e=>setSize(e.target.value)} placeholder="5'11&quot;" style={inputStyle}/>
+              <input value={size} onChange={e=>handleSizeChange(e.target.value)} placeholder="5'11&quot; or 180cm" style={inputStyle}/>
             </div>
           </div>
           <div>
