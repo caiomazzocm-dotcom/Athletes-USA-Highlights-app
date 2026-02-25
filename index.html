@@ -450,7 +450,7 @@ function AthleteProfileForm({onSubmit,onBack}){
   const onPickProfile=e=>{const f=e.target.files[0];if(!f)return;setProfilePic(f);setProfilePicPrev(URL.createObjectURL(f));};
   const onPickPlaying=e=>{const f=e.target.files[0];if(!f)return;setPlayingPic(f);setPlayingPicPrev(URL.createObjectURL(f));};
 
-  const handle=async()=>{if(!name.trim()||creating)return;
+  const handle=async()=>{if(!canSubmit)return;
     setCreating(true);
     let profilePicUrl="",playingPicUrl="";
     try{
@@ -462,7 +462,7 @@ function AthleteProfileForm({onSubmit,onBack}){
     setCreating(false);
   };
 
-  const canSubmit=name.trim()&&!creating;
+  const canSubmit=name.trim()&&shirtNum.trim()&&rc&&size.trim()&&dob&&positions.length>0&&uniformDesc.trim()&&profilePic&&playingPic&&!creating;
   const labelStyle={color:C.sub,fontSize:12,fontWeight:600,marginBottom:6,display:"block",letterSpacing:1,textTransform:"uppercase"};
   const picBoxStyle=(hasImg)=>({width:"100%",height:140,borderRadius:12,border:`2px dashed ${hasImg?C.blue+"66":C.s1}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",background:hasImg?"transparent":C.s0,overflow:"hidden",position:"relative",transition:"border 0.2s"});
   return(
@@ -495,34 +495,34 @@ function AthleteProfileForm({onSubmit,onBack}){
               <input value={shirtNum} onChange={e=>setShirtNum(e.target.value.replace(/\D/g,"").slice(0,3))} placeholder="e.g. 10" style={inputStyle} maxLength={3}/>
             </div>
             <div>
-              <label style={labelStyle}>Recruiting Class</label>
+              <label style={labelStyle}>Recruiting Class *</label>
               <select value={rc} onChange={e=>setRc(e.target.value)} style={{...inputStyle,cursor:"pointer"}}>
                 {["2024","2025","2026","2027","2028","2029","2030"].map(y=><option key={y} value={y}>{y}</option>)}
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Height / Size</label>
+              <label style={labelStyle}>Height / Size *</label>
               <input value={size} onChange={e=>setSize(e.target.value)} placeholder="5'11&quot;" style={inputStyle}/>
             </div>
           </div>
           <div>
-            <label style={labelStyle}>Positions Played</label>
+            <label style={labelStyle}>Positions Played *</label>
             <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
               {ALL_POSITIONS.map(p=><button key={p} type="button" onClick={()=>togglePos(p)} style={{padding:"5px 12px",borderRadius:6,fontSize:11,fontWeight:700,cursor:"pointer",border:positions.includes(p)?`2px solid ${C.blue}`:`2px solid ${C.s1}`,background:positions.includes(p)?C.blue+"22":"transparent",color:positions.includes(p)?C.blue:C.sub,transition:"all 0.15s"}}>{p}</button>)}
             </div>
             {positions.length>0&&<div style={{color:C.overlay,fontSize:10,marginTop:6}}>Selected: {positions.join(", ")}</div>}
           </div>
           <div>
-            <label style={labelStyle}>Uniform Description</label>
+            <label style={labelStyle}>Uniform Description *</label>
             <input value={uniformDesc} onChange={e=>setUniformDesc(e.target.value)} placeholder="e.g. White home jersey, blue shorts, #10 on back" style={inputStyle}/>
           </div>
           <div>
-            <label style={labelStyle}>Date of Birth</label>
+            <label style={labelStyle}>Date of Birth *</label>
             <input type="date" value={dob} onChange={e=>setDob(e.target.value)} style={{...inputStyle,colorScheme:"dark"}}/>
           </div>
           <div className="ath-form-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
             <div>
-              <label style={labelStyle}>Profile Picture</label>
+              <label style={labelStyle}>Profile Picture *</label>
               <div onClick={()=>profRef.current?.click()} style={picBoxStyle(!!profilePicPrev)}
                 onMouseEnter={e=>e.currentTarget.style.borderColor=C.blue} onMouseLeave={e=>e.currentTarget.style.borderColor=profilePicPrev?C.blue+"66":C.s1}>
                 {profilePicPrev?<img src={profilePicPrev} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
@@ -530,7 +530,7 @@ function AthleteProfileForm({onSubmit,onBack}){
               </div>
             </div>
             <div>
-              <label style={labelStyle}>Playing Picture</label>
+              <label style={labelStyle}>Playing Picture *</label>
               <div onClick={()=>playRef.current?.click()} style={picBoxStyle(!!playingPicPrev)}
                 onMouseEnter={e=>e.currentTarget.style.borderColor=C.coral} onMouseLeave={e=>e.currentTarget.style.borderColor=playingPicPrev?C.coral+"66":C.s1}>
                 {playingPicPrev?<img src={playingPicPrev} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
