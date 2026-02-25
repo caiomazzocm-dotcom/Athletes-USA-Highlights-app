@@ -20,8 +20,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
-  html,body,#root{width:100%;height:100%;overflow-x:hidden;overflow-y:hidden}
-  html,body{max-width:100vw}
+  html,body,#root{width:100%;height:100%;overflow-x:hidden;overflow-y:hidden;overscroll-behavior-x:none}
   ::-webkit-scrollbar{width:8px;height:8px}
   ::-webkit-scrollbar-track{background:#11111b}
   ::-webkit-scrollbar-thumb{background:#45475a;border-radius:4px}
@@ -227,7 +226,7 @@ function PasswordModal({onSuccess,onCancel}){
 
 /* ═══ SHARED LANDING BACKGROUND ═══ */
 function LandingBg({children}){
-  return(<div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif",position:"relative",overflow:"hidden"}}>
+  return(<div style={{width:"100%",height:"100vh",background:C.base,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif",position:"relative",overflow:"hidden"}}>
     <div style={{position:"absolute",top:"-20%",left:"-10%",width:"50%",height:"80%",background:"radial-gradient(ellipse,rgba(59,130,246,0.08) 0%,transparent 70%)",pointerEvents:"none"}}/>
     <div style={{position:"absolute",bottom:"-20%",right:"-10%",width:"50%",height:"80%",background:"radial-gradient(ellipse,rgba(244,63,94,0.08) 0%,transparent 70%)",pointerEvents:"none"}}/>
     <div style={{position:"absolute",inset:0,opacity:0.03,pointerEvents:"none",backgroundImage:"linear-gradient(rgba(255,255,255,0.1) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,0.1) 1px,transparent 1px)",backgroundSize:"60px 60px"}}/>
@@ -1907,7 +1906,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   </div>);
 
   return(
-  <div style={{width:"100vw",height:"100vh",display:"flex",flexDirection:"column",background:C.base,fontFamily:"'Inter',sans-serif",color:C.text,overflow:"hidden"}}>
+  <div style={{width:"100%",height:"100vh",display:"flex",flexDirection:"column",background:C.base,fontFamily:"'Inter',sans-serif",color:C.text,overflow:"hidden"}}>
     <div style={{display:"flex",alignItems:"center",padding:"0 12px",height:44,background:C.mantle,borderBottom:`1px solid ${C.s0}`,flexShrink:0}}>
       <button onClick={onLogout} style={{...ib,color:C.sub,marginRight:8}}><ArrowLeftIcon size={16}/></button>
       <div style={{width:1,height:22,background:C.s0,marginRight:10}}/>
@@ -2055,7 +2054,7 @@ function App(){
 
   /* Loading screen */
   if(cloudLoading)return(
-    <div style={{width:"100vw",height:"100vh",background:C.base,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
+    <div style={{width:"100%",height:"100vh",background:C.base,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif"}}>
       <h1 style={{fontSize:48,fontWeight:900,fontStyle:"italic",marginBottom:8}}>
         <span style={{color:"#fff"}}>ATHLETES</span><span style={{color:C.coral}}>USA</span>
       </h1>
