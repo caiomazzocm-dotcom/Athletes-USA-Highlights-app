@@ -1061,7 +1061,6 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* Build a flat segment list: [{clipId, tlStart, tlEnd, srcStart, srcEnd, isTag, tag}] */
     const segments=[];
     allClips.forEach(cl=>{
-      const rawD=cl.clipEnd-cl.clipStart;
       /* Find tags that belong to this clip */
       const clipTags=resolvedTags.filter(tg=>tg.clipId===cl.id&&tg.sourceTime>=cl.clipStart&&tg.sourceTime<cl.clipEnd).sort((a,b)=>a.sourceTime-b.sourceTime);
       let tlPos=cl.trackStart;let srcPos=cl.clipStart;
@@ -1072,10 +1071,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+(tagSrcT-srcPos),srcStart:srcPos,srcEnd:tagSrcT,isTag:false});
           tlPos+=tagSrcT-srcPos;
         }
-        /* Tag segment (frozen frame) */
+        /* Tag segment: freeze frame with spotlight overlay. Duration = tag.duration (1.5s).
+           srcStart === srcEnd so the video stays on this exact frame.
+           After the tag ends, the NEXT segment resumes from tagSrcT (same point), NOT from tagSrcT + duration.
+           This eliminates the jump cut — no video time is skipped. */
         segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+tg.duration,srcStart:tagSrcT,srcEnd:tagSrcT,isTag:true,tag:tg});
         tlPos+=tg.duration;
-        srcPos=tagSrcT;
+        srcPos=tagSrcT; /* Resume from the SAME source time — no skip */
       });
       /* Remaining video after last tag */
       if(srcPos<cl.clipEnd){
@@ -1238,17 +1240,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
        The preview spotlight circle radius is 80px * spotScale at a ~720px wide
        preview container. We scale this to 1920px export width proportionally. */
-    const drawSpotlight=(tag)=>{
+    const drawSpotlight=(tag,opacity)=>{
+      const op=opacity!=null?opacity:1;
+      if(op<=0)return;
       const tp=clipProps[tag.id]||{};
       const ss=tp.spotScale||tag.spotScale||1;
-      /* Convert percentage position to canvas pixels (same space as preview CSS %) */
       const sx=(tag.spotX||50)/100*W;
       const sy=(tag.spotY||50)/100*H;
-      /* Preview container is maxWidth:720px. 80px radius at 720px wide.
-         Export is 1920px wide. Scale factor = 1920/720 = 2.667 */
       const previewToExport=W/720;
       const r=Math.round(80*ss*previewToExport);
       cx.save();
+      cx.globalAlpha=op;
       /* Vignette mask */
       cx.beginPath();cx.rect(0,0,W,H);cx.arc(sx,sy,r,0,Math.PI*2,true);
       cx.fillStyle="rgba(0,0,0,0.55)";cx.fill("evenodd");
@@ -1257,7 +1259,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       cx.strokeStyle="#22c55e";cx.lineWidth=Math.round(3*previewToExport);
       cx.shadowColor="rgba(34,197,94,0.4)";cx.shadowBlur=Math.round(20*previewToExport);
       cx.stroke();cx.shadowBlur=0;
-      /* Player name label — positioned below circle, same as preview CSS */
+      /* Player name label */
       const fontSize=Math.round(13*previewToExport);
       cx.font=`bold ${fontSize}px Inter,sans-serif`;cx.textAlign="center";
       const txt=tag.playerName.toUpperCase();
@@ -1269,7 +1271,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       cx.strokeStyle="rgba(34,197,94,0.33)";cx.lineWidth=Math.round(1*previewToExport);
       cx.strokeRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
       cx.fillStyle="#fff";cx.fillText(txt,sx,labelY);
-      /* SPOTLIGHT badge — top center, same as preview */
+      /* SPOTLIGHT badge */
       const badgeFontSz=Math.round(10*previewToExport);
       const badgePadX=Math.round(14*previewToExport),badgePadY=Math.round(3*previewToExport);
       cx.font=`bold ${badgeFontSz}px Inter,sans-serif`;
@@ -1278,6 +1280,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       cx.fillStyle="#22c55e";
       cx.fillRect(W/2-badgeTw/2-badgePadX,badgeY,badgeTw+badgePadX*2,badgeFontSz+badgePadY*2);
       cx.fillStyle="#000";cx.fillText("SPOTLIGHT",W/2,badgeY+badgeFontSz+badgePadY*0.5);
+      cx.globalAlpha=1;
       cx.restore();
     };
 
@@ -1314,17 +1317,23 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         const seg=findSeg(ph);
 
         if(seg&&seg.isTag){
-          /* TAG SEGMENT: frozen frame + spotlight overlay */
+          /* TAG SEGMENT: frozen frame + spotlight overlay with fade in/out */
           const vel=videoEls[seg.clipId];
           if(vel){
-            /* Seek to exact source time (tag is a freeze frame) */
             const targetT=Math.max(0,seg.srcStart);
             if(Math.abs(vel.currentTime-targetT)>0.05)vel.currentTime=targetT;
             if(!vel.paused)vel.pause();
             drawVideoFit(vel,1);
           }
-          if(seg.tag)drawSpotlight(seg.tag);
-          /* Mute all clip audio during tags */
+          /* Fade: 0.3s in, 0.3s out */
+          const fadeDur=0.3;
+          const elapsed=ph-seg.tlStart;
+          const remaining=seg.tlEnd-ph;
+          const fadeIn=Math.min(1,elapsed/fadeDur);
+          const fadeOut=Math.min(1,remaining/fadeDur);
+          const opacity=Math.min(fadeIn,fadeOut);
+          if(seg.tag)drawSpotlight(seg.tag,opacity);
+          /* Mute audio during freeze */
           Object.values(audioGains).forEach(g=>g.gain.value=0);
           if(curAudEl){curAudEl.pause();curAudEl=null;}
 
