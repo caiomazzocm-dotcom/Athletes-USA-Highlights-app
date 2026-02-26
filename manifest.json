@@ -1,6 +1,6 @@
 {
-  "name": "AUSA Highlights",
-  "short_name": "AUSA Highlights",
+  "name": "AUSA Video Hub",
+  "short_name": "AUSA Video Hub",
   "description": "Athletes USA — Highlight Editor Suite",
   "start_url": "./#/athlete",
   "display": "standalone",
