@@ -102,6 +102,11 @@ const RefreshIcon=p=><I {...p} d={<><polyline points="23 4 23 10 17 10"/><path d
 const MagnetIcon=p=><I {...p} d={<><path d="M6 15V9a6 6 0 0 1 12 0v6"/><path d="M6 15a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2"/><path d="M18 15a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2"/><line x1="6" y1="11" x2="6" y2="15"/><line x1="18" y1="11" x2="18" y2="15"/></>}/>;
 const FitIcon=p=><I {...p} d={<><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></>}/>;
 const MessageSquareIcon=p=><I {...p} d={<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>}/>;
+const ImageIcon=p=><I {...p} d={<><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>}/>;
+const SendIcon=p=><I {...p} d={<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>}/>;
+const StarIcon=p=><I {...p} d={<><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></>}/>;
+const ClockIcon=p=><I {...p} d={<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>}/>;
+const AlertCircleIcon=p=><I {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>}/>;
 
 /* ═══ CONSTANTS ═══ */
 const CAT_COLORS=["#a6e3a1","#89b4fa","#f5c2e7","#f9e2af","#cba6f7","#fab387","#94e2d5","#f38ba8","#a6adc8","#74c7ec"];
@@ -142,6 +147,13 @@ const deleteVideoFromCloud=async(videoId)=>{try{await fbStorage.ref(`videos/${vi
 const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",positions:player.positions||[],profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
 const deletePlayerFromCloud=async(playerId)=>{try{await fbDb.collection("players").doc(playerId).delete();}catch(e){}};
 const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("players").get();return snap.docs.map(d=>{const p=d.data();return{...p,categories:(p.categories||[]).map(c=>({...c,videos:(c.videos||[]).map(v=>({...v,url:v.cloudUrl||""}))}))};});}catch(e){console.warn("Cloud load failed:",e);return[];}};
+
+/* ═══ FEEDBACK CLOUD ═══ */
+const uploadFeedbackScreenshot=async(feedbackId,file,idx)=>{const ref=fbStorage.ref(`feedback/${feedbackId}/screenshot_${idx}_${Date.now()}`);await ref.put(file);return await ref.getDownloadURL();};
+const saveFeedbackToCloud=async(fb)=>{try{await fbDb.collection("feedback").doc(fb.id).set(fb);}catch(e){console.warn("Feedback save failed:",e);}};
+const loadFeedbackFromCloud=async()=>{try{const snap=await fbDb.collection("feedback").orderBy("createdAt","desc").get();return snap.docs.map(d=>d.data());}catch(e){console.warn("Feedback load failed:",e);return[];}};
+const updateFeedbackStatus=async(id,status,note)=>{try{await fbDb.collection("feedback").doc(id).update({status,adminNote:note||"",updatedAt:Date.now()});}catch(e){console.warn("Feedback update failed:",e);}};
+const deleteFeedbackFromCloud=async(id)=>{try{await fbDb.collection("feedback").doc(id).delete();}catch(e){}};
 
 /* ═══ WAVEFORM ═══ */
 const Waveform=({w,h,color,seed=0})=>{const bars=Math.max(4,Math.floor(w/3));const pts=[];let s=seed||1;for(let i=0;i<bars;i++){s=(s*16807+i*13)%2147483647;const n=(s%1000)/1000;const amp=0.2+n*0.8;pts.push(amp);}
@@ -432,6 +444,7 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete})
         </div>
       </div>
     </div>}
+    <FeedbackFAB playerName="Visitor"/>
   </div>);
 }
 
@@ -552,6 +565,304 @@ function AthleteProfileForm({onSubmit,onBack}){
         </div>
       </div>
     </div>
+  </div>);
+}
+
+/* ═══════════ FEEDBACK MODAL ═══════════ */
+function FeedbackModal({onClose,playerName}){
+  const[fbType,setFbType]=useState("bug");
+  const[fbText,setFbText]=useState("");
+  const[fbRating,setFbRating]=useState(0);
+  const[screenshots,setScreenshots]=useState([]);/* [{file,preview}] */
+  const[sending,setSending]=useState(false);
+  const[sent,setSent]=useState(false);
+  const ssRef=useRef(null);
+
+  const addScreenshots=files=>{
+    const newSS=Array.from(files).slice(0,5-screenshots.length).map(f=>({file:f,preview:URL.createObjectURL(f)}));
+    setScreenshots(prev=>[...prev,...newSS].slice(0,5));
+  };
+  const removeScreenshot=idx=>{
+    setScreenshots(prev=>{URL.revokeObjectURL(prev[idx].preview);return prev.filter((_,i)=>i!==idx);});
+  };
+
+  const handleSubmit=async()=>{
+    if(!fbText.trim())return;
+    setSending(true);
+    try{
+      const id=uid("fb");
+      const ssUrls=[];
+      for(let i=0;i<screenshots.length;i++){
+        const url=await uploadFeedbackScreenshot(id,screenshots[i].file,i);
+        ssUrls.push(url);
+      }
+      const feedback={id,type:fbType,message:fbText.trim(),rating:fbRating,screenshots:ssUrls,
+        playerName:playerName||"Anonymous",status:"open",adminNote:"",
+        createdAt:Date.now(),updatedAt:Date.now()};
+      await saveFeedbackToCloud(feedback);
+      setSent(true);
+      setTimeout(()=>onClose(),1800);
+    }catch(e){console.error("Feedback submit error:",e);alert("Failed to submit feedback. Please try again.");setSending(false);}
+  };
+
+  const types=[{val:"bug",label:"Bug Report",icon:"🐛"},{val:"feature",label:"Feature Request",icon:"💡"},{val:"general",label:"General Feedback",icon:"💬"},{val:"praise",label:"Praise",icon:"⭐"}];
+
+  if(sent)return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999}}>
+      <div style={{background:C.mantle,borderRadius:20,padding:"48px 40px",textAlign:"center",animation:"fadeIn 0.3s ease-out",maxWidth:380}}>
+        <div style={{fontSize:48,marginBottom:12}}>✅</div>
+        <div style={{fontSize:18,fontWeight:800,color:"#fff",marginBottom:8}}>Thank You!</div>
+        <div style={{color:C.sub,fontSize:13}}>Your feedback has been submitted successfully.</div>
+      </div>
+    </div>);
+
+  return(
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999}}
+    onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:20,padding:"28px 32px",width:"95%",maxWidth:480,maxHeight:"90vh",overflow:"auto",animation:"fadeIn 0.3s ease-out",boxShadow:"0 20px 80px rgba(0,0,0,0.6)"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:36,height:36,borderRadius:"50%",background:C.blue+"22",display:"flex",alignItems:"center",justifyContent:"center"}}><MessageSquareIcon size={18} color={C.blue}/></div>
+          <div><div style={{fontWeight:800,fontSize:16,color:"#fff"}}>Send Feedback</div><div style={{color:C.sub,fontSize:11}}>Help us improve AUSA Video Hub</div></div>
+        </div>
+        <button onClick={onClose} style={{...ib,color:C.overlay}}><XIcon size={18}/></button>
+      </div>
+
+      {/* Type selector */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+        {types.map(t=>(
+          <button key={t.val} onClick={()=>setFbType(t.val)}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:fbType===t.val?C.blue+"22":C.s0,
+              border:`1px solid ${fbType===t.val?C.blue:C.s1}`,borderRadius:10,cursor:"pointer",color:fbType===t.val?C.blue:C.sub,fontSize:12,fontWeight:600}}>
+            <span style={{fontSize:16}}>{t.icon}</span>{t.label}
+          </button>))}
+      </div>
+
+      {/* Rating (optional) */}
+      <div style={{marginBottom:16}}>
+        <div style={{color:C.sub,fontSize:11,fontWeight:600,marginBottom:6}}>RATING (OPTIONAL)</div>
+        <div style={{display:"flex",gap:4}}>
+          {[1,2,3,4,5].map(n=>(
+            <button key={n} onClick={()=>setFbRating(fbRating===n?0:n)}
+              style={{...ib,color:n<=fbRating?"#eab308":C.s2,transition:"color 0.15s",padding:2}}>
+              <StarIcon size={22} color={n<=fbRating?"#eab308":C.s2}/>
+            </button>))}
+        </div>
+      </div>
+
+      {/* Message */}
+      <div style={{marginBottom:16}}>
+        <div style={{color:C.sub,fontSize:11,fontWeight:600,marginBottom:6}}>YOUR MESSAGE *</div>
+        <textarea value={fbText} onChange={e=>setFbText(e.target.value)} placeholder="Describe your feedback, issue, or suggestion..."
+          rows={4} style={{...inputStyle,resize:"vertical",minHeight:80,maxHeight:200,fontFamily:"'Inter',sans-serif"}}/>
+      </div>
+
+      {/* Screenshots */}
+      <div style={{marginBottom:20}}>
+        <div style={{color:C.sub,fontSize:11,fontWeight:600,marginBottom:6}}>SCREENSHOTS (UP TO 5)</div>
+        <input ref={ssRef} type="file" accept="image/*" multiple onChange={e=>{if(e.target.files.length)addScreenshots(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {screenshots.map((ss,i)=>(
+            <div key={i} style={{position:"relative",width:72,height:72,borderRadius:8,overflow:"hidden",border:`1px solid ${C.s1}`}}>
+              <img src={ss.preview} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+              <button onClick={()=>removeScreenshot(i)}
+                style={{position:"absolute",top:2,right:2,width:18,height:18,borderRadius:"50%",background:"rgba(0,0,0,0.7)",border:"none",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+                <XIcon size={10} color="#fff"/>
+              </button>
+            </div>))}
+          {screenshots.length<5&&(
+            <button onClick={()=>ssRef.current&&ssRef.current.click()}
+              style={{width:72,height:72,borderRadius:8,border:`1px dashed ${C.s2}`,background:"transparent",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,cursor:"pointer",color:C.overlay}}>
+              <ImageIcon size={18} color={C.overlay}/>
+              <span style={{fontSize:8,fontWeight:600}}>ADD</span>
+            </button>)}
+        </div>
+      </div>
+
+      {/* Submit */}
+      <button onClick={handleSubmit} disabled={!fbText.trim()||sending}
+        style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+          padding:"12px 24px",background:fbText.trim()&&!sending?"linear-gradient(135deg,#3b82f6,#2563eb)":"#1a1a2e",
+          color:fbText.trim()&&!sending?"#fff":"#64748b",border:"none",borderRadius:10,cursor:fbText.trim()&&!sending?"pointer":"not-allowed",
+          fontSize:14,fontWeight:700,letterSpacing:0.5}}>
+        {sending?<><div style={{display:"flex",gap:3}}>{[0,1,2].map(i=><div key={i} style={{width:5,height:5,borderRadius:"50%",background:"#fff",animation:`pulse 1.4s ease-in-out ${i*0.2}s infinite`}}/>)}</div> Submitting...</>
+        :<><SendIcon size={15}/> Submit Feedback</>}
+      </button>
+    </div>
+  </div>);
+}
+
+/* ═══════════ FEEDBACK FAB (floating button) ═══════════ */
+function FeedbackFAB({playerName}){
+  const[showModal,setShowModal]=useState(false);
+  return(<>
+    <button onClick={()=>setShowModal(true)}
+      style={{position:"fixed",bottom:24,right:24,width:52,height:52,borderRadius:"50%",
+        background:"linear-gradient(135deg,#3b82f6,#2563eb)",border:"none",cursor:"pointer",
+        display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 20px rgba(59,130,246,0.4)",zIndex:900,transition:"transform 0.2s"}}
+      onMouseEnter={e=>e.currentTarget.style.transform="scale(1.1)"}
+      onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}>
+      <MessageSquareIcon size={22} color="#fff"/>
+    </button>
+    {showModal&&<FeedbackModal onClose={()=>setShowModal(false)} playerName={playerName}/>}
+  </>);
+}
+
+/* ═══════════ FEEDBACK ADMIN PANEL ═══════════ */
+function FeedbackAdmin({onClose}){
+  const[items,setItems]=useState([]);const[loading,setLoading]=useState(true);
+  const[filter,setFilter]=useState("all");/* all|open|in_progress|resolved */
+  const[selectedFb,setSelectedFb]=useState(null);
+  const[adminNote,setAdminNote]=useState("");
+  const[previewImg,setPreviewImg]=useState(null);
+
+  useEffect(()=>{(async()=>{const fb=await loadFeedbackFromCloud();setItems(fb);setLoading(false);})();},[]);
+
+  const handleStatusChange=async(fb,newStatus)=>{
+    await updateFeedbackStatus(fb.id,newStatus,fb.adminNote||"");
+    setItems(prev=>prev.map(f=>f.id===fb.id?{...f,status:newStatus,updatedAt:Date.now()}:f));
+  };
+  const handleAddNote=async(fb)=>{
+    if(!adminNote.trim())return;
+    await updateFeedbackStatus(fb.id,fb.status,adminNote.trim());
+    setItems(prev=>prev.map(f=>f.id===fb.id?{...f,adminNote:adminNote.trim(),updatedAt:Date.now()}:f));
+    setAdminNote("");
+  };
+  const handleDelete=async(fb)=>{
+    if(!confirm("Delete this feedback permanently?"))return;
+    await deleteFeedbackFromCloud(fb.id);
+    setItems(prev=>prev.filter(f=>f.id!==fb.id));
+    if(selectedFb&&selectedFb.id===fb.id)setSelectedFb(null);
+  };
+
+  const filtered=filter==="all"?items:items.filter(f=>f.status===filter);
+  const statusColors={open:C.blue,in_progress:"#eab308",resolved:C.green,closed:C.overlay};
+  const statusLabels={open:"Open",in_progress:"In Progress",resolved:"Resolved",closed:"Closed"};
+  const typeEmojis={bug:"🐛",feature:"💡",general:"💬",praise:"⭐"};
+
+  const fmtDate=ts=>{if(!ts)return"—";const d=new Date(ts);return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"});};
+
+  return(
+  <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",backdropFilter:"blur(12px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999}}>
+    <div style={{background:C.base,border:`1px solid ${C.s0}`,borderRadius:20,width:"95%",maxWidth:900,height:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"fadeIn 0.3s ease-out",boxShadow:"0 20px 80px rgba(0,0,0,0.6)"}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"20px 24px",borderBottom:`1px solid ${C.s0}`,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <MessageSquareIcon size={20} color={C.blue}/>
+          <span style={{fontWeight:800,fontSize:18,color:"#fff"}}>Feedback Manager</span>
+          <span style={{background:C.blue+"22",color:C.blue,fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:12}}>{items.length}</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          {["all","open","in_progress","resolved"].map(f=>(
+            <button key={f} onClick={()=>setFilter(f)}
+              style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${filter===f?C.blue:C.s1}`,background:filter===f?C.blue+"22":"transparent",
+                color:filter===f?C.blue:C.sub,cursor:"pointer",fontSize:11,fontWeight:600,textTransform:"capitalize"}}>
+              {f==="all"?"All":statusLabels[f]||f}
+            </button>))}
+          <button onClick={onClose} style={{...ib,color:C.overlay,marginLeft:8}}><XIcon size={18}/></button>
+        </div>
+      </div>
+
+      <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+        {/* List */}
+        <div style={{width:selectedFb?"45%":"100%",borderRight:selectedFb?`1px solid ${C.s0}`:"none",overflow:"auto",transition:"width 0.2s"}}>
+          {loading?<div style={{padding:40,textAlign:"center",color:C.sub}}>Loading feedback...</div>
+          :filtered.length===0?<div style={{padding:40,textAlign:"center",color:C.sub}}>No feedback found.</div>
+          :filtered.map(fb=>(
+            <div key={fb.id} onClick={()=>{setSelectedFb(fb);setAdminNote(fb.adminNote||"");}}
+              style={{padding:"14px 20px",borderBottom:`1px solid ${C.s0}08`,cursor:"pointer",
+                background:selectedFb&&selectedFb.id===fb.id?C.s0+"66":"transparent",transition:"background 0.15s"}}
+              onMouseEnter={e=>{if(!selectedFb||selectedFb.id!==fb.id)e.currentTarget.style.background=C.s0+"33";}}
+              onMouseLeave={e=>{if(!selectedFb||selectedFb.id!==fb.id)e.currentTarget.style.background="transparent";}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <span style={{fontSize:14}}>{typeEmojis[fb.type]||"💬"}</span>
+                <span style={{color:"#fff",fontSize:13,fontWeight:700,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {fb.message.length>60?fb.message.slice(0,60)+"...":fb.message}
+                </span>
+                <span style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:4,
+                  background:(statusColors[fb.status]||C.overlay)+"22",color:statusColors[fb.status]||C.overlay,textTransform:"uppercase",letterSpacing:0.5}}>
+                  {statusLabels[fb.status]||fb.status}
+                </span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:12,color:C.overlay,fontSize:10}}>
+                <span><UserIcon size={10}/> {fb.playerName}</span>
+                <span><ClockIcon size={10}/> {fmtDate(fb.createdAt)}</span>
+                {fb.screenshots&&fb.screenshots.length>0&&<span><ImageIcon size={10}/> {fb.screenshots.length} screenshot{fb.screenshots.length>1?"s":""}</span>}
+                {fb.rating>0&&<span style={{color:"#eab308"}}>{"★".repeat(fb.rating)}</span>}
+              </div>
+            </div>))}
+        </div>
+
+        {/* Detail */}
+        {selectedFb&&(
+          <div style={{flex:1,overflow:"auto",padding:24}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+              <span style={{fontSize:24}}>{typeEmojis[selectedFb.type]||"💬"}</span>
+              <div style={{flex:1}}>
+                <div style={{color:"#fff",fontSize:15,fontWeight:700}}>{selectedFb.type==="bug"?"Bug Report":selectedFb.type==="feature"?"Feature Request":selectedFb.type==="praise"?"Praise":"General Feedback"}</div>
+                <div style={{color:C.overlay,fontSize:11}}>by {selectedFb.playerName} &bull; {fmtDate(selectedFb.createdAt)}</div>
+              </div>
+              <button onClick={()=>handleDelete(selectedFb)} style={{...ib,color:C.red}} title="Delete"><XIcon size={16}/></button>
+            </div>
+
+            {selectedFb.rating>0&&(
+              <div style={{display:"flex",gap:2,marginBottom:12}}>
+                {[1,2,3,4,5].map(n=><StarIcon key={n} size={16} color={n<=selectedFb.rating?"#eab308":C.s2}/>)}
+              </div>)}
+
+            <div style={{background:C.s0,borderRadius:12,padding:"16px 18px",marginBottom:16,color:C.text,fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap"}}>{selectedFb.message}</div>
+
+            {selectedFb.screenshots&&selectedFb.screenshots.length>0&&(
+              <div style={{marginBottom:16}}>
+                <div style={{color:C.sub,fontSize:11,fontWeight:600,marginBottom:8}}>SCREENSHOTS</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {selectedFb.screenshots.map((url,i)=>(
+                    <img key={i} src={url} onClick={()=>setPreviewImg(url)}
+                      style={{width:100,height:75,objectFit:"cover",borderRadius:8,border:`1px solid ${C.s1}`,cursor:"pointer",transition:"transform 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.transform="scale(1.05)"}
+                      onMouseLeave={e=>e.currentTarget.style.transform="scale(1)"}/>))}
+                </div>
+              </div>)}
+
+            {/* Status change */}
+            <div style={{marginBottom:16}}>
+              <div style={{color:C.sub,fontSize:11,fontWeight:600,marginBottom:8}}>STATUS</div>
+              <div style={{display:"flex",gap:6}}>
+                {["open","in_progress","resolved","closed"].map(s=>(
+                  <button key={s} onClick={()=>handleStatusChange(selectedFb,s)}
+                    style={{padding:"6px 14px",borderRadius:6,
+                      border:`1px solid ${selectedFb.status===s?(statusColors[s]||C.overlay):C.s1}`,
+                      background:selectedFb.status===s?(statusColors[s]||C.overlay)+"22":"transparent",
+                      color:selectedFb.status===s?(statusColors[s]||C.overlay):C.sub,cursor:"pointer",fontSize:11,fontWeight:600}}>
+                    {statusLabels[s]||s}
+                  </button>))}
+              </div>
+            </div>
+
+            {/* Admin note */}
+            <div>
+              <div style={{color:C.sub,fontSize:11,fontWeight:600,marginBottom:6}}>ADMIN NOTE</div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={adminNote} onChange={e=>setAdminNote(e.target.value)}
+                  placeholder="Add an internal note..." onKeyDown={e=>{if(e.key==="Enter")handleAddNote(selectedFb);}}
+                  style={{...inputStyle,flex:1,fontSize:12}}/>
+                <button onClick={()=>handleAddNote(selectedFb)}
+                  style={{...tb,background:C.green+"22",border:`1px solid ${C.green}44`,color:C.green,fontSize:11,padding:"8px 16px",whiteSpace:"nowrap"}}>
+                  <CheckIcon size={12}/> Save
+                </button>
+              </div>
+              {selectedFb.adminNote&&<div style={{marginTop:8,padding:"8px 12px",background:C.s0,borderRadius:8,color:C.sub,fontSize:11,fontStyle:"italic"}}>{selectedFb.adminNote}</div>}
+            </div>
+          </div>)}
+      </div>
+    </div>
+
+    {/* Full-size screenshot preview */}
+    {previewImg&&(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000,cursor:"pointer"}}
+        onClick={()=>setPreviewImg(null)}>
+        <img src={previewImg} style={{maxWidth:"90%",maxHeight:"90%",borderRadius:12,boxShadow:"0 0 60px rgba(0,0,0,0.5)"}}/>
+      </div>)}
   </div>);
 }
 
@@ -736,6 +1047,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode}){
         <div style={{color:C.overlay,fontSize:10}}>{zipProg.pct||0}%</div>
       </div>
     </div>}
+    <FeedbackFAB playerName={player.name}/>
   </div>);
 }
 
@@ -754,6 +1066,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const[exporting,setExporting]=useState(false);const[exportProgress,setExportProgress]=useState(0);const[exportFmt,setExportFmt]=useState("");const exportCancelRef=useRef(false);
   const[showEditorSection,setShowEditorSection]=useState(false);
   const[showGuide,setShowGuide]=useState(false);
+  const[showFeedbackAdmin,setShowFeedbackAdmin]=useState(false);
   const[showTagMenu,setShowTagMenu]=useState(false);
   const[resizingClipId,setResizingClipId]=useState(null);const[resizingEdge,setResizingEdge]=useState(null);const[resizingTrackId,setResizingTrackId]=useState(null);
   const[spotlightMode,setSpotlightMode]=useState(null);
@@ -1943,6 +2256,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       </div>
       <button onClick={closeGaps} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}} title="Close gaps">Close Gaps</button>
       <button onClick={exportVideo} disabled={exporting} style={{display:"flex",alignItems:"center",gap:5,background:exporting?"transparent":"linear-gradient(135deg,#22c55e,#16a34a)",border:exporting?`1px solid ${C.s1}`:"1px solid #22c55e55",borderRadius:6,padding:"4px 12px",color:exporting?C.s1:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:10,fontWeight:700,marginLeft:8,letterSpacing:0.5}} title="Export video"><DownloadIcon size={12}/> Export</button>
+      <button onClick={()=>setShowFeedbackAdmin(true)} style={{display:"flex",alignItems:"center",gap:5,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:6,padding:"4px 10px",color:C.blue,cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:8}}><MessageSquareIcon size={12}/> Feedback</button>
       <button onClick={onLogout} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}}><LogOutIcon size={12}/> Exit</button>
     </div>
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -1970,6 +2284,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         <button onClick={()=>{exportCancelRef.current=true;}} style={{background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:"8px 28px",color:C.sub,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:1}}>Cancel Export</button>
       </div>
     </div>}
+    {showFeedbackAdmin&&<FeedbackAdmin onClose={()=>setShowFeedbackAdmin(false)}/>}
   </div>);
 }
 
