@@ -144,7 +144,7 @@ const fbStorage=firebase.storage();
 
 const uploadVideoToCloud=async(videoId,blob,onProgress)=>{const ref=fbStorage.ref(`videos/${videoId}`);const task=ref.put(blob);if(onProgress)task.on("state_changed",snap=>onProgress(snap.bytesTransferred/snap.totalBytes));await task;return await ref.getDownloadURL();};
 const deleteVideoFromCloud=async(videoId)=>{try{await fbStorage.ref(`videos/${videoId}`).delete();}catch(e){}};
-const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",positions:player.positions||[],profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
+const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",positions:player.positions||[],profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",phone:player.phone||"",categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
 const deletePlayerFromCloud=async(playerId)=>{try{await fbDb.collection("players").doc(playerId).delete();}catch(e){}};
 const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("players").get();return snap.docs.map(d=>{const p=d.data();return{...p,categories:(p.categories||[]).map(c=>({...c,videos:(c.videos||[]).map(v=>({...v,url:v.cloudUrl||""}))}))};});}catch(e){console.warn("Cloud load failed:",e);return[];}};
 
@@ -376,14 +376,22 @@ function StudioLandingPage({onEnterStudio,onEnterAthleteReview}){
 }
 
 /* ═══════════ ATHLETE: PROFILE SELECT ═══════════ */
-function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,myPlayerId}){
+function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,onPhoneLogin}){
   const[confirmDel,setConfirmDel]=useState(null);
   const[searchQ,setSearchQ]=useState("");
+  const[loginPhone,setLoginPhone]=useState("");
+  const[loginErr,setLoginErr]=useState("");
 
-  /* In athlete mode: put MY profile first, then others. In editor mode: show all normally. */
-  const hasMyProfile=!isEditorMode&&myPlayerId&&players.find(p=>p.id===myPlayerId);
-  const myPlayer=hasMyProfile?players.find(p=>p.id===myPlayerId):null;
-  const otherPlayers=!isEditorMode?players.filter(p=>p.id!==myPlayerId):[];
+  const normalizePhone=p=>p.replace(/[^0-9]/g,"");
+  const handlePhoneLogin=()=>{
+    const digits=normalizePhone(loginPhone);
+    if(digits.length<7){setLoginErr("Please enter a valid phone number.");return;}
+    const match=players.find(pl=>normalizePhone(pl.phone||"")===digits);
+    if(match){setLoginErr("");onPhoneLogin(match);}
+    else{setLoginErr("No profile found with this phone number.");}
+  };
+
+  /* Editor mode: standard list */
   const editorFiltered=isEditorMode?players.filter(p=>!searchQ.trim()||p.name.toLowerCase().includes(searchQ.toLowerCase())):[];
 
   return(
@@ -399,12 +407,12 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,m
     </div>
     <div className="ath-select-wrap" style={{flex:1,overflow:"auto",WebkitOverflowScrolling:"touch",display:"flex",alignItems:"center",justifyContent:"center",padding:32}}>
       <div style={{maxWidth:800,width:"100%",textAlign:"center"}}>
-        <UsersIcon size={40} color={C.blue} style={{margin:"0 auto 16px",display:"block"}}/>
-        <h2 style={{color:C.text,fontSize:24,fontWeight:800,marginBottom:8}}>{isEditorMode?"All Athletes":"Welcome, Player"}</h2>
-        <p style={{color:C.sub,fontSize:14,marginBottom:24}}>{isEditorMode?"Review and manage athlete profiles.":hasMyProfile?"Tap your profile to continue.":"Select your profile or create a new one."}</p>
 
         {/* ── EDITOR MODE: full access to all players ── */}
         {isEditorMode&&<>
+          <UsersIcon size={40} color={C.blue} style={{margin:"0 auto 16px",display:"block"}}/>
+          <h2 style={{color:C.text,fontSize:24,fontWeight:800,marginBottom:8}}>All Athletes</h2>
+          <p style={{color:C.sub,fontSize:14,marginBottom:24}}>Review and manage athlete profiles.</p>
           {players.length>3&&<div style={{maxWidth:320,margin:"0 auto 24px"}}><input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search by name..." style={{...inputStyle,textAlign:"center",fontSize:13}}/></div>}
           {editorFiltered.length>0&&(
             <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32}}>
@@ -426,7 +434,6 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,m
                       <span style={{color:C.overlay,fontSize:11}}>Class {pl.recruitingClass}</span>
                     </div>
                     {pl.positions&&pl.positions.length>0&&<div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:3,marginBottom:4}}>{pl.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green||"#a6e3a1",fontSize:8,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</div>}
-                    {pl.uniformDesc&&<div style={{color:C.overlay,fontSize:9,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pl.uniformDesc}</div>}
                     <div style={{color:C.overlay,fontSize:10}}>{pl.categories.reduce((a,c)=>a+c.videos.length,0)} clips uploaded</div>
                   </div>
                   {pl.playingPicUrl&&<div style={{marginTop:8,borderRadius:6,overflow:"hidden",height:80}}>
@@ -434,81 +441,44 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,m
                   </div>}
                 </div>))}
             </div>)}
+          <button onClick={onCreate}
+            style={{display:"inline-flex",alignItems:"center",gap:8,background:C.blue,color:"#fff",border:"none",borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:1}}>
+            <PlusIcon size={16}/> Create New Profile
+          </button>
         </>}
 
-        {/* ── ATHLETE MODE: MY profile highlighted + others as view-only ── */}
+        {/* ── ATHLETE MODE: phone login ── */}
         {!isEditorMode&&<>
-          {/* My profile card — fully clickable, highlighted */}
-          {myPlayer&&(
-            <div style={{marginBottom:28}}>
-              <div style={{color:C.green,fontSize:10,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:10}}>YOUR PROFILE</div>
-              <div onClick={()=>onSelect(myPlayer.id)}
-                style={{background:C.mantle,border:`2px solid ${C.blue}`,borderRadius:16,padding:"20px 20px 16px",cursor:"pointer",transition:"all 0.2s",textAlign:"center",maxWidth:280,margin:"0 auto",boxShadow:`0 0 30px ${C.blue}18`}}
-                onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow=`0 8px 40px ${C.blue}30`;}}
-                onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow=`0 0 30px ${C.blue}18`;}}>
-                {myPlayer.profilePicUrl?
-                  <img src={myPlayer.profilePicUrl} style={{width:64,height:64,borderRadius:"50%",objectFit:"cover",border:`3px solid ${C.blue}`,margin:"0 auto 12px",display:"block"}}/>
-                :<div style={{width:64,height:64,borderRadius:"50%",background:C.blue+"22",border:`3px solid ${C.blue}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px"}}>
-                  <span style={{color:C.blue,fontWeight:800,fontSize:24}}>{myPlayer.name.charAt(0).toUpperCase()}</span>
-                </div>}
-                <div style={{color:"#fff",fontSize:16,fontWeight:800,marginBottom:3}}>{myPlayer.name}</div>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:4}}>
-                  {myPlayer.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:4}}>#{myPlayer.shirtNumber}</span>}
-                  <span style={{color:C.overlay,fontSize:11}}>Class {myPlayer.recruitingClass}</span>
-                </div>
-                {myPlayer.positions&&myPlayer.positions.length>0&&<div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:3,marginBottom:4}}>{myPlayer.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:3}}>{p}</span>)}</div>}
-                <div style={{color:C.blue,fontSize:11,fontWeight:600,marginTop:6,letterSpacing:1}}>OPEN MY PORTAL &rarr;</div>
-              </div>
-            </div>)}
+          <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,#3b82f6,#2563eb)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px",boxShadow:"0 0 30px rgba(59,130,246,0.3)"}}><UserIcon size={32} color="#fff"/></div>
+          <h2 style={{color:C.text,fontSize:24,fontWeight:800,marginBottom:6}}>Welcome, Player</h2>
+          <p style={{color:C.sub,fontSize:13,marginBottom:32}}>Log in with your phone number or create a new profile.</p>
 
-          {/* Other athletes — visible but NOT clickable, greyed out */}
-          {otherPlayers.length>0&&(
-            <div style={{marginBottom:28}}>
-              <div style={{color:C.overlay,fontSize:10,fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>OTHER ATHLETES ({otherPlayers.length})</div>
-              <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:0}}>
-                {otherPlayers.map((pl,i)=>(
-                  <div key={pl.id} style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"14px 12px 12px",textAlign:"center",opacity:0.45,pointerEvents:"none",userSelect:"none"}}>
-                    {pl.profilePicUrl?
-                      <img src={pl.profilePicUrl} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover",border:`2px solid ${C.s1}`,margin:"0 auto 8px",display:"block",filter:"grayscale(40%)"}}/>
-                    :<div style={{width:40,height:40,borderRadius:"50%",background:C.s1+"44",border:`2px solid ${C.s1}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 8px"}}>
-                      <span style={{color:C.overlay,fontWeight:800,fontSize:16}}>{pl.name.charAt(0).toUpperCase()}</span>
-                    </div>}
-                    <div style={{color:C.sub,fontSize:12,fontWeight:600,marginBottom:2}}>{pl.name}</div>
-                    <div style={{color:C.overlay,fontSize:9}}>{pl.positions&&pl.positions.length>0?pl.positions.join(", "):"Athlete"}</div>
-                  </div>))}
-              </div>
-            </div>)}
+          {/* Phone login box */}
+          <div style={{maxWidth:360,margin:"0 auto 28px",background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:16,padding:"24px 24px 20px",textAlign:"left"}}>
+            <div style={{color:C.sub,fontSize:10,fontWeight:700,letterSpacing:1.5,textTransform:"uppercase",marginBottom:8}}>LOG IN WITH PHONE</div>
+            <input value={loginPhone} onChange={e=>{setLoginPhone(e.target.value);setLoginErr("");}}
+              onKeyDown={e=>{if(e.key==="Enter")handlePhoneLogin();}}
+              placeholder="Enter your phone number" type="tel"
+              style={{...inputStyle,marginBottom:loginErr?4:12,textAlign:"center",fontSize:15,fontWeight:600,letterSpacing:1}}/>
+            {loginErr&&<div style={{color:C.red,fontSize:11,marginBottom:8,textAlign:"center"}}>{loginErr}</div>}
+            <button onClick={handlePhoneLogin}
+              style={{width:"100%",padding:12,background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",border:"none",borderRadius:10,fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:0.5}}>
+              Log In
+            </button>
+          </div>
 
-          {/* If athlete has NO stored profile yet, let them pick from existing or create new */}
-          {!hasMyProfile&&players.length>0&&(
-            <div style={{marginBottom:28}}>
-              <div style={{color:C.sub,fontSize:12,fontWeight:600,marginBottom:12}}>Already have a profile? Select yours below:</div>
-              <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12,marginBottom:0}}>
-                {players.map((pl,i)=>(
-                  <div key={pl.id} onClick={()=>onSelect(pl.id)}
-                    style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"14px 14px 12px",cursor:"pointer",transition:"all 0.2s",textAlign:"center"}}
-                    onMouseEnter={e=>{e.currentTarget.style.borderColor=PLAYER_COLORS[i%8]+"66";e.currentTarget.style.transform="translateY(-2px)";}}
-                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.s0;e.currentTarget.style.transform="none";}}>
-                    {pl.profilePicUrl?
-                      <img src={pl.profilePicUrl} style={{width:48,height:48,borderRadius:"50%",objectFit:"cover",border:`2px solid ${PLAYER_COLORS[i%8]}`,margin:"0 auto 8px",display:"block"}}/>
-                    :<div style={{width:48,height:48,borderRadius:"50%",background:PLAYER_COLORS[i%8]+"22",border:`2px solid ${PLAYER_COLORS[i%8]}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 8px"}}>
-                      <span style={{color:PLAYER_COLORS[i%8],fontWeight:800,fontSize:18}}>{pl.name.charAt(0).toUpperCase()}</span>
-                    </div>}
-                    <div style={{color:C.text,fontSize:13,fontWeight:700,marginBottom:2}}>{pl.name}</div>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
-                      {pl.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3}}>#{pl.shirtNumber}</span>}
-                      {pl.positions&&pl.positions.length>0&&pl.positions.slice(0,2).map(p=><span key={p} style={{background:C.green+"22",color:C.green,fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3}}>{p}</span>)}
-                    </div>
-                  </div>))}
-              </div>
-            </div>)}
+          <div style={{display:"flex",alignItems:"center",gap:16,maxWidth:360,margin:"0 auto 24px"}}>
+            <div style={{flex:1,height:1,background:C.s1}}/>
+            <span style={{color:C.overlay,fontSize:11,fontWeight:600}}>OR</span>
+            <div style={{flex:1,height:1,background:C.s1}}/>
+          </div>
+
+          <button onClick={onCreate}
+            style={{display:"inline-flex",alignItems:"center",gap:8,background:"transparent",color:C.blue,border:`2px solid ${C.blue}`,borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:1}}>
+            <PlusIcon size={16}/> Create New Profile
+          </button>
         </>}
 
-        {/* Create New Profile button — always visible (but only creates new, athlete gets locked to it) */}
-        {(isEditorMode||!hasMyProfile)&&<button onClick={onCreate}
-          style={{display:"inline-flex",alignItems:"center",gap:8,background:C.blue,color:"#fff",border:"none",borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:1}}>
-          <PlusIcon size={16}/> Create New Profile
-        </button>}
       </div>
     </div>
     {confirmDel&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}
@@ -523,14 +493,15 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,m
         </div>
       </div>
     </div>}
-    <FeedbackFAB playerName={myPlayer?myPlayer.name:"Visitor"}/>
+    <FeedbackFAB playerName="Visitor"/>
   </div>);
 }
 
 /* ═══════════ ATHLETE: PROFILE FORM ═══════════ */
-function AthleteProfileForm({onSubmit,onBack}){
+function AthleteProfileForm({onSubmit,onBack,existingPlayers}){
   const[name,setName]=useState("");const[rc,setRc]=useState("2026");const[size,setSize]=useState("");const[dob,setDob]=useState("");
   const[shirtNum,setShirtNum]=useState("");const[uniformDesc,setUniformDesc]=useState("");
+  const[phone,setPhone]=useState("");const[phoneErr,setPhoneErr]=useState("");
   const ALL_POSITIONS=["GK","LCB","CB","RCB","LB","LWB","RB","RWB","CDM","CM","CAM","LM","RM","LW","RW","ST","CF","SS"];
   const[positions,setPositions]=useState([]);
   const togglePos=p=>setPositions(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p]);
@@ -548,7 +519,20 @@ function AthleteProfileForm({onSubmit,onBack}){
   const onPickProfile=e=>{const f=e.target.files[0];if(!f)return;setProfilePic(f);setProfilePicPrev(URL.createObjectURL(f));};
   const onPickPlaying=e=>{const f=e.target.files[0];if(!f)return;setPlayingPic(f);setPlayingPicPrev(URL.createObjectURL(f));};
 
+  const normalizePhone=p=>p.replace(/[^0-9]/g,"");
+  const handlePhoneChange=val=>{
+    setPhone(val);setPhoneErr("");
+    const digits=normalizePhone(val);
+    if(digits.length>=7&&existingPlayers){
+      const dup=existingPlayers.find(pl=>normalizePhone(pl.phone||"")===digits);
+      if(dup)setPhoneErr("This phone number is already registered to "+dup.name+".");
+    }
+  };
+
   const handle=async()=>{if(!canSubmit)return;
+    const digits=normalizePhone(phone);
+    if(existingPlayers){const dup=existingPlayers.find(pl=>normalizePhone(pl.phone||"")===digits);
+      if(dup){setPhoneErr("This phone number is already registered to "+dup.name+".");return;}}
     setCreating(true);
     let profilePicUrl="",playingPicUrl="";
     try{
@@ -556,11 +540,11 @@ function AthleteProfileForm({onSubmit,onBack}){
       if(playingPic){setCreateProg("Uploading playing picture...");const id=uid("apic");playingPicUrl=await uploadVideoToCloud(id,playingPic,()=>{});}
     }catch(e){console.warn("Pic upload failed:",e);}
     setCreateProg("Creating profile...");
-    onSubmit({name:name.trim(),recruitingClass:rc,size:size.trim(),dob,shirtNumber:shirtNum.trim(),uniformDesc:uniformDesc.trim(),positions,profilePicUrl,playingPicUrl});
+    onSubmit({name:name.trim(),recruitingClass:rc,size:size.trim(),dob,shirtNumber:shirtNum.trim(),uniformDesc:uniformDesc.trim(),positions,profilePicUrl,playingPicUrl,phone:digits});
     setCreating(false);
   };
 
-  const canSubmit=name.trim()&&shirtNum.trim()&&rc&&size.trim()&&dob&&positions.length>0&&uniformDesc.trim()&&profilePic&&playingPic&&!creating;
+  const canSubmit=name.trim()&&shirtNum.trim()&&rc&&size.trim()&&dob&&positions.length>0&&uniformDesc.trim()&&profilePic&&playingPic&&normalizePhone(phone).length>=7&&!phoneErr&&!creating;
   const labelStyle={color:C.sub,fontSize:12,fontWeight:600,marginBottom:6,display:"block",letterSpacing:1,textTransform:"uppercase"};
   const picBoxStyle=(hasImg)=>({width:"100%",height:140,borderRadius:12,border:`2px dashed ${hasImg?C.blue+"66":C.s1}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",background:hasImg?"transparent":C.s0,overflow:"hidden",position:"relative",transition:"border 0.2s"});
   return(
@@ -583,6 +567,12 @@ function AthleteProfileForm({onSubmit,onBack}){
           <p style={{color:C.sub,fontSize:13,marginTop:4}}>Fill in your details so coaches and editors can identify you</p>
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:18}}>
+          <div>
+            <label style={labelStyle}>Phone Number *</label>
+            <input value={phone} onChange={e=>handlePhoneChange(e.target.value)} placeholder="e.g. (555) 123-4567" style={{...inputStyle,borderColor:phoneErr?C.red:undefined}} type="tel"/>
+            {phoneErr&&<div style={{color:C.red,fontSize:10,marginTop:4}}>{phoneErr}</div>}
+            <div style={{color:C.overlay,fontSize:9,marginTop:3}}>This will be your login — use a number only you have access to</div>
+          </div>
           <div>
             <label style={labelStyle}>Full Name *</label>
             <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Marcus Johnson" style={inputStyle}/>
@@ -953,6 +943,7 @@ function EditProfileModal({player,onSave,onClose}){
   const[dob,setDob]=useState(player.dob||"");
   const[shirtNum,setShirtNum]=useState(player.shirtNumber||"");
   const[uniformDesc,setUniformDesc]=useState(player.uniformDesc||"");
+  const[phone,setPhone]=useState(player.phone||"");
   const ALL_POSITIONS=["GK","LCB","CB","RCB","LB","LWB","RB","RWB","CDM","CM","CAM","LM","RM","LW","RW","ST","CF","SS"];
   const[positions,setPositions]=useState(player.positions||[]);
   const togglePos=p=>setPositions(prev=>prev.includes(p)?prev.filter(x=>x!==p):[...prev,p]);
@@ -987,7 +978,7 @@ function EditProfileModal({player,onSave,onClose}){
         playingPicUrl=await ref.getDownloadURL();
       }
       const updated={...player,name:name.trim(),recruitingClass:rc,size,dob,shirtNumber:shirtNum.trim(),
-        uniformDesc:uniformDesc.trim(),positions,profilePicUrl,playingPicUrl};
+        uniformDesc:uniformDesc.trim(),positions,profilePicUrl,playingPicUrl,phone:phone.replace(/[^0-9]/g,"")};
       onSave(updated);
       savePlayerToCloud(updated);
       onClose();
@@ -1009,6 +1000,11 @@ function EditProfileModal({player,onSave,onClose}){
         <button onClick={onClose} style={{...ib,color:C.overlay}}><XIcon size={18}/></button>
       </div>
 
+      <div style={{marginBottom:12}}>
+        <label style={labelStyle}>PHONE NUMBER</label>
+        <input value={phone} onChange={e=>setPhone(e.target.value)} type="tel" style={{...inputStyle,background:C.s0+"88",color:C.overlay}} disabled/>
+        <div style={{color:C.overlay,fontSize:9,marginTop:3}}>Phone number cannot be changed (used for login)</div>
+      </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
         <div><label style={labelStyle}>FULL NAME *</label><input value={name} onChange={e=>setName(e.target.value)} style={inputStyle}/></div>
         <div><label style={labelStyle}>SHIRT NUMBER *</label><input value={shirtNum} onChange={e=>setShirtNum(e.target.value)} style={inputStyle}/></div>
@@ -2514,8 +2510,11 @@ const saveSession=()=>{try{localStorage.setItem(STORAGE_KEY_SESSION,String(Date.
 
 /* ═══ ATHLETE IDENTITY (localStorage) ═══ */
 const STORAGE_KEY_ATHLETE_ID="aua_my_player_id";
+const STORAGE_KEY_ATHLETE_PHONE="aua_my_phone";
 const getMyPlayerId=()=>{try{return localStorage.getItem(STORAGE_KEY_ATHLETE_ID)||null;}catch(e){return null;}};
 const setMyPlayerId=(id)=>{try{if(id)localStorage.setItem(STORAGE_KEY_ATHLETE_ID,id);else localStorage.removeItem(STORAGE_KEY_ATHLETE_ID);}catch(e){}};
+const getMyAthletePhone=()=>{try{return localStorage.getItem(STORAGE_KEY_ATHLETE_PHONE)||null;}catch(e){return null;}};
+const setMyAthletePhone=(p)=>{try{if(p)localStorage.setItem(STORAGE_KEY_ATHLETE_PHONE,p);else localStorage.removeItem(STORAGE_KEY_ATHLETE_PHONE);}catch(e){}};
 
 function App(){
   /* ── Hash-based routing ──
@@ -2549,13 +2548,21 @@ function App(){
     try{const local=loadPlayers();loadedPlayers=await hydratePlayerVideos(local);setPlayers(loadedPlayers);}catch(e2){}
     setHydrated(true);setCloudLoading(false);
   }
-  /* Auto-login: if on #/athlete route with a stored player ID, go straight to portal */
+  /* Auto-login: if on #/athlete route, try phone first, then player ID */
   const r=getHashRoute();
   if(r==="athlete"){
+    const myPhone=getMyAthletePhone();
     const myId=getMyPlayerId();
+    /* Try phone-based lookup first (survives across devices if same browser) */
+    if(myPhone){
+      const normalizeP=p=>(p||"").replace(/[^0-9]/g,"");
+      const match=loadedPlayers.find(p=>normalizeP(p.phone)===normalizeP(myPhone));
+      if(match){setMyPlayerId(match.id);setActivePlayerId(match.id);setScreen("athlete");setAthleteStep("portal");setIsEditorMode(false);return;}
+    }
+    /* Fallback to player ID */
     if(myId){const myPlayer=loadedPlayers.find(p=>p.id===myId);
       if(myPlayer){setActivePlayerId(myId);setScreen("athlete");setAthleteStep("portal");setIsEditorMode(false);return;}}
-    /* No stored ID but still on athlete route — enter athlete flow */
+    /* No stored identity — show login screen */
     setIsEditorMode(false);setScreen("athlete");setAthleteStep("select");
   }
   })();},[]);
@@ -2567,10 +2574,11 @@ function App(){
   const handleCreateProfile=data=>{
     const newPlayer={id:uid("pl"),name:data.name,recruitingClass:data.recruitingClass,size:data.size,dob:data.dob,
       shirtNumber:data.shirtNumber||"",uniformDesc:data.uniformDesc||"",positions:data.positions||[],profilePicUrl:data.profilePicUrl||"",playingPicUrl:data.playingPicUrl||"",
+      phone:data.phone||"",
       categories:DEFAULT_CATS.map(n=>({id:uid("cat"),name:n,videos:[]}))};
     setPlayers(p=>[...p,newPlayer]);setActivePlayerId(newPlayer.id);setAthleteStep("portal");
-    /* Save this player ID so the athlete auto-logs in next time */
-    if(!isEditorMode)setMyPlayerId(newPlayer.id);
+    /* Save phone as athlete identity so they auto-login next time */
+    if(!isEditorMode&&data.phone){setMyAthletePhone(data.phone);setMyPlayerId(newPlayer.id);}
     savePlayerToCloud(newPlayer);
   };
   const handleDeletePlayer=async(playerId)=>{
@@ -2578,6 +2586,8 @@ function App(){
     if(pl){for(const cat of pl.categories)for(const v of cat.videos){deleteBlob(v.id).catch(()=>{});deleteVideoFromCloud(v.id).catch(()=>{});}}
     deletePlayerFromCloud(playerId).catch(()=>{});
     setPlayers(p=>p.filter(pl=>pl.id!==playerId));
+    /* Clear localStorage identity if this was the logged-in athlete */
+    if(getMyPlayerId()===playerId){setMyPlayerId(null);setMyAthletePhone(null);}
     if(activePlayerId===playerId){setActivePlayerId(null);setAthleteStep("select");}
   };
   const handleUpdatePlayer=updated=>{setPlayers(p=>p.map(pl=>pl.id===updated.id?updated:pl));};
@@ -2586,12 +2596,17 @@ function App(){
   const goToLanding=()=>{setScreen("landing");setAthleteStep("select");setActivePlayerId(null);};
   const enterAthlete=()=>{
     setIsEditorMode(false);
-    /* Auto-login: if athlete has a stored player ID and that player exists, go straight to portal */
+    /* Auto-login: try phone first, then player ID */
+    const myPhone=getMyAthletePhone();
+    const normalizeP=p=>(p||"").replace(/[^0-9]/g,"");
+    if(myPhone){
+      const match=players.find(p=>normalizeP(p.phone)===normalizeP(myPhone));
+      if(match){setActivePlayerId(match.id);setScreen("athlete");setAthleteStep("portal");return;}
+    }
     const myId=getMyPlayerId();
     if(myId){
       const myPlayer=players.find(p=>p.id===myId);
       if(myPlayer){setActivePlayerId(myId);setScreen("athlete");setAthleteStep("portal");return;}
-      /* Player ID stored but player not found (deleted by editor?) — clear it */
       setMyPlayerId(null);
     }
     setScreen("athlete");setAthleteStep("select");
@@ -2599,7 +2614,7 @@ function App(){
   const enterAthleteAsEditor=()=>{setIsEditorMode(true);setScreen("athlete");setAthleteStep("select");};
   const enterStudio=()=>{setStudioAuth(true);setScreen("editor");};
   const athleteSignOut=()=>{
-    if(!isEditorMode)setMyPlayerId(null); /* Clear stored identity on sign-out */
+    if(!isEditorMode){setMyPlayerId(null);setMyAthletePhone(null);} /* Clear stored identity on sign-out */
     goToLanding();
   };
   const refreshPlayers=async()=>{try{const cp=await loadPlayersFromCloud();if(cp.length>0){const hp=await hydratePlayerVideos(cp);setPlayers(hp);}}catch(e){console.warn("Refresh failed:",e);}};
@@ -2619,10 +2634,11 @@ function App(){
   /* ── INNER SCREENS (athlete flow + editor) ── */
   if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers}/>;
   if(screen==="athlete"){
-    if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode} myPlayerId={isEditorMode?null:getMyPlayerId()}
-      onSelect={id=>{if(!isEditorMode)setMyPlayerId(id);setActivePlayerId(id);setAthleteStep("portal");}}
+    if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode}
+      onSelect={id=>{setActivePlayerId(id);setAthleteStep("portal");}}
+      onPhoneLogin={player=>{setMyAthletePhone(player.phone);setMyPlayerId(player.id);setActivePlayerId(player.id);setAthleteStep("portal");}}
       onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
-    if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")}/>;
+    if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")} existingPlayers={players}/>;
     if(athleteStep==="portal"&&activePlayer)return<AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
       isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}/>;
   }

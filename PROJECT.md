@@ -196,7 +196,18 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
 25. Profile persistence fix: all players visible on select screen
 26. Auto-login for athletes on #/athlete route
 27. Edit Profile modal (modify info after creation)
-28. Athlete profile isolation: athletes only see/access their own profile; other athletes shown as greyed-out view-only cards; first-time visitors can pick from existing profiles to claim theirs
+28. Athlete profile isolation (v1): greyed-out view-only cards (REPLACED by phone login in #29)
+29. Phone-based athlete identity: athletes log in with phone number, each profile locked to its phone. No more browsing other profiles. Phone stored in Firestore and localStorage for auto-login.
+
+---
+
+## Feedback Workflow (IMPORTANT)
+
+When starting a new session, the AI assistant should:
+1. **Read feedback from Firestore** — query the `feedback` collection to check for new submissions
+2. **Present feedback to Caio** — summarize what users reported (bugs, feature requests, praise)
+3. **Ask permission before making changes** — never auto-fix based on feedback; always get Caio's approval first
+4. Learn from reported issues to avoid repeating the same mistakes
 
 ---
 
