@@ -196,6 +196,7 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
 25. Profile persistence fix: all players visible on select screen
 26. Auto-login for athletes on #/athlete route
 27. Edit Profile modal (modify info after creation)
+28. Athlete profile isolation: athletes only see/access their own profile; other athletes shown as greyed-out view-only cards; first-time visitors can pick from existing profiles to claim theirs
 
 ---
 

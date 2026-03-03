@@ -376,11 +376,16 @@ function StudioLandingPage({onEnterStudio,onEnterAthleteReview}){
 }
 
 /* ═══════════ ATHLETE: PROFILE SELECT ═══════════ */
-function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete}){
+function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,myPlayerId}){
   const[confirmDel,setConfirmDel]=useState(null);
   const[searchQ,setSearchQ]=useState("");
-  /* Show all players so athletes can find their profile again */
-  const visiblePlayers=players.filter(p=>!searchQ.trim()||p.name.toLowerCase().includes(searchQ.toLowerCase()));
+
+  /* In athlete mode: put MY profile first, then others. In editor mode: show all normally. */
+  const hasMyProfile=!isEditorMode&&myPlayerId&&players.find(p=>p.id===myPlayerId);
+  const myPlayer=hasMyProfile?players.find(p=>p.id===myPlayerId):null;
+  const otherPlayers=!isEditorMode?players.filter(p=>p.id!==myPlayerId):[];
+  const editorFiltered=isEditorMode?players.filter(p=>!searchQ.trim()||p.name.toLowerCase().includes(searchQ.toLowerCase())):[];
+
   return(
   <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:C.base,display:"flex",flexDirection:"column",fontFamily:"'Inter',sans-serif",overflow:"hidden"}}>
     <div className="ath-select-header" style={{display:"flex",alignItems:"center",padding:"0 16px",height:48,background:C.mantle,borderBottom:`1px solid ${C.s0}`,flexShrink:0}}>
@@ -396,42 +401,114 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete})
       <div style={{maxWidth:800,width:"100%",textAlign:"center"}}>
         <UsersIcon size={40} color={C.blue} style={{margin:"0 auto 16px",display:"block"}}/>
         <h2 style={{color:C.text,fontSize:24,fontWeight:800,marginBottom:8}}>{isEditorMode?"All Athletes":"Welcome, Player"}</h2>
-        <p style={{color:C.sub,fontSize:14,marginBottom:24}}>{isEditorMode?"Review and manage athlete profiles.":"Select your profile or create a new one."}</p>
-        {players.length>3&&<div style={{maxWidth:320,margin:"0 auto 24px"}}><input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search by name..." style={{...inputStyle,textAlign:"center",fontSize:13}}/></div>}
-        {visiblePlayers.length>0&&(
-          <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32}}>
-            {visiblePlayers.map((pl,i)=>(
-              <div key={pl.id} style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"16px 16px 14px",cursor:"pointer",transition:"all 0.2s",textAlign:"center",position:"relative"}}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor=PLAYER_COLORS[i%8]+"66";e.currentTarget.style.transform="translateY(-2px)";}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor=C.s0;e.currentTarget.style.transform="none";}}>
-                {isEditorMode&&<button onClick={e=>{e.stopPropagation();setConfirmDel(pl.id);}} style={{position:"absolute",top:8,right:8,...ib,color:C.overlay,padding:3,zIndex:2}} title="Delete profile"
-                  onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.overlay}><Trash2Icon size={13}/></button>}
-                <div onClick={()=>onSelect(pl.id)}>
-                  {pl.profilePicUrl?
-                    <img src={pl.profilePicUrl} style={{width:56,height:56,borderRadius:"50%",objectFit:"cover",border:`2px solid ${PLAYER_COLORS[i%8]}`,margin:"0 auto 10px",display:"block"}}/>
-                  :<div style={{width:56,height:56,borderRadius:"50%",background:PLAYER_COLORS[i%8]+"22",border:`2px solid ${PLAYER_COLORS[i%8]}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}>
-                    <span style={{color:PLAYER_COLORS[i%8],fontWeight:800,fontSize:20}}>{pl.name.charAt(0).toUpperCase()}</span>
-                  </div>}
-                  <div style={{color:C.text,fontSize:14,fontWeight:700,marginBottom:2}}>{pl.name}</div>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:4}}>
-                    {pl.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:4}}>#{pl.shirtNumber}</span>}
-                    <span style={{color:C.overlay,fontSize:11}}>Class {pl.recruitingClass}</span>
+        <p style={{color:C.sub,fontSize:14,marginBottom:24}}>{isEditorMode?"Review and manage athlete profiles.":hasMyProfile?"Tap your profile to continue.":"Select your profile or create a new one."}</p>
+
+        {/* ── EDITOR MODE: full access to all players ── */}
+        {isEditorMode&&<>
+          {players.length>3&&<div style={{maxWidth:320,margin:"0 auto 24px"}}><input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search by name..." style={{...inputStyle,textAlign:"center",fontSize:13}}/></div>}
+          {editorFiltered.length>0&&(
+            <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32}}>
+              {editorFiltered.map((pl,i)=>(
+                <div key={pl.id} style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"16px 16px 14px",cursor:"pointer",transition:"all 0.2s",textAlign:"center",position:"relative"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=PLAYER_COLORS[i%8]+"66";e.currentTarget.style.transform="translateY(-2px)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=C.s0;e.currentTarget.style.transform="none";}}>
+                  <button onClick={e=>{e.stopPropagation();setConfirmDel(pl.id);}} style={{position:"absolute",top:8,right:8,...ib,color:C.overlay,padding:3,zIndex:2}} title="Delete profile"
+                    onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.overlay}><Trash2Icon size={13}/></button>
+                  <div onClick={()=>onSelect(pl.id)}>
+                    {pl.profilePicUrl?
+                      <img src={pl.profilePicUrl} style={{width:56,height:56,borderRadius:"50%",objectFit:"cover",border:`2px solid ${PLAYER_COLORS[i%8]}`,margin:"0 auto 10px",display:"block"}}/>
+                    :<div style={{width:56,height:56,borderRadius:"50%",background:PLAYER_COLORS[i%8]+"22",border:`2px solid ${PLAYER_COLORS[i%8]}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 10px"}}>
+                      <span style={{color:PLAYER_COLORS[i%8],fontWeight:800,fontSize:20}}>{pl.name.charAt(0).toUpperCase()}</span>
+                    </div>}
+                    <div style={{color:C.text,fontSize:14,fontWeight:700,marginBottom:2}}>{pl.name}</div>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:4}}>
+                      {pl.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:4}}>#{pl.shirtNumber}</span>}
+                      <span style={{color:C.overlay,fontSize:11}}>Class {pl.recruitingClass}</span>
+                    </div>
+                    {pl.positions&&pl.positions.length>0&&<div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:3,marginBottom:4}}>{pl.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green||"#a6e3a1",fontSize:8,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</div>}
+                    {pl.uniformDesc&&<div style={{color:C.overlay,fontSize:9,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pl.uniformDesc}</div>}
+                    <div style={{color:C.overlay,fontSize:10}}>{pl.categories.reduce((a,c)=>a+c.videos.length,0)} clips uploaded</div>
                   </div>
-                  {pl.positions&&pl.positions.length>0&&<div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:3,marginBottom:4}}>{pl.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green||"#a6e3a1",fontSize:8,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</div>}
-                  {pl.uniformDesc&&<div style={{color:C.overlay,fontSize:9,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pl.uniformDesc}</div>}
-                  <div style={{color:C.overlay,fontSize:10}}>{pl.categories.reduce((a,c)=>a+c.videos.length,0)} clips uploaded</div>
-                </div>
-                {pl.playingPicUrl&&<div style={{marginTop:8,borderRadius:6,overflow:"hidden",height:80}}>
-                  <img src={pl.playingPicUrl} style={{width:"100%",height:"100%",objectFit:"cover",opacity:0.6}}/>
+                  {pl.playingPicUrl&&<div style={{marginTop:8,borderRadius:6,overflow:"hidden",height:80}}>
+                    <img src={pl.playingPicUrl} style={{width:"100%",height:"100%",objectFit:"cover",opacity:0.6}}/>
+                  </div>}
+                </div>))}
+            </div>)}
+        </>}
+
+        {/* ── ATHLETE MODE: MY profile highlighted + others as view-only ── */}
+        {!isEditorMode&&<>
+          {/* My profile card — fully clickable, highlighted */}
+          {myPlayer&&(
+            <div style={{marginBottom:28}}>
+              <div style={{color:C.green,fontSize:10,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:10}}>YOUR PROFILE</div>
+              <div onClick={()=>onSelect(myPlayer.id)}
+                style={{background:C.mantle,border:`2px solid ${C.blue}`,borderRadius:16,padding:"20px 20px 16px",cursor:"pointer",transition:"all 0.2s",textAlign:"center",maxWidth:280,margin:"0 auto",boxShadow:`0 0 30px ${C.blue}18`}}
+                onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-3px)";e.currentTarget.style.boxShadow=`0 8px 40px ${C.blue}30`;}}
+                onMouseLeave={e=>{e.currentTarget.style.transform="none";e.currentTarget.style.boxShadow=`0 0 30px ${C.blue}18`;}}>
+                {myPlayer.profilePicUrl?
+                  <img src={myPlayer.profilePicUrl} style={{width:64,height:64,borderRadius:"50%",objectFit:"cover",border:`3px solid ${C.blue}`,margin:"0 auto 12px",display:"block"}}/>
+                :<div style={{width:64,height:64,borderRadius:"50%",background:C.blue+"22",border:`3px solid ${C.blue}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px"}}>
+                  <span style={{color:C.blue,fontWeight:800,fontSize:24}}>{myPlayer.name.charAt(0).toUpperCase()}</span>
                 </div>}
+                <div style={{color:"#fff",fontSize:16,fontWeight:800,marginBottom:3}}>{myPlayer.name}</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,marginBottom:4}}>
+                  {myPlayer.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:4}}>#{myPlayer.shirtNumber}</span>}
+                  <span style={{color:C.overlay,fontSize:11}}>Class {myPlayer.recruitingClass}</span>
+                </div>
+                {myPlayer.positions&&myPlayer.positions.length>0&&<div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:3,marginBottom:4}}>{myPlayer.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green,fontSize:9,fontWeight:700,padding:"2px 7px",borderRadius:3}}>{p}</span>)}</div>}
+                <div style={{color:C.blue,fontSize:11,fontWeight:600,marginTop:6,letterSpacing:1}}>OPEN MY PORTAL &rarr;</div>
               </div>
-            ))}
-          </div>
-        )}
-        <button onClick={onCreate}
+            </div>)}
+
+          {/* Other athletes — visible but NOT clickable, greyed out */}
+          {otherPlayers.length>0&&(
+            <div style={{marginBottom:28}}>
+              <div style={{color:C.overlay,fontSize:10,fontWeight:600,letterSpacing:1.5,textTransform:"uppercase",marginBottom:10}}>OTHER ATHLETES ({otherPlayers.length})</div>
+              <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:0}}>
+                {otherPlayers.map((pl,i)=>(
+                  <div key={pl.id} style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"14px 12px 12px",textAlign:"center",opacity:0.45,pointerEvents:"none",userSelect:"none"}}>
+                    {pl.profilePicUrl?
+                      <img src={pl.profilePicUrl} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover",border:`2px solid ${C.s1}`,margin:"0 auto 8px",display:"block",filter:"grayscale(40%)"}}/>
+                    :<div style={{width:40,height:40,borderRadius:"50%",background:C.s1+"44",border:`2px solid ${C.s1}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 8px"}}>
+                      <span style={{color:C.overlay,fontWeight:800,fontSize:16}}>{pl.name.charAt(0).toUpperCase()}</span>
+                    </div>}
+                    <div style={{color:C.sub,fontSize:12,fontWeight:600,marginBottom:2}}>{pl.name}</div>
+                    <div style={{color:C.overlay,fontSize:9}}>{pl.positions&&pl.positions.length>0?pl.positions.join(", "):"Athlete"}</div>
+                  </div>))}
+              </div>
+            </div>)}
+
+          {/* If athlete has NO stored profile yet, let them pick from existing or create new */}
+          {!hasMyProfile&&players.length>0&&(
+            <div style={{marginBottom:28}}>
+              <div style={{color:C.sub,fontSize:12,fontWeight:600,marginBottom:12}}>Already have a profile? Select yours below:</div>
+              <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:12,marginBottom:0}}>
+                {players.map((pl,i)=>(
+                  <div key={pl.id} onClick={()=>onSelect(pl.id)}
+                    style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"14px 14px 12px",cursor:"pointer",transition:"all 0.2s",textAlign:"center"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=PLAYER_COLORS[i%8]+"66";e.currentTarget.style.transform="translateY(-2px)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.s0;e.currentTarget.style.transform="none";}}>
+                    {pl.profilePicUrl?
+                      <img src={pl.profilePicUrl} style={{width:48,height:48,borderRadius:"50%",objectFit:"cover",border:`2px solid ${PLAYER_COLORS[i%8]}`,margin:"0 auto 8px",display:"block"}}/>
+                    :<div style={{width:48,height:48,borderRadius:"50%",background:PLAYER_COLORS[i%8]+"22",border:`2px solid ${PLAYER_COLORS[i%8]}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 8px"}}>
+                      <span style={{color:PLAYER_COLORS[i%8],fontWeight:800,fontSize:18}}>{pl.name.charAt(0).toUpperCase()}</span>
+                    </div>}
+                    <div style={{color:C.text,fontSize:13,fontWeight:700,marginBottom:2}}>{pl.name}</div>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                      {pl.shirtNumber&&<span style={{background:C.blue+"22",color:C.blue,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3}}>#{pl.shirtNumber}</span>}
+                      {pl.positions&&pl.positions.length>0&&pl.positions.slice(0,2).map(p=><span key={p} style={{background:C.green+"22",color:C.green,fontSize:8,fontWeight:700,padding:"1px 5px",borderRadius:3}}>{p}</span>)}
+                    </div>
+                  </div>))}
+              </div>
+            </div>)}
+        </>}
+
+        {/* Create New Profile button — always visible (but only creates new, athlete gets locked to it) */}
+        {(isEditorMode||!hasMyProfile)&&<button onClick={onCreate}
           style={{display:"inline-flex",alignItems:"center",gap:8,background:C.blue,color:"#fff",border:"none",borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:1}}>
           <PlusIcon size={16}/> Create New Profile
-        </button>
+        </button>}
       </div>
     </div>
     {confirmDel&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}
@@ -446,7 +523,7 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete})
         </div>
       </div>
     </div>}
-    <FeedbackFAB playerName="Visitor"/>
+    <FeedbackFAB playerName={myPlayer?myPlayer.name:"Visitor"}/>
   </div>);
 }
 
@@ -2542,7 +2619,7 @@ function App(){
   /* ── INNER SCREENS (athlete flow + editor) ── */
   if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers}/>;
   if(screen==="athlete"){
-    if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode}
+    if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode} myPlayerId={isEditorMode?null:getMyPlayerId()}
       onSelect={id=>{if(!isEditorMode)setMyPlayerId(id);setActivePlayerId(id);setAthleteStep("portal");}}
       onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
     if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")}/>;
