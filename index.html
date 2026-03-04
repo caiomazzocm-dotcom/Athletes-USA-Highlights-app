@@ -935,6 +935,71 @@ function FeedbackAdmin({onClose}){
   </div>);
 }
 
+/* ═══════════ ONBOARDING GUIDE ═══════════ */
+function OnboardingGuide({playerName,onDone}){
+  const[step,setStep]=useState(0);
+  const steps=[
+    {
+      icon:()=><UploadIcon size={38} color={C.blue}/>,
+      title:"Upload Your Highlights",
+      desc:"Each category has an upload button. Tap it to select videos from your device — you can pick multiple clips at once. They'll upload to the cloud automatically so coaches can view them anytime.",
+      color:C.blue
+    },
+    {
+      icon:()=><FolderOpenIcon size={38} color={C.green}/>,
+      title:"Create New Categories",
+      desc:"Organize your clips your way. Tap the \"+\" card at the end of your categories to add a new one — for example \"Free Kicks\" or \"Dribbling\". You can also rename or reorder existing categories by dragging them.",
+      color:C.green
+    },
+    {
+      icon:()=><Edit3Icon size={38} color={C.lavender}/>,
+      title:"Edit Your Profile",
+      desc:"Need to update your info? Tap \"Edit Profile\" at the top of your portal to change your name, height, positions, photos, and more. Your phone number stays the same since it's your login.",
+      color:C.lavender
+    }
+  ];
+  const s=steps[step];
+  const isLast=step===steps.length-1;
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.75)",backdropFilter:"blur(6px)",fontFamily:"'Inter',sans-serif",animation:"fadeIn 0.3s ease"}}>
+      <div style={{background:C.mantle,borderRadius:20,border:`1px solid ${C.s1}`,maxWidth:420,width:"90%",overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,0.6)"}}>
+        {/* Header */}
+        <div style={{background:`linear-gradient(135deg,${C.blue}18,${C.coral}18)`,padding:"28px 28px 20px",textAlign:"center"}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.blue,letterSpacing:1.5,textTransform:"uppercase",marginBottom:6}}>Welcome{playerName?", "+playerName.split(" ")[0]:""}!</div>
+          <div style={{fontSize:20,fontWeight:800,color:"#fff"}}>Quick Tour of Your Portal</div>
+          <div style={{fontSize:12,color:C.overlay,marginTop:4}}>3 simple steps to get you started</div>
+        </div>
+
+        {/* Step content */}
+        <div style={{padding:"28px 28px 20px",textAlign:"center"}}>
+          <div style={{width:72,height:72,borderRadius:"50%",background:s.color+"18",border:`2px solid ${s.color}33`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 18px"}}>
+            {s.icon()}
+          </div>
+          <div style={{fontSize:17,fontWeight:700,color:"#fff",marginBottom:8}}>{s.title}</div>
+          <div style={{fontSize:13,color:C.sub,lineHeight:1.6,maxWidth:340,margin:"0 auto"}}>{s.desc}</div>
+        </div>
+
+        {/* Step dots + buttons */}
+        <div style={{padding:"8px 28px 24px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{display:"flex",gap:8}}>
+            {steps.map((_,i)=>(
+              <div key={i} onClick={()=>setStep(i)} style={{width:i===step?24:8,height:8,borderRadius:4,background:i===step?s.color:C.s2,cursor:"pointer",transition:"all 0.3s"}}/>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            {step>0&&<button onClick={()=>setStep(step-1)}
+              style={{background:"transparent",border:`1px solid ${C.s1}`,borderRadius:10,padding:"10px 18px",color:C.sub,cursor:"pointer",fontSize:13,fontWeight:600}}>
+              Back</button>}
+            <button onClick={()=>{if(isLast)onDone();else setStep(step+1);}}
+              style={{background:isLast?`linear-gradient(135deg,${C.blue},${C.coral})`:C.blue,border:"none",borderRadius:10,padding:"10px 22px",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700,letterSpacing:0.3}}>
+              {isLast?"Get Started":"Next"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════ EDIT PROFILE MODAL ═══════════ */
 function EditProfileModal({player,onSave,onClose}){
   const[name,setName]=useState(player.name||"");
@@ -2526,6 +2591,7 @@ function App(){
   const[players,setPlayers]=useState([]);
   const[activePlayerId,setActivePlayerId]=useState(null);
   const[athleteStep,setAthleteStep]=useState("select");
+  const[showOnboarding,setShowOnboarding]=useState(false);
   const[hydrated,setHydrated]=useState(false);
   const[cloudLoading,setCloudLoading]=useState(true);
   const[studioAuth,setStudioAuth]=useState(isSessionValid()); /* editor authenticated? */
@@ -2579,6 +2645,8 @@ function App(){
     setPlayers(p=>[...p,newPlayer]);setActivePlayerId(newPlayer.id);setAthleteStep("portal");
     /* Save phone as athlete identity so they auto-login next time */
     if(!isEditorMode&&data.phone){setMyAthletePhone(data.phone);setMyPlayerId(newPlayer.id);}
+    /* Show onboarding guide for new athlete profiles */
+    if(!isEditorMode)setShowOnboarding(true);
     savePlayerToCloud(newPlayer);
   };
   const handleDeletePlayer=async(playerId)=>{
@@ -2639,8 +2707,11 @@ function App(){
       onPhoneLogin={player=>{setMyAthletePhone(player.phone);setMyPlayerId(player.id);setActivePlayerId(player.id);setAthleteStep("portal");}}
       onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
     if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")} existingPlayers={players}/>;
-    if(athleteStep==="portal"&&activePlayer)return<AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
-      isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}/>;
+    if(athleteStep==="portal"&&activePlayer)return(<>
+      <AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
+        isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}/>
+      {showOnboarding&&<OnboardingGuide playerName={activePlayer.name} onDone={()=>setShowOnboarding(false)}/>}
+    </>);
   }
 
   /* ── LANDING SCREENS (based on hash route) ── */
