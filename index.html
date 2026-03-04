@@ -1468,12 +1468,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const handleEdVidUpload=async(files)=>{const vids=[];for(const f of files){const id=uid("evid");const url=URL.createObjectURL(f);const dur=await getMediaDur(url);await storeBlob(id,f);vids.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorVideos(p=>[...p,...vids]);};
   const handleEdMusicUpload=async(files)=>{const songs=[];for(const f of files){const id=uid("mus");const url=URL.createObjectURL(f);const dur=await getAudioDur(url);await storeBlob(id,f);songs.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorMusic(p=>[...p,...songs]);};
 
-  /* ═══ MAIN TRACK COMPACTION (Ripple/Magnetic Mode) ═══ */
-  /* When Magnet ON: V1 (main track, tracks[0]) stays gapless after every operation.
-     Other tracks (V2, V3, Overlay, Audio) are NOT affected.
+  /* ═══ MAIN TRACK COMPACTION (Magnetic Timeline — like Final Cut Pro) ═══ */
+  /* V1 (primary storyline) ALWAYS stays gapless — clips ripple together after every
+     cut, delete, or move.  This matches Final Cut Pro's magnetic timeline and
+     CapCut's main-track magnet.  V2/V3/Audio are free-form (gaps allowed).
      During drag, compaction is deferred to mouseUp to avoid jumping. */
   const compactV1=useCallback(()=>{
-    if(!magnetOn)return;
     setTracks(prev=>{
       const mt=prev[0];if(!mt||mt.clips.length===0)return prev;
       const sorted=[...mt.clips].sort((a,b)=>a.trackStart-b.trackStart);
@@ -1483,7 +1483,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       const n=prev.map((t,i)=>i===0?{...t,clips:compacted}:t);
       recalcAll(n,tagTrack,audioTracks);return n;
     });
-  },[magnetOn,recalcAll,tagTrack,audioTracks]);
+  },[recalcAll,tagTrack,audioTracks]);
 
   const addClip=useCallback((trackId,data,start,isAudio=false)=>{pushHist();
     const clip={id:uid("clip"),videoId:data.id,categoryId:data.categoryId||"",playerId:data.playerId||"editor",playerName:data.playerName||"Editor",
@@ -1565,11 +1565,18 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[pushHist,playhead,tracks,audioTracks,recalcAll,resolvedTags]);
 
   const delClip=useCallback(()=>{if(!selectedClipId)return;pushHist();
+    /* Find the deleted clip's start position BEFORE removal — playhead will snap here */
+    let deletedStart=null;
+    [...tracks,...audioTracks].forEach(t=>t.clips.forEach(c=>{if(c.id===selectedClipId)deletedStart=c.trackStart;}));
+    tagTrack.clips.forEach(c=>{if(c.id===selectedClipId)deletedStart=c._tlStart||c.trackStart||0;});
+
     setTracks(p=>{const n=p.map(t=>({...t,clips:t.clips.filter(c=>c.id!==selectedClipId)}));recalcAll(n,tagTrack,audioTracks);return n;});
     setAudioTracks(p=>{const n=p.map(t=>({...t,clips:t.clips.filter(c=>c.id!==selectedClipId)}));recalcAll(tracks,tagTrack,n);return n;});
     /* Remove tag if it's the selected item, OR remove all tags anchored to this clip */
     setTagTrack(p=>{const n={...p,clips:p.clips.filter(c=>c.id!==selectedClipId&&c.clipId!==selectedClipId)};recalcAll(tracks,n,audioTracks);return n;});
     compactV1();
+    /* Snap playhead to where the deleted clip was (after compaction, the next clip slides here) */
+    if(deletedStart!==null)setPlayhead(deletedStart);
     setSelectedClipId(null);
   },[selectedClipId,pushHist,recalcAll,tracks,tagTrack,audioTracks,compactV1]);
 
@@ -1997,16 +2004,41 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     return mx;
   },[tracks,resolvedTags,audioTracks]);
 
+  /* ═══ GAP-SKIP HELPER — find next clip start after a given time ═══ */
+  const findNextClipStart=useCallback((afterTime)=>{
+    let nearest=Infinity;
+    tracks.forEach(t=>t.clips.forEach(c=>{if(c.trackStart>afterTime+0.01&&c.trackStart<nearest)nearest=c.trackStart;}));
+    audioTracks.forEach(t=>t.clips.forEach(c=>{if(c.trackStart>afterTime+0.01&&c.trackStart<nearest)nearest=c.trackStart;}));
+    return nearest===Infinity?null:nearest;
+  },[tracks,audioTracks]);
+
   /* ═══ PLAYBACK ANIMATION LOOP ═══ */
   useEffect(()=>{if(!isPlaying){
     /* When playback stops, pause ALL pool videos + audio immediately */
     const pool=videoPoolRef.current;Object.values(pool).forEach(vel=>{if(!vel.paused)vel.pause();});
     const a=audioRef.current;if(a&&!a.paused)a.pause();
     return;
-  }const anim=now=>{const dt=(now-lastTRef.current)/1000;lastTRef.current=now;setPlayhead(p=>{const n=p+dt;if(contentEnd>0&&n>=contentEnd){setIsPlaying(false);
-    const pool=videoPoolRef.current;Object.values(pool).forEach(vel=>{vel.pause();});
-    const a=audioRef.current;if(a)a.pause();
-    return contentEnd;}return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,contentEnd]);
+  }const anim=now=>{const dt=(now-lastTRef.current)/1000;lastTRef.current=now;setPlayhead(p=>{let n=p+dt;
+    /* Stop at end of content */
+    if(contentEnd>0&&n>=contentEnd){setIsPlaying(false);
+      const pool=videoPoolRef.current;Object.values(pool).forEach(vel=>{vel.pause();});
+      const a=audioRef.current;if(a)a.pause();
+      return contentEnd;}
+    /* Gap-skip: if playhead lands in empty space (no clip on any track),
+       jump to the start of the next clip — like DaVinci Resolve / CapCut */
+    const hasClip=findActiveClip(n);
+    const hasTag=findActiveTag(n);
+    const hasAudio=findActiveAudio(n);
+    if(!hasClip&&!hasTag&&!hasAudio){
+      const next=findNextClipStart(n);
+      if(next!==null)n=next;
+      else{/* Nothing ahead — stop playback */
+        setIsPlaying(false);
+        const pool=videoPoolRef.current;Object.values(pool).forEach(vel=>{vel.pause();});
+        const a=audioRef.current;if(a)a.pause();
+        return p;}
+    }
+    return n;});animRef.current=requestAnimationFrame(anim);};animRef.current=requestAnimationFrame(anim);return()=>{if(animRef.current)cancelAnimationFrame(animRef.current);};},[isPlaying,contentEnd,findActiveClip,findActiveTag,findActiveAudio,findNextClipStart]);
 
   /* ═══ VIDEO POOL SYNC — the core NLE playback engine ═══
      Uses opacity + z-index layering (NOT display:none) so every video stays buffered.
