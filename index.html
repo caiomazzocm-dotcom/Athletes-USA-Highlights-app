@@ -1472,13 +1472,25 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* V1 (primary storyline) ALWAYS stays gapless — clips ripple together after every
      cut, delete, or move.  This matches Final Cut Pro's magnetic timeline and
      CapCut's main-track magnet.  V2/V3/Audio are free-form (gaps allowed).
-     During drag, compaction is deferred to mouseUp to avoid jumping. */
+     During drag, compaction is deferred to mouseUp to avoid jumping.
+     IMPORTANT: effective duration includes tag/spotlight freeze time so freezes
+     don't overlap with the next clip. */
   const compactV1=useCallback(()=>{
     setTracks(prev=>{
       const mt=prev[0];if(!mt||mt.clips.length===0)return prev;
       const sorted=[...mt.clips].sort((a,b)=>a.trackStart-b.trackStart);
       let pos=0;let changed=false;
-      const compacted=sorted.map(c=>{const dur=c.clipEnd-c.clipStart;if(Math.abs(c.trackStart-pos)>0.001)changed=true;const nc={...c,trackStart:pos};pos+=dur;return nc;});
+      const compacted=sorted.map(c=>{
+        const rawD=c.clipEnd-c.clipStart;
+        /* Calculate freeze time from tags anchored to this clip */
+        let fz=0;
+        tagTrack.clips.forEach(tg=>{if(tg.clipId===c.id&&tg.sourceTime>=c.clipStart&&tg.sourceTime<c.clipEnd)fz+=tg.duration;});
+        const effectiveD=rawD+fz;
+        if(Math.abs(c.trackStart-pos)>0.001)changed=true;
+        const nc={...c,trackStart:pos};
+        pos+=effectiveD;
+        return nc;
+      });
       if(!changed)return prev;
       const n=prev.map((t,i)=>i===0?{...t,clips:compacted}:t);
       recalcAll(n,tagTrack,audioTracks);return n;
@@ -1581,9 +1593,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[selectedClipId,pushHist,recalcAll,tracks,tagTrack,audioTracks,compactV1]);
 
   const closeGaps=useCallback(()=>{pushHist();
-    const closeTrackGaps=clips=>{const sorted=[...clips].sort((a,b)=>a.trackStart-b.trackStart);let pos=0;return sorted.map(c=>{const dur=c.clipEnd-c.clipStart;const newC={...c,trackStart:pos};pos+=dur;return newC;});};
-    setTracks(p=>{const n=p.map(t=>({...t,clips:closeTrackGaps(t.clips)}));recalcAll(n,tagTrack,audioTracks);return n;});
-    setAudioTracks(p=>{const n=p.map(t=>({...t,clips:closeTrackGaps(t.clips)}));recalcAll(tracks,tagTrack,n);return n;});
+    const closeTrackGaps=(clips,includeTags)=>{const sorted=[...clips].sort((a,b)=>a.trackStart-b.trackStart);let pos=0;return sorted.map(c=>{
+      const rawD=c.clipEnd-c.clipStart;
+      let fz=0;
+      if(includeTags)tagTrack.clips.forEach(tg=>{if(tg.clipId===c.id&&tg.sourceTime>=c.clipStart&&tg.sourceTime<c.clipEnd)fz+=tg.duration;});
+      const newC={...c,trackStart:pos};pos+=rawD+fz;return newC;});};
+    setTracks(p=>{const n=p.map(t=>({...t,clips:closeTrackGaps(t.clips,true)}));recalcAll(n,tagTrack,audioTracks);return n;});
+    setAudioTracks(p=>{const n=p.map(t=>({...t,clips:closeTrackGaps(t.clips,false)}));recalcAll(tracks,tagTrack,n);return n;});
   },[pushHist,recalcAll,tracks,tagTrack,audioTracks]);
 
   const undo=useCallback(()=>{if(!history.length)return;const prev=history[history.length-1];setTracks(prev.v);setTagTrack(prev.t);setAudioTracks(prev.a);setHistory(h=>h.slice(0,-1));recalcAll(prev.v,prev.t,prev.a);},[history,recalcAll]);
@@ -2324,7 +2340,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <button onClick={delClip} disabled={!selectedClipId} style={{...ib,color:selectedClipId?C.red:C.s1}} title="Delete"><Trash2Icon size={14}/></button>
       <button onClick={()=>setShowGuide(p=>!p)} style={{...ib,color:showGuide?C.yellow:C.sub}} title="Toggle guide"><MaximizeIcon size={14}/></button>
       <div style={{width:1,height:18,background:C.s0}}/>
-      <button onClick={()=>{const wasOff=!magnetOn;setMagnetOn(p=>!p);if(wasOff){setTracks(prev=>{const mt=prev[0];if(!mt||mt.clips.length===0)return prev;const sorted=[...mt.clips].sort((a,b)=>a.trackStart-b.trackStart);let pos=0;let changed=false;const compacted=sorted.map(c=>{const dur=c.clipEnd-c.clipStart;if(Math.abs(c.trackStart-pos)>0.001)changed=true;const nc={...c,trackStart:pos};pos+=dur;return nc;});if(!changed)return prev;const n=prev.map((t,i)=>i===0?{...t,clips:compacted}:t);recalcAll(n,tagTrack,audioTracks);return n;});}}} style={{...tb,background:magnetOn?C.coral+"33":"transparent",color:magnetOn?C.coral:C.s2,border:magnetOn?`1px solid ${C.coral}55`:"1px solid transparent",fontSize:10,padding:"3px 8px",borderRadius:5,gap:3}} title={magnetOn?"Magnet ON — main track stays compact (no gaps)":"Magnet OFF — free positioning"}>
+      <button onClick={()=>{const wasOff=!magnetOn;setMagnetOn(p=>!p);if(wasOff){compactV1();}}} style={{...tb,background:magnetOn?C.coral+"33":"transparent",color:magnetOn?C.coral:C.s2,border:magnetOn?`1px solid ${C.coral}55`:"1px solid transparent",fontSize:10,padding:"3px 8px",borderRadius:5,gap:3}} title={magnetOn?"Magnet ON — main track stays compact (no gaps)":"Magnet OFF — free positioning"}>
         <MagnetIcon size={12}/><span style={{fontSize:9}}>Magnet</span>
       </button>
       <button onClick={()=>setSnapOn(p=>!p)} style={{...tb,background:snapOn?C.blue+"33":"transparent",color:snapOn?C.blue:C.s2,border:snapOn?`1px solid ${C.blue}55`:"1px solid transparent",fontSize:10,padding:"3px 8px",borderRadius:5,gap:3}} title={snapOn?"Snap ON — clips snap to edges & playhead":"Snap OFF"}>
