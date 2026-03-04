@@ -1932,7 +1932,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             const targetT=Math.max(0,seg.srcStart);
             if(Math.abs(vel.currentTime-targetT)>0.05)vel.currentTime=targetT;
             if(!vel.paused)vel.pause();
-            drawVideoFit(vel,1);
+            /* Use clip's actual scale — NOT hardcoded 1 — so vertical videos
+               stay zoomed/fitted the same way as during normal playback */
+            const tagPr=clipProps[seg.clipId]||{volume:100,scale:1};
+            drawVideoFit(vel,tagPr.scale||1);
           }
           /* Fade: 0.3s in, 0.3s out */
           const fadeDur=0.3;
