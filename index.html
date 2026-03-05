@@ -207,6 +207,7 @@ const downloadPlayerZip=async(player,onProgress)=>{
 
 /* ═══ HASH ROUTING HELPERS ═══ */
 const getHashRoute=()=>{const h=window.location.hash.replace(/^#\/?/,"").split("/")[0]||"";return h;};
+const getHashParam=()=>{const parts=window.location.hash.replace(/^#\/?/,"").split("/");return parts.length>1?decodeURIComponent(parts.slice(1).join("/")):null;};
 const setHashRoute=(route)=>{window.location.hash=route?`/${route}`:"";};
 
 /* ═══ PASSWORD MODAL (shared) ═══ */
@@ -288,6 +289,16 @@ function LandingPage({onEnterAthlete,onEnterStudio}){
           <div style={{fontSize:20,fontWeight:800,color:"#fff",letterSpacing:1,marginBottom:4,fontStyle:"italic"}}>STUDIO</div>
           <div style={{fontSize:12,color:C.sub,fontWeight:500,letterSpacing:2,textTransform:"uppercase",marginBottom:24}}>Production Suite</div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,color:C.overlay,fontSize:12,fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}><LockIcon size={12}/> ENTER STUDIO &rarr;</div>
+        </div>
+        <div onClick={()=>setHashRoute("overlay")} onMouseEnter={()=>setHov("o")} onMouseLeave={()=>setHov(null)}
+          style={{width:280,padding:"48px 32px 36px",borderRadius:16,cursor:"pointer",transition:"all 0.3s",
+            background:hov==="o"?"linear-gradient(135deg,rgba(0,229,160,0.12),rgba(15,15,26,0.95))":"linear-gradient(135deg,rgba(0,229,160,0.04),rgba(15,15,26,0.9))",
+            border:hov==="o"?"1px solid rgba(0,229,160,0.4)":"1px solid rgba(0,229,160,0.1)",
+            boxShadow:hov==="o"?"0 0 40px rgba(0,229,160,0.12)":"none",transform:hov==="o"?"translateY(-4px)":"none"}}>
+          <div style={{width:72,height:72,borderRadius:"50%",background:"linear-gradient(135deg,rgba(0,229,160,0.2),rgba(0,229,160,0.05))",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 24px",border:"2px solid rgba(0,229,160,0.3)"}}><EyeIcon size={30} color="#00e5a0"/></div>
+          <div style={{fontSize:20,fontWeight:800,color:"#fff",letterSpacing:1,marginBottom:4,fontStyle:"italic"}}>OVERLAY</div>
+          <div style={{fontSize:12,color:C.sub,fontWeight:500,letterSpacing:2,textTransform:"uppercase",marginBottom:24}}>Spotlight Tags</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,color:"#00e5a0",fontSize:12,fontWeight:700,letterSpacing:2,textTransform:"uppercase"}}>OPEN TOOL &rarr;</div>
         </div>
       </div>
     </div>
@@ -1208,6 +1219,11 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode}){
             onMouseEnter={e=>{if(!zipProg)e.currentTarget.style.background=C.green+"30";}} onMouseLeave={e=>{e.currentTarget.style.background=C.green+"18";}}>
             <DownloadIcon size={14}/> Download All Clips
           </button>}
+          <button className="ath-zip-btn" onClick={()=>setHashRoute("overlay/"+encodeURIComponent(player.name))}
+            style={{display:"flex",alignItems:"center",gap:6,background:"rgba(0,229,160,0.1)",border:"1px solid rgba(0,229,160,0.3)",borderRadius:8,padding:"8px 16px",color:"#00e5a0",cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0}}
+            onMouseEnter={e=>e.currentTarget.style.background="rgba(0,229,160,0.2)"} onMouseLeave={e=>e.currentTarget.style.background="rgba(0,229,160,0.1)"}>
+            <EyeIcon size={14}/> Generate Tag
+          </button>
           <button className="ath-zip-btn" onClick={()=>setShowEditProfile(true)}
             style={{display:"flex",alignItems:"center",gap:6,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:8,padding:"8px 16px",color:C.blue,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0}}
             onMouseEnter={e=>e.currentTarget.style.background=C.blue+"30"} onMouseLeave={e=>e.currentTarget.style.background=C.blue+"18"}>
@@ -1321,6 +1337,353 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode}){
     </div>}
     <FeedbackFAB playerName={player.name}/>
     {showEditProfile&&<EditProfileModal player={player} onSave={updated=>onUpdatePlayer(updated)} onClose={()=>setShowEditProfile(false)}/>}
+  </div>);
+}
+
+/* ═══════════ SPOTLIGHT TAG GENERATOR (PNG Overlay Tool) ═══════════ */
+function SpotlightTagGenerator({onBack,defaultName}){
+  /* ── State: controls ── */
+  const[playerName,setPlayerName]=useState(defaultName||"PLAYER NAME");
+  const[borderW,setBorderW]=useState(4);
+  const[glowIntensity,setGlowIntensity]=useState(20);
+  const[nameFontSize,setNameFontSize]=useState(18);
+  const[dimOpacity,setDimOpacity]=useState(0.6);
+  const[accentColor,setAccentColor]=useState("#00e5a0");
+  const[nameBgColor,setNameBgColor]=useState("#111111");
+  const[res,setRes]=useState("4k"); /* "1080p" | "4k" */
+
+  /* ── State: preview ── */
+  const[bgImage,setBgImage]=useState(null);
+  const[circlePos,setCirclePos]=useState({x:50,y:45}); /* % of preview */
+  const[circleRadius,setCircleRadius]=useState(12); /* % of min(W,H) */
+  const[dragging,setDragging]=useState(false);
+  const[resizing,setResizing]=useState(false);
+
+  const canvasRef=useRef(null);
+  const previewRef=useRef(null);
+  const bgRef=useRef(null);
+
+  const exportW=res==="4k"?3840:1920;
+  const exportH=res==="4k"?2160:1080;
+
+  /* ── Draw live preview ── */
+  useEffect(()=>{
+    const cvs=canvasRef.current;if(!cvs)return;
+    const ctx=cvs.getContext("2d");
+    const w=cvs.width,h=cvs.height;
+    ctx.clearRect(0,0,w,h);
+
+    /* Background image or dark fill */
+    if(bgImage&&bgRef.current&&bgRef.current.complete){
+      const img=bgRef.current;
+      const scale=Math.max(w/img.naturalWidth,h/img.naturalHeight);
+      const dw=img.naturalWidth*scale,dh=img.naturalHeight*scale;
+      ctx.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);
+    }else{
+      ctx.fillStyle="#0a0a14";ctx.fillRect(0,0,w,h);
+      /* Grid pattern */
+      ctx.strokeStyle="rgba(255,255,255,0.04)";ctx.lineWidth=1;
+      for(let x=0;x<w;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke();}
+      for(let y=0;y<h;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+    }
+
+    /* Circle center & radius in pixels */
+    const cx=circlePos.x/100*w;
+    const cy=circlePos.y/100*h;
+    const r=circleRadius/100*Math.min(w,h);
+
+    /* Dimmer overlay with cutout (evenodd for preview — fast) */
+    ctx.fillStyle=`rgba(0,0,0,${dimOpacity})`;
+    ctx.beginPath();ctx.rect(0,0,w,h);
+    ctx.moveTo(cx+r,cy);ctx.arc(cx,cy,r,0,Math.PI*2,true);
+    ctx.fill("evenodd");
+
+    /* Glow rings */
+    for(let i=1;i<=glowIntensity;i++){
+      const alpha=Math.max(0,0.3*(1-i/glowIntensity));
+      ctx.beginPath();ctx.arc(cx,cy,r+i*0.8,0,Math.PI*2);
+      ctx.strokeStyle=accentColor+Math.round(alpha*255).toString(16).padStart(2,"0");
+      ctx.lineWidth=1.5;ctx.stroke();
+    }
+
+    /* Circle border */
+    ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle=accentColor;ctx.lineWidth=borderW;
+    ctx.shadowColor=accentColor+"88";ctx.shadowBlur=12;
+    ctx.stroke();ctx.shadowBlur=0;
+
+    /* Player name tag */
+    const fSize=nameFontSize;
+    ctx.font=`800 ${fSize}px Inter,Segoe UI,sans-serif`;
+    ctx.textAlign="center";
+    const txt=playerName.toUpperCase();
+    const tw=ctx.measureText(txt).width;
+    const tagY=cy+r+16+fSize;
+    const padX=16,padY=5;
+    /* Tag background */
+    const rx=8;const tagW=tw+padX*2,tagH=fSize+padY*2;
+    const tx=cx-tagW/2,ty=tagY-fSize-padY;
+    ctx.beginPath();
+    ctx.moveTo(tx+rx,ty);ctx.lineTo(tx+tagW-rx,ty);ctx.quadraticCurveTo(tx+tagW,ty,tx+tagW,ty+rx);
+    ctx.lineTo(tx+tagW,ty+tagH-rx);ctx.quadraticCurveTo(tx+tagW,ty+tagH,tx+tagW-rx,ty+tagH);
+    ctx.lineTo(tx+rx,ty+tagH);ctx.quadraticCurveTo(tx,ty+tagH,tx,ty+tagH-rx);
+    ctx.lineTo(tx,ty+rx);ctx.quadraticCurveTo(tx,ty,tx+rx,ty);ctx.closePath();
+    ctx.fillStyle=nameBgColor;ctx.fill();
+    ctx.strokeStyle=accentColor+"55";ctx.lineWidth=1;ctx.stroke();
+    /* Tag text */
+    ctx.fillStyle="#fff";ctx.fillText(txt,cx,tagY);
+
+    /* Resize handle indicator */
+    const hx=cx+r*0.707,hy=cy+r*0.707;
+    ctx.beginPath();ctx.arc(hx,hy,5,0,Math.PI*2);
+    ctx.fillStyle=accentColor;ctx.fill();
+    ctx.strokeStyle="#000";ctx.lineWidth=1;ctx.stroke();
+
+  },[playerName,borderW,glowIntensity,nameFontSize,dimOpacity,accentColor,nameBgColor,circlePos,circleRadius,bgImage]);
+
+  /* ── Drag circle ── */
+  const handlePreviewMD=e=>{
+    const rect=canvasRef.current.getBoundingClientRect();
+    const mx=(e.clientX-rect.left)/rect.width*100;
+    const my=(e.clientY-rect.top)/rect.height*100;
+    const cx=circlePos.x,cy=circlePos.y;
+    const r=circleRadius/100*100; /* simplified: in preview % space */
+    const dist=Math.sqrt((mx-cx)**2+(my-cy)**2);
+
+    /* Check if near the resize handle (bottom-right of circle) */
+    const hx=cx+circleRadius*0.707*(rect.width/Math.min(rect.width,rect.height));
+    const hy=cy+circleRadius*0.707*(rect.height/Math.min(rect.width,rect.height));
+    const hdist=Math.sqrt((mx-hx)**2+(my-hy)**2);
+
+    if(hdist<4){
+      setResizing(true);
+      const onMove=ev=>{
+        const nx=(ev.clientX-rect.left)/rect.width*100;
+        const ny=(ev.clientY-rect.top)/rect.height*100;
+        const d=Math.sqrt((nx-circlePos.x)**2+((ny-circlePos.y)*(rect.width/rect.height))**2);
+        setCircleRadius(Math.max(3,Math.min(40,d)));
+      };
+      const onUp=()=>{setResizing(false);document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
+      document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
+    }else{
+      setDragging(true);
+      const offX=mx-cx,offY=my-cy;
+      const onMove=ev=>{
+        const nx=(ev.clientX-rect.left)/rect.width*100-offX;
+        const ny=(ev.clientY-rect.top)/rect.height*100-offY;
+        setCirclePos({x:Math.max(5,Math.min(95,nx)),y:Math.max(5,Math.min(95,ny))});
+      };
+      const onUp=()=>{setDragging(false);document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
+      document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
+    }
+  };
+
+  /* ── Background image upload ── */
+  const handleBgUpload=e=>{
+    const f=e.target.files[0];if(!f)return;
+    const url=URL.createObjectURL(f);
+    const img=new Image();img.onload=()=>{bgRef.current=img;setBgImage(url);};img.src=url;
+  };
+
+  /* ── PNG EXPORT — two-canvas pixel manipulation for true alpha=0 ── */
+  const handleExport=()=>{
+    const W=exportW,H=exportH;
+    const cx=circlePos.x/100*W;
+    const cy=circlePos.y/100*H;
+    const radius=circleRadius/100*Math.min(W,H);
+
+    /* Canvas 1: dark overlay, then manually zero out circle pixels */
+    const c1=document.createElement("canvas");c1.width=W;c1.height=H;
+    const ctx1=c1.getContext("2d");
+    ctx1.fillStyle=`rgba(0,0,0,${dimOpacity})`;
+    ctx1.fillRect(0,0,W,H);
+
+    /* Pixel-by-pixel: set every pixel inside the circle to fully transparent */
+    const imageData=ctx1.getImageData(0,0,W,H);
+    const data=imageData.data;
+    const r2=radius*radius;
+    const minX=Math.max(0,Math.floor(cx-radius));
+    const maxX=Math.min(W-1,Math.ceil(cx+radius));
+    const minY=Math.max(0,Math.floor(cy-radius));
+    const maxY=Math.min(H-1,Math.ceil(cy+radius));
+    for(let y=minY;y<=maxY;y++){
+      for(let x=minX;x<=maxX;x++){
+        const dx=x-cx,dy=y-cy;
+        if(dx*dx+dy*dy<=r2){
+          const idx=(y*W+x)*4;
+          data[idx]=0;data[idx+1]=0;data[idx+2]=0;data[idx+3]=0;
+        }
+      }
+    }
+    ctx1.putImageData(imageData,0,0);
+
+    /* Canvas 2: composite overlay + draw tag graphics */
+    const c2=document.createElement("canvas");c2.width=W;c2.height=H;
+    const ctx=c2.getContext("2d");
+    ctx.drawImage(c1,0,0);
+
+    /* Scale factor for resolution */
+    const sf=W/1920;
+
+    /* Glow rings */
+    for(let i=1;i<=glowIntensity;i++){
+      const alpha=Math.max(0,0.3*(1-i/glowIntensity));
+      ctx.beginPath();ctx.arc(cx,cy,radius+i*sf*1.5,0,Math.PI*2);
+      ctx.strokeStyle=accentColor+Math.round(alpha*255).toString(16).padStart(2,"0");
+      ctx.lineWidth=2*sf;ctx.stroke();
+    }
+
+    /* Circle border */
+    ctx.beginPath();ctx.arc(cx,cy,radius,0,Math.PI*2);
+    ctx.strokeStyle=accentColor;ctx.lineWidth=borderW*sf;
+    ctx.shadowColor=accentColor+"88";ctx.shadowBlur=Math.round(20*sf);
+    ctx.stroke();ctx.shadowBlur=0;
+
+    /* Player name tag */
+    const fSize=Math.round(nameFontSize*sf);
+    ctx.font=`800 ${fSize}px Inter,Segoe UI,sans-serif`;
+    ctx.textAlign="center";
+    const txt=playerName.toUpperCase();
+    const tw=ctx.measureText(txt).width;
+    const tagY=cy+radius+Math.round(20*sf)+fSize;
+    const padX=Math.round(20*sf),padY=Math.round(6*sf);
+    const rx=Math.round(8*sf);const tagW=tw+padX*2,tagH=fSize+padY*2;
+    const tx=cx-tagW/2,ty=tagY-fSize-padY;
+    ctx.beginPath();
+    ctx.moveTo(tx+rx,ty);ctx.lineTo(tx+tagW-rx,ty);ctx.quadraticCurveTo(tx+tagW,ty,tx+tagW,ty+rx);
+    ctx.lineTo(tx+tagW,ty+tagH-rx);ctx.quadraticCurveTo(tx+tagW,ty+tagH,tx+tagW-rx,ty+tagH);
+    ctx.lineTo(tx+rx,ty+tagH);ctx.quadraticCurveTo(tx,ty+tagH,tx,ty+tagH-rx);
+    ctx.lineTo(tx,ty+rx);ctx.quadraticCurveTo(tx,ty,tx+rx,ty);ctx.closePath();
+    ctx.fillStyle=nameBgColor;ctx.fill();
+    ctx.strokeStyle=accentColor+"55";ctx.lineWidth=sf;ctx.stroke();
+    ctx.fillStyle="#fff";ctx.fillText(txt,cx,tagY);
+
+    /* Download */
+    const dataUrl=c2.toDataURL("image/png");
+    const link=document.createElement("a");
+    link.download="spotlight-"+playerName.replace(/\s+/g,"-").toLowerCase()+".png";
+    link.href=dataUrl;document.body.appendChild(link);link.click();document.body.removeChild(link);
+  };
+
+  /* ── Slider helper ── */
+  const Slider=({label,value,min,max,step,onChange,suffix})=>(
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+        <span style={{fontSize:11,color:C.sub,fontWeight:600,letterSpacing:0.5}}>{label}</span>
+        <span style={{fontSize:11,color:accentColor,fontWeight:700}}>{typeof value==="number"&&value<1?(value*100).toFixed(0)+(suffix||"%"):value+(suffix||"")}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step||1} value={value} onChange={e=>onChange(parseFloat(e.target.value))}
+        style={{width:"100%",height:4,appearance:"none",background:C.s1,borderRadius:2,outline:"none",cursor:"pointer"}}/>
+    </div>
+  );
+
+  return(
+  <div style={{position:"fixed",inset:0,background:C.base,fontFamily:"'Inter',sans-serif",display:"flex",overflow:"hidden"}}>
+    {/* ── SIDE PANEL ── */}
+    <div style={{width:320,flexShrink:0,background:C.mantle,borderRight:`1px solid ${C.s1}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      {/* Header */}
+      <div style={{padding:"20px 20px 16px",borderBottom:`1px solid ${C.s1}`,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+          <button onClick={onBack} style={{...ib,color:C.sub}} title="Back"><ArrowLeftIcon size={18}/></button>
+          <div>
+            <div style={{fontSize:16,fontWeight:800,color:"#fff",letterSpacing:0.5}}>Spotlight Tag Generator</div>
+            <div style={{fontSize:10,color:C.overlay,letterSpacing:1,textTransform:"uppercase",marginTop:2}}>PNG Overlay Tool</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div style={{flex:1,overflowY:"auto",padding:20}}>
+        {/* Player Name */}
+        <div style={{marginBottom:16}}>
+          <label style={{fontSize:11,color:C.sub,fontWeight:600,letterSpacing:0.5,display:"block",marginBottom:4}}>Player Name</label>
+          <input value={playerName} onChange={e=>setPlayerName(e.target.value)}
+            style={{...inputStyle,fontSize:13,padding:"8px 12px"}}/>
+        </div>
+
+        <Slider label="Circle Border" value={borderW} min={2} max={12} onChange={setBorderW} suffix="px"/>
+        <Slider label="Circle Glow" value={glowIntensity} min={0} max={50} onChange={setGlowIntensity} suffix=""/>
+        <Slider label="Name Font Size" value={nameFontSize} min={10} max={36} onChange={setNameFontSize} suffix="px"/>
+        <Slider label="Dimmer Darkness" value={dimOpacity} min={0.1} max={0.9} step={0.05} onChange={setDimOpacity}/>
+        <Slider label="Circle Size" value={circleRadius} min={3} max={40} onChange={setCircleRadius} suffix="%"/>
+
+        {/* Color pickers */}
+        <div style={{display:"flex",gap:12,marginBottom:16}}>
+          <div style={{flex:1}}>
+            <label style={{fontSize:11,color:C.sub,fontWeight:600,letterSpacing:0.5,display:"block",marginBottom:4}}>Accent Color</label>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="color" value={accentColor} onChange={e=>setAccentColor(e.target.value)}
+                style={{width:36,height:28,border:"none",borderRadius:4,cursor:"pointer",background:"transparent"}}/>
+              <span style={{fontSize:11,color:C.overlay,fontFamily:"monospace"}}>{accentColor}</span>
+            </div>
+          </div>
+          <div style={{flex:1}}>
+            <label style={{fontSize:11,color:C.sub,fontWeight:600,letterSpacing:0.5,display:"block",marginBottom:4}}>Name BG</label>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="color" value={nameBgColor} onChange={e=>setNameBgColor(e.target.value)}
+                style={{width:36,height:28,border:"none",borderRadius:4,cursor:"pointer",background:"transparent"}}/>
+              <span style={{fontSize:11,color:C.overlay,fontFamily:"monospace"}}>{nameBgColor}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Resolution toggle */}
+        <div style={{marginBottom:20}}>
+          <label style={{fontSize:11,color:C.sub,fontWeight:600,letterSpacing:0.5,display:"block",marginBottom:6}}>Export Resolution</label>
+          <div style={{display:"flex",gap:8}}>
+            {["1080p","4k"].map(r=>(
+              <button key={r} onClick={()=>setRes(r)}
+                style={{flex:1,padding:"8px 0",borderRadius:8,fontSize:12,fontWeight:700,letterSpacing:1,cursor:"pointer",transition:"all 0.2s",textTransform:"uppercase",
+                  background:res===r?accentColor+"22":"transparent",
+                  border:res===r?`1px solid ${accentColor}55`:`1px solid ${C.s1}`,
+                  color:res===r?accentColor:C.sub}}>
+                {r==="4k"?"4K (3840×2160)":"1080p (1920×1080)"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Background image upload */}
+        <div style={{marginBottom:20}}>
+          <label style={{fontSize:11,color:C.sub,fontWeight:600,letterSpacing:0.5,display:"block",marginBottom:6}}>Preview Background</label>
+          <label style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderRadius:8,border:`1px dashed ${C.s1}`,cursor:"pointer",transition:"border 0.2s",color:C.overlay,fontSize:12}}
+            onMouseEnter={e=>e.currentTarget.style.borderColor=accentColor+"66"}
+            onMouseLeave={e=>e.currentTarget.style.borderColor=C.s1}>
+            <UploadIcon size={14}/> {bgImage?"Change image…":"Upload frame / screenshot…"}
+            <input type="file" accept="image/*" onChange={handleBgUpload} style={{display:"none"}}/>
+          </label>
+          {bgImage&&<button onClick={()=>{setBgImage(null);bgRef.current=null;}} style={{fontSize:10,color:C.red,background:"none",border:"none",cursor:"pointer",marginTop:4}}>Remove background</button>}
+        </div>
+      </div>
+
+      {/* Export button */}
+      <div style={{padding:20,borderTop:`1px solid ${C.s1}`,flexShrink:0}}>
+        <button onClick={handleExport}
+          style={{width:"100%",padding:"14px 0",borderRadius:10,border:"none",cursor:"pointer",fontSize:14,fontWeight:800,letterSpacing:1,
+            background:`linear-gradient(135deg,${accentColor},${accentColor}cc)`,color:"#000",
+            boxShadow:`0 4px 20px ${accentColor}44`,transition:"transform 0.2s"}}
+          onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
+          onMouseLeave={e=>e.currentTarget.style.transform="none"}>
+          <DownloadIcon size={16} color="#000" style={{verticalAlign:"middle",marginRight:8}}/>
+          Download Overlay PNG
+        </button>
+        <div style={{fontSize:10,color:C.overlay,textAlign:"center",marginTop:8}}>
+          Exports {exportW}×{exportH} transparent PNG
+        </div>
+      </div>
+    </div>
+
+    {/* ── PREVIEW AREA ── */}
+    <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",padding:40,background:C.base}}>
+      <div ref={previewRef} style={{position:"relative",width:"100%",maxWidth:960,aspectRatio:"16/9"}}>
+        <canvas ref={canvasRef} width={960} height={540}
+          onMouseDown={handlePreviewMD}
+          style={{width:"100%",height:"100%",borderRadius:12,border:`1px solid ${C.s1}`,cursor:dragging?"grabbing":resizing?"nwse-resize":"grab",boxShadow:"0 8px 40px rgba(0,0,0,0.4)"}}/>
+        <div style={{position:"absolute",bottom:-32,left:0,right:0,textAlign:"center",fontSize:10,color:C.overlay}}>
+          Drag circle to reposition &bull; Drag green dot to resize
+        </div>
+      </div>
+    </div>
   </div>);
 }
 
@@ -2777,6 +3140,13 @@ function App(){
     return<StudioLandingPage
       onEnterStudio={enterStudio}
       onEnterAthleteReview={()=>{setStudioAuth(true);enterAthleteAsEditor();}}/>;
+  }
+
+  /* #/overlay → Spotlight Tag Generator (PNG overlay tool)
+     #/overlay/PlayerName → pre-fills the player name */
+  if(route==="overlay"){
+    const overlayName=getHashParam();
+    return<SpotlightTagGenerator onBack={goToLanding} defaultName={overlayName}/>;
   }
 
   /* Default (no hash or #/) → combined landing with both tiles (backward compat) */
