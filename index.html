@@ -1817,7 +1817,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     });
   },[tracks]);
 
-  const findActiveTag=useCallback(ph=>{for(const tg of resolvedTags){if(ph>=tg._tlStart&&ph<tg._tlStart+tg.duration)return tg;}return null;},[resolvedTags]);
+  const findActiveTag=useCallback(ph=>{for(const tg of resolvedTags){if(tg.duration>0&&ph>=tg._tlStart&&ph<tg._tlStart+tg.duration)return tg;}return null;},[resolvedTags]);
+
+  /* Find a zero-duration tag overlay: tag is anchored to a clip and shows when the video passes its sourceTime.
+     The overlay displays for a fixed window (1.5s) after the sourceTime is reached during playback. */
+  const TAG_OVERLAY_DUR=1.5;
+  const findOverlayTag=useCallback((clip,ph)=>{
+    if(!clip)return null;
+    const fo=freezeOffset(clip.trackStart,ph);
+    const srcT=clip.clipStart+(ph-clip.trackStart-fo);
+    for(const tg of tagTrack.clips){
+      if(tg.clipId!==clip.id||tg.duration>0)continue; /* only zero-duration (non-freeze) tags */
+      if(srcT>=tg.sourceTime&&srcT<tg.sourceTime+TAG_OVERLAY_DUR)return tg;
+    }
+    return null;
+  },[tagTrack,freezeOffset]);
 
   const freezeOffset=useCallback((clipStart,ph)=>{let total=0;for(const tg of resolvedTags){const tEnd=tg._tlStart+tg.duration;if(tEnd<=clipStart||tg._tlStart>=ph)continue;const s=Math.max(tg._tlStart,clipStart);const e=Math.min(tEnd,ph);if(e>s)total+=e-s;}return total;},[resolvedTags]);
 
@@ -1876,7 +1890,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(!clip){console.warn("No video clip at playhead for tag");return;}
     const fo=freezeOffset(clip.trackStart,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
-    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:1.5,spotX,spotY,spotScale:1.0};
+    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:0,spotX,spotY,spotScale:1.0};
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
     setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(tag.id);
@@ -2035,29 +2049,30 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     allClips.forEach(cl=>{
       /* Find tags that belong to this clip */
       const clipTags=resolvedTags.filter(tg=>tg.clipId===cl.id&&tg.sourceTime>=cl.clipStart&&tg.sourceTime<cl.clipEnd).sort((a,b)=>a.sourceTime-b.sourceTime);
+      /* Separate freeze tags (duration>0) from overlay-only tags (duration===0) */
+      const freezeTags=clipTags.filter(tg=>tg.duration>0);
+      const overlayTags=clipTags.filter(tg=>tg.duration===0);
       let tlPos=cl.trackStart;let srcPos=cl.clipStart;
-      clipTags.forEach(tg=>{
+      freezeTags.forEach(tg=>{
         const tagSrcT=tg.sourceTime;
         /* Video segment before this tag */
         if(tagSrcT>srcPos){
           segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+(tagSrcT-srcPos),srcStart:srcPos,srcEnd:tagSrcT,isTag:false});
           tlPos+=tagSrcT-srcPos;
         }
-        /* Tag segment: freeze frame with spotlight overlay. Duration = tag.duration (1.5s).
-           srcStart === srcEnd so the video stays on this exact frame.
-           After the tag ends, the NEXT segment resumes from tagSrcT (same point), NOT from tagSrcT + duration.
-           This eliminates the jump cut — no video time is skipped. */
+        /* Tag segment: freeze frame with spotlight overlay. Duration = tag.duration.
+           srcStart === srcEnd so the video stays on this exact frame. */
         segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+tg.duration,srcStart:tagSrcT,srcEnd:tagSrcT,isTag:true,tag:tg});
         tlPos+=tg.duration;
-        srcPos=tagSrcT; /* Resume from the SAME source time — no skip */
+        srcPos=tagSrcT;
       });
-      /* Remaining video after last tag */
+      /* Remaining video after last freeze tag */
       if(srcPos<cl.clipEnd){
-        segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+(cl.clipEnd-srcPos),srcStart:srcPos,srcEnd:cl.clipEnd,isTag:false});
+        segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+(cl.clipEnd-srcPos),srcStart:srcPos,srcEnd:cl.clipEnd,isTag:false,overlayTags});
       }
     });
-    /* Also add tags not bound to a clip */
-    resolvedTags.filter(tg=>!tg.clipId).forEach(tg=>{
+    /* Also add freeze tags not bound to a clip */
+    resolvedTags.filter(tg=>!tg.clipId&&tg.duration>0).forEach(tg=>{
       const parentClip=allClips.find(c=>tg._tlStart>=c.trackStart);
       segments.push({clipId:parentClip?.id,url:parentClip?.url,tlStart:tg._tlStart,tlEnd:tg._tlStart+tg.duration,srcStart:tg.sourceTime||0,srcEnd:tg.sourceTime||0,isTag:true,tag:tg});
     });
@@ -2340,6 +2355,19 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             }
             if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100;
             drawVideoFit(vel,pr.scale||1);
+
+            /* Draw overlay tags (zero-duration) that fall within TAG_OVERLAY_DUR of srcTime */
+            if(seg.overlayTags&&seg.overlayTags.length>0){
+              for(const otag of seg.overlayTags){
+                if(srcTime>=otag.sourceTime&&srcTime<otag.sourceTime+TAG_OVERLAY_DUR){
+                  const elapsed2=srcTime-otag.sourceTime;
+                  const remaining2=otag.sourceTime+TAG_OVERLAY_DUR-srcTime;
+                  const fadeDur2=0.3;
+                  const oFade=Math.min(1,Math.min(elapsed2/fadeDur2,remaining2/fadeDur2));
+                  drawSpotlight(otag,oFade);
+                }
+              }
+            }
           }
 
           /* Audio track (A1/A2 music) */
@@ -2537,7 +2565,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   useEffect(()=>{if(!isPlaying||!tlScrollRef.current)return;const el=tlScrollRef.current;const px=playhead*zoom;if(px>el.scrollLeft+el.clientWidth-80)el.scrollLeft=px-el.clientWidth/2;},[playhead,isPlaying,zoom]);
 
-  const activeClip=findActiveClip(playhead);const activeTag=findActiveTag(playhead);const actProps=activeClip?(clipProps[activeClip.id]||{volume:100,scale:1}):null;
+  const activeClip=findActiveClip(playhead);const activeTag=findActiveTag(playhead)||findOverlayTag(activeClip,playhead);const actProps=activeClip?(clipProps[activeClip.id]||{volume:100,scale:1}):null;
   const selClip=(()=>{for(const t of [...tracks,...audioTracks]){const c=t.clips.find(x=>x.id===selectedClipId);if(c)return c;}for(const c of tagTrack.clips){if(c.id===selectedClipId)return c;}return null;})();
   const selProps=selClip?(clipProps[selClip.id]||{volume:100,scale:1}):null;
 
