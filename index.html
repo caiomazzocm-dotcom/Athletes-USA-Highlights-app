@@ -1144,7 +1144,7 @@ function EditProfileModal({player,onSave,onClose}){
 }
 
 /* ═══════════ ATHLETE: UPLOAD PORTAL ═══════════ */
-function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode}){
+function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}){
   const[editCat,setEditCat]=useState(null);const[editName,setEditName]=useState("");
   const[showAdd,setShowAdd]=useState(false);const[newCat,setNewCat]=useState("");
   const[uploadCat,setUploadCat]=useState(null);const fileRef=useRef(null);
@@ -1219,7 +1219,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode}){
             onMouseEnter={e=>{if(!zipProg)e.currentTarget.style.background=C.green+"30";}} onMouseLeave={e=>{e.currentTarget.style.background=C.green+"18";}}>
             <DownloadIcon size={14}/> Download All Clips
           </button>}
-          <button className="ath-zip-btn" onClick={()=>setHashRoute("overlay/"+encodeURIComponent(player.name))}
+          <button className="ath-zip-btn" onClick={()=>{if(onOpenOverlay)onOpenOverlay(player.name);else setHashRoute("overlay/"+encodeURIComponent(player.name));}}
             style={{display:"flex",alignItems:"center",gap:6,background:"rgba(0,229,160,0.1)",border:"1px solid rgba(0,229,160,0.3)",borderRadius:8,padding:"8px 16px",color:"#00e5a0",cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0}}
             onMouseEnter={e=>e.currentTarget.style.background="rgba(0,229,160,0.2)"} onMouseLeave={e=>e.currentTarget.style.background="rgba(0,229,160,0.1)"}>
             <EyeIcon size={14}/> Generate Tag
@@ -3002,6 +3002,7 @@ function App(){
              "studio"  = studio entry (password-gated, CAN access athlete pages) */
   const[route,setRoute]=useState(getHashRoute);
   const[screen,setScreen]=useState("landing"); /* "landing"|"athlete"|"editor" */
+  const[overlayName,setOverlayName]=useState(null); /* non-null → show SpotlightTagGenerator */
   const[players,setPlayers]=useState([]);
   const[activePlayerId,setActivePlayerId]=useState(null);
   const[athleteStep,setAthleteStep]=useState("select");
@@ -3113,6 +3114,12 @@ function App(){
       <div style={{color:C.sub,fontSize:12,marginTop:12}}>Connecting to cloud...</div>
     </div>);
 
+  /* ── OVERLAY TOOL (reachable from ANY screen via state OR hash route) ── */
+  if(overlayName!==null||route==="overlay"){
+    const name=overlayName||getHashParam();
+    return<SpotlightTagGenerator onBack={()=>{setOverlayName(null);if(route==="overlay")goToLanding();}} defaultName={name}/>;
+  }
+
   /* ── INNER SCREENS (athlete flow + editor) ── */
   if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers}/>;
   if(screen==="athlete"){
@@ -3123,7 +3130,8 @@ function App(){
     if(athleteStep==="form")return<AthleteProfileForm onSubmit={handleCreateProfile} onBack={()=>setAthleteStep("select")} existingPlayers={players}/>;
     if(athleteStep==="portal"&&activePlayer)return(<>
       <AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
-        isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}/>
+        isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}
+        onOpenOverlay={(name)=>{setOverlayName(name);}}/>
       {showOnboarding&&<OnboardingGuide playerName={activePlayer.name} onDone={()=>setShowOnboarding(false)}/>}
     </>);
   }
@@ -3140,13 +3148,6 @@ function App(){
     return<StudioLandingPage
       onEnterStudio={enterStudio}
       onEnterAthleteReview={()=>{setStudioAuth(true);enterAthleteAsEditor();}}/>;
-  }
-
-  /* #/overlay → Spotlight Tag Generator (PNG overlay tool)
-     #/overlay/PlayerName → pre-fills the player name */
-  if(route==="overlay"){
-    const overlayName=getHashParam();
-    return<SpotlightTagGenerator onBack={goToLanding} defaultName={overlayName}/>;
   }
 
   /* Default (no hash or #/) → combined landing with both tiles (backward compat) */
