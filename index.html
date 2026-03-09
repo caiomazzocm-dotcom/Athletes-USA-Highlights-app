@@ -1219,11 +1219,11 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
             onMouseEnter={e=>{if(!zipProg)e.currentTarget.style.background=C.green+"30";}} onMouseLeave={e=>{e.currentTarget.style.background=C.green+"18";}}>
             <DownloadIcon size={14}/> Download All Clips
           </button>}
-          <button className="ath-zip-btn" onClick={()=>{if(onOpenOverlay)onOpenOverlay(player.name);else setHashRoute("overlay/"+encodeURIComponent(player.name));}}
+          {isEditorMode&&<button className="ath-zip-btn" onClick={()=>{if(onOpenOverlay)onOpenOverlay(player.name);else setHashRoute("overlay/"+encodeURIComponent(player.name));}}
             style={{display:"flex",alignItems:"center",gap:6,background:"rgba(0,229,160,0.1)",border:"1px solid rgba(0,229,160,0.3)",borderRadius:8,padding:"8px 16px",color:"#00e5a0",cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0}}
             onMouseEnter={e=>e.currentTarget.style.background="rgba(0,229,160,0.2)"} onMouseLeave={e=>e.currentTarget.style.background="rgba(0,229,160,0.1)"}>
             <EyeIcon size={14}/> Generate Tag
-          </button>
+          </button>}
           <button className="ath-zip-btn" onClick={()=>setShowEditProfile(true)}
             style={{display:"flex",alignItems:"center",gap:6,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:8,padding:"8px 16px",color:C.blue,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0}}
             onMouseEnter={e=>e.currentTarget.style.background=C.blue+"30"} onMouseLeave={e=>e.currentTarget.style.background=C.blue+"18"}>
