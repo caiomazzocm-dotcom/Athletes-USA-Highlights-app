@@ -339,11 +339,12 @@ function AthleteLandingPage({onEnter}){
 /* ═══════════ STUDIO LANDING PAGE (dedicated #/studio entry) ═══════════ */
 function StudioLandingPage({onEnterStudio,onEnterAthleteReview}){
   const[showPw,setShowPw]=useState(false);
+  const[pwTarget,setPwTarget]=useState("studio"); /* "studio" | "athlete" — which button triggered password */
   const[hov,setHov]=useState(null);
   const[authenticated,setAuthenticated]=useState(isSessionValid());
-  const handleStudioClick=()=>{if(isSessionValid()){saveSession();onEnterStudio();}else{setShowPw(true);}};
-  const handleAthleteClick=()=>{if(isSessionValid()){saveSession();onEnterAthleteReview();}else{setShowPw(true);}};
-  const handlePwSuccess=()=>{setAuthenticated(true);setShowPw(false);saveSession();onEnterStudio();};
+  const handleStudioClick=()=>{if(isSessionValid()){saveSession();onEnterStudio();}else{setPwTarget("studio");setShowPw(true);}};
+  const handleAthleteClick=()=>{if(isSessionValid()){saveSession();onEnterAthleteReview();}else{setPwTarget("athlete");setShowPw(true);}};
+  const handlePwSuccess=()=>{setAuthenticated(true);setShowPw(false);saveSession();if(pwTarget==="athlete")onEnterAthleteReview();else onEnterStudio();};
   return(
   <LandingBg>
     <div style={{position:"relative",zIndex:1,textAlign:"center",animation:"fadeIn 0.8s ease-out"}}>
