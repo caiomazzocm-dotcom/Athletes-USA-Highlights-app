@@ -1897,6 +1897,19 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setSelectedClipId(tag.id);
   },[pushHist,players,findActiveClip,freezeOffset,recalcAll,tracks,audioTracks]);
 
+  /* ── Add a freeze frame (no spotlight overlay) at the current playhead ── */
+  const addFreeze=useCallback((start)=>{pushHist();
+    const clip=findActiveClip(start);
+    if(!clip){console.warn("No video clip at playhead for freeze");return;}
+    const fo=freezeOffset(clip.trackStart,start);
+    const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
+    const tag={id:uid("frz"),type:"freeze",clipId:clip.id,sourceTime,playerId:null,playerName:"FREEZE",playerColor:"#60a5fa",trackStart:0,duration:1.5,spotX:50,spotY:50,spotScale:1.0};
+    setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
+    setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
+    compactV1();
+    setSelectedClipId(tag.id);
+  },[pushHist,findActiveClip,freezeOffset,recalcAll,tracks,audioTracks,compactV1]);
+
   const updateTagPos=useCallback((tagId,newX,newY)=>{
     setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===tagId?{...c,spotX:Math.max(5,Math.min(95,newX)),spotY:Math.max(5,Math.min(95,newY))}:c)}));
   },[]);
@@ -2323,7 +2336,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           const fadeIn=Math.min(1,elapsed/fadeDur);
           const fadeOut=Math.min(1,remaining/fadeDur);
           const opacity=Math.min(fadeIn,fadeOut);
-          if(seg.tag)drawSpotlight(seg.tag,opacity);
+          if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,opacity);
           /* Mute audio during freeze */
           Object.values(audioGains).forEach(g=>g.gain.value=0);
           if(curAudEl){curAudEl.pause();curAudEl=null;}
@@ -2683,7 +2696,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}} style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":"default"}}>
         {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
         <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`scale(${actProps.scale})`:undefined}}/>
-        {activeTag&&(()=>{const tProps=clipProps[activeTag.id]||{spotScale:1.0};const ss=tProps.spotScale||activeTag.spotScale||1.0;const sx=activeTag.spotX||50;const sy=activeTag.spotY||50;const rad=Math.round(80*ss);const diam=rad*2;
+        {activeTag&&activeTag.type==="freeze"&&(
+        <div style={{position:"absolute",inset:0,pointerEvents:"none",display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:8}}>
+          <div style={{background:"#3b82f6",padding:"3px 14px",borderRadius:4}}>
+            <span style={{color:"#fff",fontSize:10,fontWeight:700,letterSpacing:1}}>&#10074;&#10074; FREEZE FRAME</span>
+          </div>
+        </div>)}
+        {activeTag&&activeTag.type!=="freeze"&&(()=>{const tProps=clipProps[activeTag.id]||{spotScale:1.0};const ss=tProps.spotScale||activeTag.spotScale||1.0;const sx=activeTag.spotX||50;const sy=activeTag.spotY||50;const rad=Math.round(80*ss);const diam=rad*2;
           const handleSpotDrag=e=>{e.preventDefault();e.stopPropagation();const container=previewRef.current;if(!container)return;const rect=container.getBoundingClientRect();const tagId=activeTag.id;
             const onMove=ev=>{const nx=((ev.clientX-rect.left)/rect.width*100);const ny=((ev.clientY-rect.top)/rect.height*100);updateTagPos(tagId,nx,ny);};
             const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
@@ -2763,6 +2782,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           ))}
         </div>}
       </div>
+      <button onClick={()=>addFreeze(playhead)}
+        style={{...tb,background:"#3b82f622",color:"#60a5fa",border:"1px solid #3b82f6",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}
+        onMouseEnter={e=>{e.currentTarget.style.background="#3b82f644";}} onMouseLeave={e=>{e.currentTarget.style.background="#3b82f622";}}>
+        &#10074;&#10074; Freeze
+      </button>
       <div style={{flex:1}}/>
       <button onClick={()=>setZoom(z=>Math.max(2,z<=15?z-2:z-15))} style={{...ib,color:C.sub}}><ZoomOutIcon size={13}/></button>
       <input type="range" min={2} max={200} step={1} value={zoom} onChange={e=>setZoom(+e.target.value)} style={{width:100,accentColor:C.blue}}/>
@@ -2902,13 +2926,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             {resolvedTags.map(tag=>{const w=Math.max(MIN_CLIP_W,tag.duration*zoom);
               const isSel=tag.id===selectedClipId;
               const x=tag._tlStart*zoom;
+              const isFreeze=tag.type==="freeze";
+              const tagColor=isFreeze?"#3b82f6":C.green;
               return(
               <div key={tag.id} onMouseDown={e=>handleClipMDTag(e,{...tag,trackStart:tag._tlStart},true)} onClick={e=>e.stopPropagation()}
                 style={{position:"absolute",left:x,width:w,top:4,bottom:4,
-                  background:C.green,borderRadius:4,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
-                  border:isSel?`2px solid ${C.text}`:`1px solid ${C.green}88`,boxShadow:isSel?`0 0 8px ${C.green}55`:"none",
+                  background:tagColor,borderRadius:4,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
+                  border:isSel?`2px solid ${C.text}`:`1px solid ${tagColor}88`,boxShadow:isSel?`0 0 8px ${tagColor}55`:"none",
                   display:"flex",alignItems:"center",justifyContent:"center",padding:"0 6px",userSelect:"none",zIndex:isSel?5:1}}>
-                <span style={{color:"#000",fontSize:9,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 0 2px rgba(255,255,255,0.3)"}}>{tag.playerName}</span>
+                <span style={{color:"#fff",fontSize:9,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 0 2px rgba(0,0,0,0.3)"}}>{isFreeze?"FREEZE":tag.playerName}</span>
                 <div onMouseDown={e=>handleEdgeMouseDown(e,tagTrack.id,tag.id,true,false,true)} style={{position:"absolute",left:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0}}/>
                 <div onMouseDown={e=>handleEdgeMouseDown(e,tagTrack.id,tag.id,false,false,true)} style={{position:"absolute",right:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0}}/>
               </div>);})}
