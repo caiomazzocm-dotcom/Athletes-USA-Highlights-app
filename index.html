@@ -1886,7 +1886,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const addTag=useCallback((playerId,start,spotX=50,spotY=50)=>{pushHist();
     const player=players.find(p=>p.id===playerId);if(!player)return;
     const playerIdx=players.indexOf(player);
-    /* Find the active video clip at 'start' (timeline time) and compute sourceTime */
+    /* Check if playhead is on a freeze — if so, attach spotlight TO the freeze tag */
+    const activeFreeze=findActiveTag(start);
+    if(activeFreeze&&activeFreeze.type==="freeze"){
+      /* Update the freeze tag to include spotlight data */
+      setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===activeFreeze.id?{...c,playerId,playerName:player.name,playerColor:playerColor(playerIdx),spotX,spotY,spotScale:1.0,hasSpotlight:true}:c)}));
+      setSelectedClipId(activeFreeze.id);
+      return;
+    }
+    /* No freeze at playhead — create standalone overlay tag (duration:0) */
     const clip=findActiveClip(start);
     if(!clip){console.warn("No video clip at playhead for tag");return;}
     const fo=freezeOffset(clip.trackStart,start);
@@ -1895,7 +1903,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
     setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(tag.id);
-  },[pushHist,players,findActiveClip,freezeOffset,recalcAll,tracks,audioTracks]);
+  },[pushHist,players,findActiveClip,findActiveTag,freezeOffset,recalcAll,tracks,audioTracks]);
 
   /* ── Add a freeze frame (no spotlight overlay) at the current playhead ── */
   const addFreeze=useCallback((start)=>{pushHist();
@@ -2337,14 +2345,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           const fadeOut=Math.min(1,remaining/fadeDur);
           const opacity=Math.min(fadeIn,fadeOut);
           if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,opacity);
-          /* Draw any overlay spotlight tags that match this frozen frame's sourceTime */
-          if(seg.tag&&seg.tag.type==="freeze"){
-            for(const otag of tagTrack.clips){
-              if(otag.type==="freeze"||otag.duration>0||otag.clipId!==seg.clipId)continue;
-              if(seg.srcStart>=otag.sourceTime&&seg.srcStart<otag.sourceTime+TAG_OVERLAY_DUR){
-                drawSpotlight(otag,opacity);
-              }
-            }
+          /* Freeze with attached spotlight — draw the spotlight overlay */
+          if(seg.tag&&seg.tag.type==="freeze"&&seg.tag.hasSpotlight){
+            drawSpotlight(seg.tag,opacity);
           }
           /* Mute audio during freeze */
           Object.values(audioGains).forEach(g=>g.gain.value=0);
@@ -2716,9 +2719,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             <span style={{color:"#fff",fontSize:10,fontWeight:700,letterSpacing:1}}>&#10074;&#10074; FREEZE FRAME</span>
           </div>
         </div>)}
-        {/* SPOTLIGHT overlay — shows independently of freeze, can be on top */}
-        {activeSpotTag&&(()=>{const tProps=clipProps[activeSpotTag.id]||{spotScale:1.0};const ss=tProps.spotScale||activeSpotTag.spotScale||1.0;const sx=activeSpotTag.spotX||50;const sy=activeSpotTag.spotY||50;const rad=Math.round(80*ss);const diam=rad*2;
-          const handleSpotDrag=e=>{e.preventDefault();e.stopPropagation();const container=previewRef.current;if(!container)return;const rect=container.getBoundingClientRect();const tagId=activeSpotTag.id;
+        {/* SPOTLIGHT overlay — shows on freeze tags with hasSpotlight, OR standalone overlay tags */}
+        {(()=>{
+          /* Determine which tag provides the spotlight data */
+          const spotSrc=activeFreezeTag&&activeFreezeTag.hasSpotlight?activeFreezeTag:activeSpotTag;
+          if(!spotSrc)return null;
+          const tProps=clipProps[spotSrc.id]||{spotScale:1.0};const ss=tProps.spotScale||spotSrc.spotScale||1.0;const sx=spotSrc.spotX||50;const sy=spotSrc.spotY||50;const rad=Math.round(80*ss);const diam=rad*2;
+          const handleSpotDrag=e=>{e.preventDefault();e.stopPropagation();const container=previewRef.current;if(!container)return;const rect=container.getBoundingClientRect();const tagId=spotSrc.id;
             const onMove=ev=>{const nx=((ev.clientX-rect.left)/rect.width*100);const ny=((ev.clientY-rect.top)/rect.height*100);updateTagPos(tagId,nx,ny);};
             const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
             document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);};
@@ -2728,10 +2735,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           <div onMouseDown={handleSpotDrag} style={{position:"absolute",left:`${sx}%`,top:`${sy}%`,transform:"translate(-50%,-50%)",width:diam,height:diam,borderRadius:"50%",border:`3px solid ${C.green}`,boxShadow:`0 0 20px ${C.green}44, 0 0 40px ${C.green}22`,cursor:"grab",pointerEvents:"auto"}}/>
           <div style={{position:"absolute",left:`${sx}%`,top:`calc(${sy}% + ${rad+12}px)`,transform:"translateX(-50%)",textAlign:"center",whiteSpace:"nowrap"}}>
             <div style={{background:"rgba(0,0,0,0.8)",padding:"4px 16px",borderRadius:4,display:"inline-block",border:`1px solid ${C.green}55`}}>
-              <span style={{color:"#fff",fontSize:13,fontWeight:700,letterSpacing:1}}>{activeSpotTag.playerName.toUpperCase()}</span>
+              <span style={{color:"#fff",fontSize:13,fontWeight:700,letterSpacing:1}}>{spotSrc.playerName.toUpperCase()}</span>
             </div>
           </div>
-          <div style={{position:"absolute",top:activeSpotTag&&activeFreezeTag?30:8,left:"50%",transform:"translateX(-50%)",background:C.green,padding:"3px 14px",borderRadius:4}}>
+          <div style={{position:"absolute",top:activeFreezeTag?30:8,left:"50%",transform:"translateX(-50%)",background:C.green,padding:"3px 14px",borderRadius:4}}>
             <span style={{color:"#000",fontSize:10,fontWeight:700,letterSpacing:1}}>SPOTLIGHT</span>
           </div>
         </div>);})()}
@@ -2945,10 +2952,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               return(
               <div key={tag.id} onMouseDown={e=>handleClipMDTag(e,{...tag,trackStart:tag._tlStart},true)} onClick={e=>e.stopPropagation()}
                 style={{position:"absolute",left:x,width:w,top:4,bottom:4,
-                  background:"#3b82f6",borderRadius:4,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
+                  background:tag.hasSpotlight?"linear-gradient(90deg,#3b82f6,#22c55e)":"#3b82f6",borderRadius:4,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
                   border:isSel?`2px solid ${C.text}`:"1px solid #3b82f688",boxShadow:isSel?"0 0 8px #3b82f655":"none",
-                  display:"flex",alignItems:"center",justifyContent:"center",padding:"0 6px",userSelect:"none",zIndex:isSel?5:1}}>
-                <span style={{color:"#fff",fontSize:9,fontWeight:700,textShadow:"0 0 2px rgba(0,0,0,0.3)"}}>FREEZE</span>
+                  display:"flex",alignItems:"center",justifyContent:"center",padding:"0 6px",gap:4,userSelect:"none",zIndex:isSel?5:1}}>
+                <span style={{color:"#fff",fontSize:9,fontWeight:700,textShadow:"0 0 2px rgba(0,0,0,0.3)"}}>{tag.hasSpotlight?`❄ ${tag.playerName}`:"FREEZE"}</span>
                 <div onMouseDown={e=>handleEdgeMouseDown(e,tagTrack.id,tag.id,true,false,true)} style={{position:"absolute",left:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0}}/>
                 <div onMouseDown={e=>handleEdgeMouseDown(e,tagTrack.id,tag.id,false,false,true)} style={{position:"absolute",right:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0}}/>
               </div>);})}
