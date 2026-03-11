@@ -1345,9 +1345,9 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
 function SpotlightTagGenerator({onBack,defaultName}){
   /* ── State: controls ── */
   const[playerName,setPlayerName]=useState(defaultName||"PLAYER NAME");
-  const[borderW,setBorderW]=useState(4);
-  const[glowIntensity,setGlowIntensity]=useState(20);
-  const[nameFontSize,setNameFontSize]=useState(18);
+  const[borderW,setBorderW]=useState(2);
+  const[glowIntensity,setGlowIntensity]=useState(15);
+  const[nameFontSize,setNameFontSize]=useState(11);
   const[dimOpacity,setDimOpacity]=useState(0.6);
   const[accentColor,setAccentColor]=useState("#2E6FD6");
   const[nameBgColor,setNameBgColor]=useState("#111111");
@@ -1356,7 +1356,7 @@ function SpotlightTagGenerator({onBack,defaultName}){
   /* ── State: preview ── */
   const[bgImage,setBgImage]=useState(null);
   const[circlePos,setCirclePos]=useState({x:50,y:45}); /* % of preview */
-  const[circleRadius,setCircleRadius]=useState(8); /* % of min(W,H) */
+  const[circleRadius,setCircleRadius]=useState(5); /* % of min(W,H) */
   const[dragging,setDragging]=useState(false);
   const[resizing,setResizing]=useState(false);
 
