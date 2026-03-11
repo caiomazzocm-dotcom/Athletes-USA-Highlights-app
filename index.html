@@ -2922,7 +2922,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           {tracks.map(trk=>(
             <div key={trk.id} onDragOver={e=>{e.preventDefault();e.currentTarget.style.background=C.s0+"44";}} onDragLeave={e=>{e.currentTarget.style.background="transparent";}} onDrop={e=>handleDrop(e,trk.id,false)} onClick={handleTlClick}
               style={{height:TRACK_H,position:"relative",borderBottom:`1px solid ${C.s0}22`,cursor:tool==="blade"?"crosshair":"default"}}>
-              {trk.clips.map(clip=>{const dur=clip.clipEnd-clip.clipStart;const w=Math.max(MIN_CLIP_W,dur*zoom);
+              {trk.clips.map(clip=>{const rawD=clip.clipEnd-clip.clipStart;
+                /* Calculate freeze time for THIS clip to get effective visual width */
+                let clipFreezeTime=0;
+                const clipFreezes=[];
+                tagTrack.clips.forEach(tg=>{if(tg.type==="freeze"&&tg.clipId===clip.id&&tg.sourceTime>=clip.clipStart&&tg.sourceTime<clip.clipEnd){clipFreezeTime+=tg.duration;clipFreezes.push(tg);}});
+                clipFreezes.sort((a,b)=>a.sourceTime-b.sourceTime);
+                const effectiveD=rawD+clipFreezeTime;
+                const w=Math.max(MIN_CLIP_W,effectiveD*zoom);
                 const pi=players.findIndex(p=>p.id===clip.playerId);const pCol=pi>=0?playerColor(pi):C.peach;
                 const isSel=clip.id===selectedClipId;
                 const x=clip.trackStart*zoom;
@@ -2931,7 +2938,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   style={{position:"absolute",left:x,width:w,top:3,bottom:3,
                     background:`linear-gradient(180deg,${pCol}cc 60%,${pCol}44 60%)`,borderRadius:5,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
                     border:isSel?`2px solid ${C.text}`:`1px solid ${pCol}44`,boxShadow:isSel?`0 0 8px ${C.blue}55`:"none",
-                    display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1}}>
+                    display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1,position:"relative"}}>
                   <div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
                     <span style={{color:"#000",fontSize:10,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 0 4px rgba(255,255,255,0.3)"}}>{clip.name}</span>
@@ -2940,8 +2947,19 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   <div style={{height:22,padding:"0 2px",opacity:0.7,flexShrink:0}}>
                     <Waveform w={Math.max(4,w-4)} h={20} color={pCol} seed={clip.id.charCodeAt(4)||1}/>
                   </div>
-                  <div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,true,false,false)} style={{position:"absolute",left:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0}}/>
-                  <div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,false,false,false)} style={{position:"absolute",right:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0}}/>
+                  {/* Render freeze segments inline within the clip */}
+                  {(()=>{let fzAccum=0;return clipFreezes.map(fz=>{
+                    const offsetInClip=(fz.sourceTime-clip.clipStart)+fzAccum;
+                    const fzLeft=offsetInClip/effectiveD*100;
+                    const fzWidth=fz.duration/effectiveD*100;
+                    fzAccum+=fz.duration;
+                    return<div key={fz.id} style={{position:"absolute",left:`${fzLeft}%`,width:`${fzWidth}%`,top:0,bottom:0,
+                      background:fz.hasSpotlight?"linear-gradient(180deg,#3b82f6cc 50%,#22c55e88 100%)":"linear-gradient(180deg,#3b82f6cc 50%,#3b82f644 100%)",
+                      display:"flex",alignItems:"center",justifyContent:"center",borderLeft:"1px solid #60a5fa",borderRight:"1px solid #60a5fa",zIndex:2}}>
+                      <span style={{color:"#fff",fontSize:8,fontWeight:800,letterSpacing:0.5,textShadow:"0 0 3px rgba(0,0,0,0.5)"}}>{fz.hasSpotlight?"❄ "+fz.playerName:"❄ FREEZE"}</span>
+                    </div>;});})()}
+                  <div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,true,false,false)} style={{position:"absolute",left:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0,zIndex:3}}/>
+                  <div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,false,false,false)} style={{position:"absolute",right:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0,zIndex:3}}/>
                 </div>);})}
             </div>
           ))}
