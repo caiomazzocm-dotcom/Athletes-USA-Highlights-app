@@ -1280,6 +1280,11 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
             onMouseEnter={e=>e.currentTarget.style.background="rgba(0,229,160,0.2)"} onMouseLeave={e=>e.currentTarget.style.background="rgba(0,229,160,0.1)"}>
             <EyeIcon size={14}/> Generate Tag
           </button>}
+          <button className="ath-zip-btn" onClick={()=>setShowWelcome(true)}
+            style={{display:"flex",alignItems:"center",gap:6,background:"#a78bfa18",border:"1px solid #a78bfa44",borderRadius:8,padding:"8px 16px",color:"#a78bfa",cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0}}
+            onMouseEnter={e=>e.currentTarget.style.background="#a78bfa30"} onMouseLeave={e=>e.currentTarget.style.background="#a78bfa18"}>
+            <EyeIcon size={14}/> Guide
+          </button>
           <button className="ath-zip-btn" onClick={()=>setShowEditProfile(true)}
             style={{display:"flex",alignItems:"center",gap:6,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:8,padding:"8px 16px",color:C.blue,cursor:"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0}}
             onMouseEnter={e=>e.currentTarget.style.background=C.blue+"30"} onMouseLeave={e=>e.currentTarget.style.background=C.blue+"18"}>
