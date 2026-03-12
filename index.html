@@ -1155,6 +1155,15 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
   const[uploadProg,setUploadProg]=useState(null);
   const[zipProg,setZipProg]=useState(null);
   const[showEditProfile,setShowEditProfile]=useState(false);
+  const[showWelcome,setShowWelcome]=useState(false);
+  const[welcomeStep,setWelcomeStep]=useState(0);
+
+  /* ── Show welcome guide on first visit ── */
+  useEffect(()=>{
+    const key="ausa_welcome_seen_"+player.id;
+    if(!localStorage.getItem(key)){setShowWelcome(true);localStorage.setItem(key,"1");}
+  },[]);
+
   /* ── Ensure Media Inbox always exists as first category ── */
   useEffect(()=>{
     const hasInbox=player.categories.some(c=>c.isInbox);
@@ -1169,8 +1178,19 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
     }
   },[]);
 
-  /* ── Video drag handlers ── */
-  const handleVidDragStart=(e,vid,catId)=>{setDragVid(vid);setDragVidCatId(catId);e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",vid.id);};
+  /* ── Video drag handlers (real mouse-following drag) ── */
+  const handleVidDragStart=(e,vid,catId)=>{
+    setDragVid(vid);setDragVidCatId(catId);
+    e.dataTransfer.effectAllowed="move";
+    e.dataTransfer.setData("text/plain",vid.id);
+    /* Custom drag ghost — a styled pill that follows the mouse */
+    const ghost=document.createElement("div");
+    ghost.textContent=vid.name;
+    ghost.style.cssText="position:fixed;top:-999px;left:-999px;background:#f59e0b;color:#000;font-size:12px;font-weight:700;padding:6px 14px;border-radius:8px;font-family:Inter,sans-serif;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis;box-shadow:0 4px 20px rgba(245,158,11,0.4);z-index:9999;pointer-events:none;";
+    document.body.appendChild(ghost);
+    e.dataTransfer.setDragImage(ghost,100,16);
+    setTimeout(()=>document.body.removeChild(ghost),0);
+  };
   const handleVidDragEnd=()=>{setDragVid(null);setDragVidCatId(null);setDropTargetCat(null);};
   const handleCatVidDragOver=(e,catId)=>{if(!dragVid)return;e.preventDefault();setDropTargetCat(catId);};
   const handleCatVidDragLeave=(e,catId)=>{if(dropTargetCat===catId)setDropTargetCat(null);};
@@ -1286,7 +1306,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
         {player.categories.map((cat,ci)=>{const color=cat.isInbox?"#f59e0b":CAT_COLORS[ci%CAT_COLORS.length];const isDrag=dragIdx===ci;const isOver=overIdx===ci&&dragIdx!==ci;const isVidDropTarget=dropTargetCat===cat.id&&dragVidCatId!==cat.id;
         return(
           <div key={cat.id} className="ath-cat-card" draggable={!cat.isInbox} onDragStart={e=>handleCatDragStart(e,ci)} onDragOver={e=>{handleCatDragOver(e,ci);handleCatVidDragOver(e,cat.id);}} onDrop={e=>{if(dragVid){handleCatVidDrop(e,cat.id);}else{handleCatDrop(e,ci);}}} onDragEnd={()=>{handleCatDragEnd();handleVidDragEnd();}} onDragLeave={e=>handleCatVidDragLeave(e,cat.id)}
-            style={{minWidth:cat.isInbox?300:260,width:cat.isInbox?300:260,flexShrink:0,display:"flex",flexDirection:"column",background:cat.isInbox?`linear-gradient(180deg,${C.s0},#1a1a2e)`:C.s0,borderRadius:12,border:isVidDropTarget?`2px solid #f59e0b`:isOver?`2px solid ${C.blue}`:cat.isInbox?`1px solid #f59e0b44`:`1px solid ${C.s1}`,overflow:"hidden",opacity:isDrag?0.5:1,transition:"opacity 0.2s, border 0.2s"}}>
+            style={{minWidth:cat.isInbox?300:260,width:cat.isInbox?300:260,flexShrink:0,display:"flex",flexDirection:"column",background:isVidDropTarget?`linear-gradient(180deg,#f59e0b12,${C.s0})`:cat.isInbox?`linear-gradient(180deg,${C.s0},#1a1a2e)`:C.s0,borderRadius:12,border:isVidDropTarget?`2px solid #f59e0b`:isOver?`2px solid ${C.blue}`:cat.isInbox?`1px solid #f59e0b44`:`1px solid ${C.s1}`,overflow:"hidden",opacity:isDrag?0.5:1,transition:"opacity 0.2s, border 0.2s, background 0.2s",boxShadow:isVidDropTarget?"0 0 20px #f59e0b33":"none",transform:isVidDropTarget?"scale(1.02)":"none"}}>
             <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${cat.isInbox?"#f59e0b33":C.s1}`,flexShrink:0,cursor:cat.isInbox?"default":"grab",background:cat.isInbox?"linear-gradient(90deg,#f59e0b18,#f59e0b08)":"transparent"}}>
               {!cat.isInbox&&<GripIcon size={14} color={C.overlay} style={{marginRight:8,flexShrink:0}}/>}
               {cat.isInbox?(
@@ -1389,6 +1409,42 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
     </div>}
     <FeedbackFAB playerName={player.name}/>
     {showEditProfile&&<EditProfileModal player={player} onSave={updated=>onUpdatePlayer(updated)} onClose={()=>setShowEditProfile(false)}/>}
+    {/* ── Welcome Guide Overlay ── */}
+    {showWelcome&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",backdropFilter:"blur(12px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,animation:"fadeIn 0.4s ease-out"}}>
+      <div style={{background:`linear-gradient(135deg,${C.mantle},${C.s0})`,border:`1px solid ${C.s1}`,borderRadius:20,padding:"40px 48px",width:520,maxWidth:"90vw",maxHeight:"85vh",overflow:"auto",boxShadow:"0 24px 80px rgba(0,0,0,0.6)",animation:"fadeIn 0.5s ease-out"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{display:"inline-flex",alignItems:"center",gap:6,marginBottom:12}}>
+            <span style={{fontWeight:900,fontSize:22,color:"#fff",fontStyle:"italic"}}>ATHLETES</span>
+            <span style={{fontWeight:900,fontSize:22,color:C.coral,fontStyle:"italic"}}>USA</span>
+          </div>
+          <div style={{fontSize:18,fontWeight:800,color:"#fff",marginBottom:4}}>Welcome, {player.name.split(" ")[0]}!</div>
+          <div style={{color:C.sub,fontSize:13}}>Here's a quick overview of your portal</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
+          {[
+            {icon:<InboxIcon size={22} color="#f59e0b"/>,color:"#f59e0b",title:"Media Inbox",desc:"Upload all your game videos here first. This is your central drop zone for all footage."},
+            {icon:<GripIcon size={22} color={C.blue}/>,color:C.blue,title:"Drag & Drop to Categories",desc:"Grab any clip from the inbox and drag it into the right category — Goals, Assists, Defensive Actions, etc."},
+            {icon:<FolderIcon size={22} color={C.green}/>,color:C.green,title:"Organize Your Categories",desc:"Each category holds your clips by type. You can add new categories and rename existing ones."},
+            {icon:<Edit3Icon size={22} color={C.coral}/>,color:C.coral,title:"Edit Your Profile",desc:"Update your photo, positions, shirt number, and other details so editors can find you easily."},
+            {icon:<MessageSquareIcon size={22} color="#a78bfa"/>,color:"#a78bfa",title:"Send Feedback",desc:"Use the feedback button in the corner to send notes or requests directly to the editing team."},
+            {icon:<UploadIcon size={22} color="#38bdf8"/>,color:"#38bdf8",title:"Cloud Sync",desc:"Everything you upload is automatically saved to the cloud — your clips are safe and accessible anywhere."}
+          ].map((item,i)=>(
+            <div key={i} style={{display:"flex",gap:14,alignItems:"flex-start",background:item.color+"0a",border:`1px solid ${item.color}22`,borderRadius:12,padding:"14px 16px"}}>
+              <div style={{width:40,height:40,borderRadius:10,background:item.color+"18",border:`1px solid ${item.color}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{item.icon}</div>
+              <div>
+                <div style={{color:"#fff",fontSize:13,fontWeight:700,marginBottom:2}}>{item.title}</div>
+                <div style={{color:C.sub,fontSize:11,lineHeight:1.5}}>{item.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button onClick={()=>setShowWelcome(false)}
+          style={{width:"100%",marginTop:24,display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:`linear-gradient(135deg,${C.blue},${C.coral})`,color:"#fff",border:"none",borderRadius:12,padding:"14px 0",cursor:"pointer",fontSize:14,fontWeight:800,letterSpacing:1}}
+          onMouseEnter={e=>e.currentTarget.style.opacity="0.9"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+          GOT IT, LET'S GO!
+        </button>
+      </div>
+    </div>}
   </div>);
 }
 
