@@ -1285,7 +1285,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
               <span style={{color:C.overlay,fontSize:11}}>Class {player.recruitingClass}</span>
               {player.size&&<><span style={{color:C.s1}}>&bull;</span><span style={{color:C.overlay,fontSize:11}}>{player.size}</span></>}
-              {player.positions&&player.positions.length>0&&<><span style={{color:C.s1}}>&bull;</span>{player.positions.map(p=><span key={p} style={{background:AUSA.red+"22",color:AUSA.red,fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</>}
+              {player.positions&&player.positions.length>0&&<><span style={{color:C.s1}}>&bull;</span>{player.positions.map(p=><span key={p} style={{background:"#22c55e22",color:"#22c55e",fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</>}
               {player.uniformDesc&&<><span style={{color:C.s1}}>&bull;</span><span style={{color:C.overlay,fontSize:11}}>{player.uniformDesc}</span></>}
             </div>
           </div>
@@ -1326,7 +1326,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
         {player.playingPicUrl?<button onClick={()=>downloadImage(player.playingPicUrl,`${player.name.replace(/\s+/g,"_")}_action.jpg`)} style={{...tb,background:AUSA.red+"18",border:`1px solid ${AUSA.red}44`,color:AUSA.red,fontSize:11,padding:"4px 12px"}}><DownloadIcon size={12}/> Action Pic</button>
         :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No action pic</span>}
       </div>
-      <div className="ath-desc" style={{color:C.sub,fontSize:13,marginBottom:16}}>Athlete Portal &bull; Upload to Inbox, drag to categories &bull; <span style={{color:AUSA.light}}>&#9679; Cloud Sync</span></div>
+      <div className="ath-desc" style={{color:C.sub,fontSize:13,marginBottom:16}}>Athlete Portal &bull; Upload to Inbox, drag to categories &bull; <span style={{color:"#22c55e"}}>&#9679; Cloud Sync</span></div>
       <div style={{height:1,background:`linear-gradient(90deg,${AUSA.blue}66,${AUSA.red}66)`,marginBottom:0}}/>
     </div>
 
@@ -1335,8 +1335,8 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
         {player.categories.map((cat,ci)=>{const color=cat.isInbox?"#BFD7EA":CAT_COLORS[ci%CAT_COLORS.length];const isDrag=dragIdx===ci;const isOver=overIdx===ci&&dragIdx!==ci;const isVidDropTarget=dropTargetCat===cat.id&&dragVidCatId!==cat.id;
         return(
           <div key={cat.id} className="ath-cat-card" data-tour={cat.isInbox?"tour-inbox":ci===1?"tour-categories":undefined} draggable={!cat.isInbox} onDragStart={e=>handleCatDragStart(e,ci)} onDragOver={e=>{handleCatDragOver(e,ci);handleCatVidDragOver(e,cat.id);}} onDrop={e=>{if(dragVid){handleCatVidDrop(e,cat.id);}else{handleCatDrop(e,ci);}}} onDragEnd={()=>{handleCatDragEnd();handleVidDragEnd();}} onDragLeave={e=>handleCatVidDragLeave(e,cat.id)}
-            style={{minWidth:cat.isInbox?300:260,width:cat.isInbox?300:260,flexShrink:0,display:"flex",flexDirection:"column",background:isVidDropTarget?`linear-gradient(180deg,#BFD7EA12,${C.s0})`:cat.isInbox?`linear-gradient(180deg,${C.s0},#1a1a2e)`:C.s0,borderRadius:12,border:isVidDropTarget?`2px solid #BFD7EA`:isOver?`2px solid ${C.blue}`:cat.isInbox?`1px solid #BFD7EA44`:`1px solid ${C.s1}`,overflow:"hidden",opacity:isDrag?0.5:1,transition:"opacity 0.2s, border 0.2s, background 0.2s",boxShadow:isVidDropTarget?"0 0 20px #BFD7EA33":"none",transform:isVidDropTarget?"scale(1.02)":"none"}}>
-            <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${cat.isInbox?"#BFD7EA33":C.s1}`,flexShrink:0,cursor:cat.isInbox?"default":"grab",background:cat.isInbox?"linear-gradient(90deg,#BFD7EA18,#BFD7EA08)":"transparent"}}>
+            style={{minWidth:cat.isInbox?300:260,width:cat.isInbox?300:260,flexShrink:0,display:"flex",flexDirection:"column",background:isVidDropTarget?`linear-gradient(180deg,${AUSA.blue}22,${C.s0})`:cat.isInbox?`linear-gradient(180deg,${AUSA.blue}28,${AUSA.navy}44,${C.s0})`:C.s0,borderRadius:12,border:isVidDropTarget?`2px solid ${AUSA.light}`:isOver?`2px solid ${C.blue}`:cat.isInbox?`1px solid ${AUSA.blue}88`:`1px solid ${C.s1}`,overflow:"hidden",opacity:isDrag?0.5:1,transition:"opacity 0.2s, border 0.2s, background 0.2s",boxShadow:isVidDropTarget?`0 0 20px ${AUSA.blue}44`:cat.isInbox?`0 0 15px ${AUSA.navy}66`:"none",transform:isVidDropTarget?"scale(1.02)":"none"}}>
+            <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${cat.isInbox?AUSA.blue+"66":C.s1}`,flexShrink:0,cursor:cat.isInbox?"default":"grab",background:cat.isInbox?`linear-gradient(90deg,${AUSA.blue}33,${AUSA.blue}18)`:"transparent"}}>
               {!cat.isInbox&&<GripIcon size={14} color={C.overlay} style={{marginRight:8,flexShrink:0}}/>}
               {cat.isInbox?(
                 <>
