@@ -104,6 +104,7 @@ const FitIcon=p=><I {...p} d={<><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path
 const MessageSquareIcon=p=><I {...p} d={<><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></>}/>;
 const ImageIcon=p=><I {...p} d={<><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></>}/>;
 const SendIcon=p=><I {...p} d={<><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>}/>;
+const InboxIcon=p=><I {...p} d={<><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></>}/>;
 const StarIcon=p=><I {...p} d={<><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></>}/>;
 const ClockIcon=p=><I {...p} d={<><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>}/>;
 const AlertCircleIcon=p=><I {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>}/>;
@@ -1150,9 +1151,40 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
   const[showAdd,setShowAdd]=useState(false);const[newCat,setNewCat]=useState("");
   const[uploadCat,setUploadCat]=useState(null);const fileRef=useRef(null);
   const[dragIdx,setDragIdx]=useState(null);const[overIdx,setOverIdx]=useState(null);
+  const[dragVid,setDragVid]=useState(null);const[dragVidCatId,setDragVidCatId]=useState(null);const[dropTargetCat,setDropTargetCat]=useState(null);
   const[uploadProg,setUploadProg]=useState(null);
   const[zipProg,setZipProg]=useState(null);
   const[showEditProfile,setShowEditProfile]=useState(false);
+  /* ── Ensure Media Inbox always exists as first category ── */
+  useEffect(()=>{
+    const hasInbox=player.categories.some(c=>c.isInbox);
+    if(!hasInbox){
+      const inbox={id:uid("cat"),name:"Media Inbox",isInbox:true,videos:[]};
+      const updated={...player,categories:[inbox,...player.categories]};
+      onUpdatePlayer(updated);savePlayerToCloud(updated);
+    }else if(!player.categories[0].isInbox){
+      const idx=player.categories.findIndex(c=>c.isInbox);
+      const cats=[...player.categories];const[inbox]=cats.splice(idx,1);cats.unshift(inbox);
+      const updated={...player,categories:cats};onUpdatePlayer(updated);savePlayerToCloud(updated);
+    }
+  },[]);
+
+  /* ── Video drag handlers ── */
+  const handleVidDragStart=(e,vid,catId)=>{setDragVid(vid);setDragVidCatId(catId);e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",vid.id);};
+  const handleVidDragEnd=()=>{setDragVid(null);setDragVidCatId(null);setDropTargetCat(null);};
+  const handleCatVidDragOver=(e,catId)=>{if(!dragVid)return;e.preventDefault();setDropTargetCat(catId);};
+  const handleCatVidDragLeave=(e,catId)=>{if(dropTargetCat===catId)setDropTargetCat(null);};
+  const handleCatVidDrop=(e,targetCatId)=>{e.preventDefault();
+    if(!dragVid||!dragVidCatId||dragVidCatId===targetCatId){setDragVid(null);setDragVidCatId(null);setDropTargetCat(null);return;}
+    const updated={...player,categories:player.categories.map(c=>{
+      if(c.id===dragVidCatId)return{...c,videos:c.videos.filter(v=>v.id!==dragVid.id)};
+      if(c.id===targetCatId)return{...c,videos:[...c.videos,dragVid]};
+      return c;
+    })};
+    onUpdatePlayer(updated);savePlayerToCloud(updated);
+    setDragVid(null);setDragVidCatId(null);setDropTargetCat(null);
+  };
+
   const handleZipDownload=async()=>{
     const totalClips=player.categories.reduce((s,c)=>s+c.videos.length,0);
     if(totalClips===0&&!confirm("This athlete has no clips. Download zip with empty category folders?"))return;
@@ -1183,10 +1215,13 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
   const renameCat=(catId,name)=>{if(!name.trim())return;const updated={...player,categories:player.categories.map(c=>c.id===catId?{...c,name:name.trim()}:c)};onUpdatePlayer(updated);savePlayerToCloud(updated);setEditCat(null);};
   const removeVid=(catId,vidId)=>{deleteBlob(vidId).catch(()=>{});deleteVideoFromCloud(vidId).catch(()=>{});const updated={...player,categories:player.categories.map(c=>c.id===catId?{...c,videos:c.videos.filter(v=>v.id!==vidId)}:c)};onUpdatePlayer(updated);savePlayerToCloud(updated);};
 
-  const handleCatDragStart=(e,idx)=>{setDragIdx(idx);e.dataTransfer.effectAllowed="move";};
-  const handleCatDragOver=(e,idx)=>{e.preventDefault();if(dragIdx===null||dragIdx===idx)return;setOverIdx(idx);};
-  const handleCatDrop=(e,idx)=>{e.preventDefault();if(dragIdx===null||dragIdx===idx){setDragIdx(null);setOverIdx(null);return;}
-    const cats=[...player.categories];const[moved]=cats.splice(dragIdx,1);cats.splice(idx,0,moved);
+  const handleCatDragStart=(e,idx)=>{if(player.categories[idx].isInbox){e.preventDefault();return;}setDragIdx(idx);e.dataTransfer.effectAllowed="move";};
+  const handleCatDragOver=(e,idx)=>{e.preventDefault();if(dragIdx===null||dragIdx===idx||player.categories[idx].isInbox)return;setOverIdx(idx);};
+  const handleCatDrop=(e,idx)=>{e.preventDefault();if(dragIdx===null||dragIdx===idx||player.categories[idx].isInbox){setDragIdx(null);setOverIdx(null);return;}
+    const cats=[...player.categories];const[moved]=cats.splice(dragIdx,1);
+    /* Ensure nothing goes before inbox */
+    const dropIdx=player.categories[0].isInbox&&idx===0?1:idx;
+    cats.splice(dropIdx,0,moved);
     const updated={...player,categories:cats};onUpdatePlayer(updated);savePlayerToCloud(updated);setDragIdx(null);setOverIdx(null);};
   const handleCatDragEnd=()=>{setDragIdx(null);setOverIdx(null);};
 
@@ -1242,19 +1277,25 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
         {player.playingPicUrl?<button onClick={()=>downloadImage(player.playingPicUrl,`${player.name.replace(/\s+/g,"_")}_action.jpg`)} style={{...tb,background:C.coral+"18",border:`1px solid ${C.coral}33`,color:C.coral,fontSize:11,padding:"4px 12px"}}><DownloadIcon size={12}/> Action Pic</button>
         :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No action pic</span>}
       </div>
-      <div className="ath-desc" style={{color:C.sub,fontSize:13,marginBottom:16}}>Athlete Portal &bull; Media Management &bull; <span style={{color:C.green}}>&#9679; Cloud Sync</span></div>
+      <div className="ath-desc" style={{color:C.sub,fontSize:13,marginBottom:16}}>Athlete Portal &bull; Upload to Inbox, drag to categories &bull; <span style={{color:C.green}}>&#9679; Cloud Sync</span></div>
       <div style={{height:1,background:`linear-gradient(90deg,${C.blue}44,${C.coral}44)`,marginBottom:0}}/>
     </div>
 
     <div className="ath-cats-scroll" style={{flex:1,overflowX:"auto",overflowY:"hidden",WebkitOverflowScrolling:"touch",padding:"32px 40px"}}>
       <div className="ath-cats-flex" style={{display:"flex",gap:20,height:"100%",alignItems:"stretch"}}>
-        {player.categories.map((cat,ci)=>{const color=CAT_COLORS[ci%CAT_COLORS.length];const isDrag=dragIdx===ci;const isOver=overIdx===ci&&dragIdx!==ci;
+        {player.categories.map((cat,ci)=>{const color=cat.isInbox?"#f59e0b":CAT_COLORS[ci%CAT_COLORS.length];const isDrag=dragIdx===ci;const isOver=overIdx===ci&&dragIdx!==ci;const isVidDropTarget=dropTargetCat===cat.id&&dragVidCatId!==cat.id;
         return(
-          <div key={cat.id} className="ath-cat-card" draggable onDragStart={e=>handleCatDragStart(e,ci)} onDragOver={e=>handleCatDragOver(e,ci)} onDrop={e=>handleCatDrop(e,ci)} onDragEnd={handleCatDragEnd}
-            style={{minWidth:260,width:260,flexShrink:0,display:"flex",flexDirection:"column",background:C.s0,borderRadius:12,border:isOver?`2px solid ${C.blue}`:`1px solid ${C.s1}`,overflow:"hidden",opacity:isDrag?0.5:1,transition:"opacity 0.2s, border 0.2s"}}>
-            <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${C.s1}`,flexShrink:0,cursor:"grab"}}>
-              <GripIcon size={14} color={C.overlay} style={{marginRight:8,flexShrink:0}}/>
-              {editCat===cat.id?(
+          <div key={cat.id} className="ath-cat-card" draggable={!cat.isInbox} onDragStart={e=>handleCatDragStart(e,ci)} onDragOver={e=>{handleCatDragOver(e,ci);handleCatVidDragOver(e,cat.id);}} onDrop={e=>{if(dragVid){handleCatVidDrop(e,cat.id);}else{handleCatDrop(e,ci);}}} onDragEnd={()=>{handleCatDragEnd();handleVidDragEnd();}} onDragLeave={e=>handleCatVidDragLeave(e,cat.id)}
+            style={{minWidth:cat.isInbox?300:260,width:cat.isInbox?300:260,flexShrink:0,display:"flex",flexDirection:"column",background:cat.isInbox?`linear-gradient(180deg,${C.s0},#1a1a2e)`:C.s0,borderRadius:12,border:isVidDropTarget?`2px solid #f59e0b`:isOver?`2px solid ${C.blue}`:cat.isInbox?`1px solid #f59e0b44`:`1px solid ${C.s1}`,overflow:"hidden",opacity:isDrag?0.5:1,transition:"opacity 0.2s, border 0.2s"}}>
+            <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${cat.isInbox?"#f59e0b33":C.s1}`,flexShrink:0,cursor:cat.isInbox?"default":"grab",background:cat.isInbox?"linear-gradient(90deg,#f59e0b18,#f59e0b08)":"transparent"}}>
+              {!cat.isInbox&&<GripIcon size={14} color={C.overlay} style={{marginRight:8,flexShrink:0}}/>}
+              {cat.isInbox?(
+                <>
+                  <InboxIcon size={16} color="#f59e0b" style={{marginRight:8,flexShrink:0}}/>
+                  <span style={{color:"#f59e0b",fontSize:14,fontWeight:800,flex:1,letterSpacing:0.5}}>{cat.name}</span>
+                  <span style={{color:"#f59e0b88",fontSize:10,fontWeight:600,background:"#f59e0b15",padding:"2px 8px",borderRadius:4}}>{cat.videos.length} clips</span>
+                </>
+              ):editCat===cat.id?(
                 <div style={{display:"flex",alignItems:"center",gap:4,flex:1}}>
                   <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")renameCat(cat.id,editName);if(e.key==="Escape")setEditCat(null);}}
                     autoFocus onClick={e=>e.stopPropagation()} style={{...inputStyle,fontSize:14,fontWeight:700,flex:1,padding:"4px 8px"}}/>
@@ -1268,27 +1309,37 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
                 </>
               )}
             </div>
-            <div style={{flex:1,padding:10,overflow:"auto",display:"flex",flexDirection:"column",gap:5}}>
+            <div style={{flex:1,padding:10,overflow:"auto",display:"flex",flexDirection:"column",gap:5}}
+              onDragOver={e=>{if(dragVid){e.preventDefault();setDropTargetCat(cat.id);}}}
+              onDrop={e=>{if(dragVid)handleCatVidDrop(e,cat.id);}}>
               {cat.videos.length===0&&(
-                <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:C.overlay,fontSize:12,gap:8}}>
-                  <FilmIcon size={28} color={C.s2}/><span>No clips uploaded</span>
+                <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:C.overlay,fontSize:12,gap:8,minHeight:cat.isInbox?120:60,border:cat.isInbox?"2px dashed #f59e0b33":"none",borderRadius:10,margin:cat.isInbox?4:0}}>
+                  {cat.isInbox?<><UploadIcon size={32} color="#f59e0b44"/><span style={{color:"#f59e0b88",fontWeight:600}}>Upload videos here first</span><span style={{color:C.overlay,fontSize:10}}>Then drag them to categories below</span></>
+                  :<><FilmIcon size={28} color={C.s2}/><span>No clips — drop here</span></>}
                 </div>
               )}
               {cat.videos.map(v=>(
-                <div key={v.id} style={{display:"flex",alignItems:"center",gap:6,background:C.mantle,borderRadius:8,padding:"7px 10px",border:`1px solid ${C.s1}`}}>
+                <div key={v.id} draggable onDragStart={e=>handleVidDragStart(e,v,cat.id)} onDragEnd={handleVidDragEnd}
+                  style={{display:"flex",alignItems:"center",gap:6,background:dragVid&&dragVid.id===v.id?"#f59e0b22":C.mantle,borderRadius:8,padding:"7px 10px",border:dragVid&&dragVid.id===v.id?`1px solid #f59e0b66`:`1px solid ${C.s1}`,cursor:"grab",opacity:dragVid&&dragVid.id===v.id?0.5:1,transition:"opacity 0.15s, background 0.15s"}}>
+                  <GripIcon size={10} color={C.overlay} style={{flexShrink:0}}/>
                   <FilmIcon size={11} color={color}/>
                   <span style={{color:C.text,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{v.name}</span>
                   <span style={{color:C.overlay,fontSize:9,flexShrink:0}}>{fmtTime(v.duration)}</span>
                   <button onClick={()=>removeVid(cat.id,v.id)} style={{...ib,color:C.overlay,padding:2}}><XIcon size={11}/></button>
                 </div>
               ))}
+              {isVidDropTarget&&cat.videos.length>0&&(
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:8,border:"2px dashed #f59e0b66",borderRadius:8,color:"#f59e0b",fontSize:11,fontWeight:600,background:"#f59e0b08"}}>
+                  Drop video here
+                </div>
+              )}
             </div>
             <div style={{padding:10,flexShrink:0}}>
               <button onClick={()=>trigUpload(cat.id)}
                 style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,
-                  background:C.coral,color:"#fff",border:"none",borderRadius:8,padding:"11px 16px",cursor:"pointer",fontSize:13,fontWeight:700,letterSpacing:0.5}}
+                  background:cat.isInbox?"#f59e0b":C.coral,color:"#fff",border:"none",borderRadius:8,padding:cat.isInbox?"13px 16px":"11px 16px",cursor:"pointer",fontSize:13,fontWeight:700,letterSpacing:0.5}}
                 onMouseEnter={e=>e.currentTarget.style.opacity="0.85"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
-                <UploadIcon size={15}/> Upload Media
+                <UploadIcon size={15}/> {cat.isInbox?"Upload All Videos":"Upload Media"}
               </button>
             </div>
           </div>
