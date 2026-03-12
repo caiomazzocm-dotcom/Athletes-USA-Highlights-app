@@ -1259,8 +1259,8 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
   const renameCat=(catId,name)=>{if(!name.trim())return;const updated={...player,categories:player.categories.map(c=>c.id===catId?{...c,name:name.trim()}:c)};onUpdatePlayer(updated);savePlayerToCloud(updated);setEditCat(null);};
   const removeVid=(catId,vidId)=>{deleteBlob(vidId).catch(()=>{});deleteVideoFromCloud(vidId).catch(()=>{});const updated={...player,categories:player.categories.map(c=>c.id===catId?{...c,videos:c.videos.filter(v=>v.id!==vidId)}:c)};onUpdatePlayer(updated);savePlayerToCloud(updated);};
 
-  const handleCatDragStart=(e,idx)=>{if(player.categories[idx].isInbox){e.preventDefault();return;}setDragIdx(idx);e.dataTransfer.effectAllowed="move";};
-  const handleCatDragOver=(e,idx)=>{e.preventDefault();if(dragIdx===null||dragIdx===idx||player.categories[idx].isInbox)return;setOverIdx(idx);};
+  const handleCatDragStart=(e,idx)=>{if(player.categories[idx].isInbox){e.preventDefault();return;}if(e.target.closest&&e.target.closest("[draggable]")!==e.currentTarget)return;setDragIdx(idx);e.dataTransfer.effectAllowed="move";};
+  const handleCatDragOver=(e,idx)=>{if(dragIdx===null&&!dragVid)return;e.preventDefault();if(dragIdx===null||dragIdx===idx||player.categories[idx].isInbox)return;setOverIdx(idx);};
   const handleCatDrop=(e,idx)=>{e.preventDefault();if(dragIdx===null||dragIdx===idx||player.categories[idx].isInbox){setDragIdx(null);setOverIdx(null);return;}
     const cats=[...player.categories];const[moved]=cats.splice(dragIdx,1);
     /* Ensure nothing goes before inbox */
@@ -1368,7 +1368,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
                 </div>
               )}
               {cat.videos.map(v=>(
-                <div key={v.id} draggable onDragStart={e=>handleVidDragStart(e,v,cat.id)} onDragEnd={handleVidDragEnd}
+                <div key={v.id} draggable onDragStart={e=>{e.stopPropagation();handleVidDragStart(e,v,cat.id);}} onDragEnd={e=>{e.stopPropagation();handleVidDragEnd();}}
                   style={{display:"flex",alignItems:"center",gap:6,background:dragVid&&dragVid.id===v.id?AUSA.blue+"22":C.mantle,borderRadius:8,padding:"7px 10px",border:dragVid&&dragVid.id===v.id?`1px solid ${AUSA.blue}66`:`1px solid ${C.s1}`,cursor:"grab",opacity:dragVid&&dragVid.id===v.id?0.5:1,transition:"opacity 0.15s, background 0.15s"}}>
                   <GripIcon size={10} color={C.overlay} style={{flexShrink:0}}/>
                   <FilmIcon size={11} color={color}/>
