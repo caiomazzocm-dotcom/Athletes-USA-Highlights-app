@@ -2455,15 +2455,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       cx.strokeStyle="rgba(34,197,94,0.33)";cx.lineWidth=Math.round(1*previewToExport);
       cx.strokeRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
       cx.fillStyle="#fff";cx.fillText(txt,sx,labelY);
-      /* SPOTLIGHT badge */
-      const badgeFontSz=Math.round(10*previewToExport);
-      const badgePadX=Math.round(14*previewToExport),badgePadY=Math.round(3*previewToExport);
-      cx.font=`bold ${badgeFontSz}px Inter,sans-serif`;
-      const badgeTw=cx.measureText("SPOTLIGHT").width;
-      const badgeY=Math.round(8*previewToExport);
-      cx.fillStyle="#22c55e";
-      cx.fillRect(W/2-badgeTw/2-badgePadX,badgeY,badgeTw+badgePadX*2,badgeFontSz+badgePadY*2);
-      cx.fillStyle="#000";cx.fillText("SPOTLIGHT",W/2,badgeY+badgeFontSz+badgePadY*0.5);
+      /* SPOTLIGHT badge removed from export */
       cx.globalAlpha=1;
       cx.restore();
     };
@@ -2887,13 +2879,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}} style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":"default"}}>
         {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
         <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`scale(${actProps.scale})`:undefined}}/>
-        {/* FREEZE badge — shows when freeze is active */}
-        {activeFreezeTag&&(
-        <div style={{position:"absolute",inset:0,pointerEvents:"none",display:"flex",alignItems:"flex-start",justifyContent:"center",paddingTop:8,zIndex:3}}>
-          <div style={{background:"#3b82f6",padding:"3px 14px",borderRadius:4}}>
-            <span style={{color:"#fff",fontSize:10,fontWeight:700,letterSpacing:1}}>&#10074;&#10074; FREEZE FRAME</span>
-          </div>
-        </div>)}
+        {/* FREEZE — no badge on video */}
         {/* SPOTLIGHT overlay — shows on freeze tags with hasSpotlight, OR standalone overlay tags */}
         {(()=>{
           /* Determine which tag provides the spotlight data */
@@ -2913,9 +2899,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               <span style={{color:"#fff",fontSize:13,fontWeight:700,letterSpacing:1}}>{spotSrc.playerName.toUpperCase()}</span>
             </div>
           </div>
-          <div style={{position:"absolute",top:activeFreezeTag?30:8,left:"50%",transform:"translateX(-50%)",background:C.green,padding:"3px 14px",borderRadius:4}}>
-            <span style={{color:"#000",fontSize:10,fontWeight:700,letterSpacing:1}}>SPOTLIGHT</span>
-          </div>
+          {/* SPOTLIGHT badge removed from video */}
         </div>);})()}
         {!activeClip&&!activeTag&&<div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:C.overlay,fontSize:12,gap:4}}>
           <MaximizeIcon size={20} color={C.s2}/>
