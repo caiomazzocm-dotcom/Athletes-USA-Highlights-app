@@ -2504,17 +2504,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             const tagPr=clipProps[seg.clipId]||{volume:100,scale:1};
             drawVideoFit(vel,tagPr.scale||1);
           }
-          /* Fade: 0.3s in, 0.3s out */
-          const fadeDur=0.3;
-          const elapsed=ph-seg.tlStart;
-          const remaining=seg.tlEnd-ph;
-          const fadeIn=Math.min(1,elapsed/fadeDur);
-          const fadeOut=Math.min(1,remaining/fadeDur);
-          const opacity=Math.min(fadeIn,fadeOut);
-          if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,opacity);
+          /* No fade — spotlight appears/disappears instantly */
+          if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,1);
           /* Freeze with attached spotlight — draw the spotlight overlay */
           if(seg.tag&&seg.tag.type==="freeze"&&seg.tag.hasSpotlight){
-            drawSpotlight(seg.tag,opacity);
+            drawSpotlight(seg.tag,1);
           }
           /* Mute audio during freeze */
           Object.values(audioGains).forEach(g=>g.gain.value=0);
@@ -2553,11 +2547,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             if(seg.overlayTags&&seg.overlayTags.length>0){
               for(const otag of seg.overlayTags){
                 if(srcTime>=otag.sourceTime&&srcTime<otag.sourceTime+TAG_OVERLAY_DUR){
-                  const elapsed2=srcTime-otag.sourceTime;
-                  const remaining2=otag.sourceTime+TAG_OVERLAY_DUR-srcTime;
-                  const fadeDur2=0.3;
-                  const oFade=Math.min(1,Math.min(elapsed2/fadeDur2,remaining2/fadeDur2));
-                  drawSpotlight(otag,oFade);
+                  drawSpotlight(otag,1);
                 }
               }
             }
