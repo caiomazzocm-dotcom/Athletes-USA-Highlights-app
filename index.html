@@ -136,7 +136,7 @@ const openVDB=()=>new Promise((res,rej)=>{const rq=indexedDB.open(VDB_NAME,VDB_V
 const storeBlob=async(id,blob)=>{const db=await openVDB();return new Promise((res,rej)=>{const tx=db.transaction(VDB_STORE,"readwrite");tx.objectStore(VDB_STORE).put(blob,id);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});};
 const getBlob=async(id)=>{const db=await openVDB();return new Promise((res,rej)=>{const tx=db.transaction(VDB_STORE,"readonly");const rq=tx.objectStore(VDB_STORE).get(id);rq.onsuccess=()=>res(rq.result||null);rq.onerror=()=>rej(rq.error);});};
 const deleteBlob=async(id)=>{const db=await openVDB();return new Promise((res,rej)=>{const tx=db.transaction(VDB_STORE,"readwrite");tx.objectStore(VDB_STORE).delete(id);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});};
-const hydratePlayerVideos=async(players)=>{const out=[];for(const pl of players){const cats=[];for(const cat of pl.categories){const vids=[];for(const v of cat.videos){try{const blob=await getBlob(v.id);if(blob){const url=URL.createObjectURL(blob);vids.push({...v,url});}else{vids.push(v);}}catch(e){vids.push(v);}}cats.push({...cat,videos:vids});}out.push({...pl,categories:cats});}return out;};
+const hydratePlayerVideos=async(players)=>{const out=[];for(const pl of players){const cats=[];for(const cat of pl.categories){const vids=[];for(const v of cat.videos){try{const blob=await getBlob(v.id);if(blob){const url=URL.createObjectURL(blob);vids.push({...v,url});}else{vids.push({...v,url:v.cloudUrl||v.url||""});}}catch(e){vids.push({...v,url:v.cloudUrl||v.url||""});}}cats.push({...cat,videos:vids});}out.push({...pl,categories:cats});}return out;};
 
 /* ═══ FIREBASE CLOUD ═══ */
 const firebaseConfig={apiKey:"AIzaSyBuce5w22HDy9mFsx5jz7g3s9XXtKUNlgE",authDomain:"athletes-usa.firebaseapp.com",projectId:"athletes-usa",storageBucket:"athletes-usa.firebasestorage.app",messagingSenderId:"599507645774",appId:"1:599507645774:web:8aa8c5f518b0dda6d45a1f"};
@@ -1970,11 +1970,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     });
     /* Create/update video elements for every timeline clip */
     allClips.forEach(c=>{
+      if(!c.url){console.warn("Clip missing URL:",c.id,c.name);return;}
       if(!pool[c.id]){
         const vel=document.createElement("video");
-        vel.preload="auto";vel.playsInline=true;vel.muted=true;
+        vel.preload="auto";vel.playsInline=true;vel.muted=true;vel.crossOrigin="anonymous";
         /* CRITICAL: Use opacity:0 NOT display:none — browser must buffer this element */
         vel.style.cssText="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;opacity:0;z-index:0;pointer-events:none;";
+        vel.addEventListener("error",()=>{console.warn("Video load error for clip:",c.id,c.name,c.url?.slice(0,60));});
         vel.src=c.url;
         /* Force-buffer: seek to clip start, play briefly muted, then pause.
            This forces the browser to actually download and decode video frames. */
@@ -3243,8 +3245,8 @@ const STORAGE_KEY_EDVIDS="aua_editor_vids";
 const STORAGE_KEY_EDMUSIC="aua_editor_music";
 const SESSION_DURATION_MS=30*60*1000;
 
-const loadPlayers=()=>{try{const d=localStorage.getItem(STORAGE_KEY_PLAYERS);if(d){const parsed=JSON.parse(d);return parsed.map(p=>({...p,categories:p.categories.map(c=>({...c,videos:c.videos.map(v=>({...v,url:v.url||""}))}))}));}return[];}catch(e){return[];}};
-const savePlayers=players=>{try{const safe=players.map(p=>({...p,categories:p.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration}))}))}));localStorage.setItem(STORAGE_KEY_PLAYERS,JSON.stringify(safe));}catch(e){}};
+const loadPlayers=()=>{try{const d=localStorage.getItem(STORAGE_KEY_PLAYERS);if(d){const parsed=JSON.parse(d);return parsed.map(p=>({...p,categories:p.categories.map(c=>({...c,videos:c.videos.map(v=>({...v,url:v.cloudUrl||v.url||""}))}))}));}return[];}catch(e){return[];}};
+const savePlayers=players=>{try{const safe=players.map(p=>({...p,categories:p.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))}));localStorage.setItem(STORAGE_KEY_PLAYERS,JSON.stringify(safe));}catch(e){}};
 const isSessionValid=()=>{try{const ts=localStorage.getItem(STORAGE_KEY_SESSION);if(!ts)return false;return(Date.now()-parseInt(ts,10))<SESSION_DURATION_MS;}catch(e){return false;}};
 const saveSession=()=>{try{localStorage.setItem(STORAGE_KEY_SESSION,String(Date.now()));}catch(e){}};
 
