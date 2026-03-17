@@ -34,17 +34,17 @@
   /* ═══ MOBILE RESPONSIVE (athlete-facing pages only) ═══ */
   @media(max-width:640px){
     .ath-header{padding:12px 16px 0!important}
-    .ath-header-row{flex-wrap:wrap!important;gap:8px!important}
+    .ath-header-row{flex-wrap:wrap!important;gap:6px!important}
     .ath-header-row .ath-brand{display:none!important}
     .ath-header-row .ath-brand-sep{display:none!important}
     .ath-header-info{font-size:15px!important}
     .ath-signout{padding:6px 12px!important;font-size:11px!important}
     .ath-zip-btn{padding:6px 10px!important;font-size:10px!important}
-    .ath-photos-row{flex-wrap:wrap!important}
-    .ath-desc{font-size:11px!important}
-    .ath-cats-scroll{padding:16px!important;overflow-x:auto!important;overflow-y:auto!important}
+    .ath-photos-row{display:none!important}
+    .ath-desc{display:none!important}
+    .ath-cats-scroll{padding:12px 16px!important;overflow-x:auto!important;overflow-y:auto!important}
     .ath-cats-flex{flex-direction:column!important;height:auto!important;overflow:visible!important}
-    .ath-cat-card{min-width:100%!important;width:100%!important;max-height:320px!important}
+    .ath-cat-card{min-width:100%!important;width:100%!important;max-height:none!important}
     .ath-select-grid{grid-template-columns:1fr 1fr!important;gap:12px!important}
     .ath-select-wrap{padding:16px!important}
     .ath-form-wrap{padding:16px!important}
@@ -53,6 +53,17 @@
     .ath-form-picbox{height:120px!important}
     .ath-select-header{padding:0 12px!important}
     .ath-newcat-card{min-width:100%!important;width:100%!important}
+    /* Mobile tab system */
+    .ath-desktop-only{display:none!important}
+    .ath-mobile-tabs{display:flex!important}
+    .ath-mobile-header-btns{display:none!important}
+    .ath-pipeline-desktop{display:none!important}
+    .ath-addcat-desktop{display:none!important}
+    .ath-mobile-section{display:flex!important;flex-direction:column!important;flex:1!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important}
+  }
+  @media(min-width:641px){
+    .ath-mobile-tabs{display:none!important}
+    .ath-mobile-section{display:contents!important}
   }
   @media(max-width:380px){
     .ath-select-grid{grid-template-columns:1fr!important}
@@ -97,7 +108,10 @@ const UsersIcon=p=><I {...p} d={<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4
 const MusicIcon=p=><I {...p} d={<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></>}/>;
 const GripIcon=p=><I {...p} d={<><circle cx="9" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="19" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="19" r="1" fill="currentColor" stroke="none"/></>}/>;
 const MaximizeIcon=p=><I {...p} d={<><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></>}/>;
+const MoveIcon=p=><I {...p} d={<><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></>}/>;
 const DownloadIcon=p=><I {...p} d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>}/>;
+const LinkIcon=p=><I {...p} d={<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></>}/>;
+const ExternalLinkIcon=p=><I {...p} d={<><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>}/>;
 const RefreshIcon=p=><I {...p} d={<><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></>}/>;
 const MagnetIcon=p=><I {...p} d={<><path d="M6 15V9a6 6 0 0 1 12 0v6"/><path d="M6 15a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2"/><path d="M18 15a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2"/><line x1="6" y1="11" x2="6" y2="15"/><line x1="18" y1="11" x2="18" y2="15"/></>}/>;
 const FitIcon=p=><I {...p} d={<><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></>}/>;
@@ -146,7 +160,7 @@ const fbStorage=firebase.storage();
 
 const uploadVideoToCloud=async(videoId,blob,onProgress)=>{const ref=fbStorage.ref(`videos/${videoId}`);const task=ref.put(blob);if(onProgress)task.on("state_changed",snap=>onProgress(snap.bytesTransferred/snap.totalBytes));await task;return await ref.getDownloadURL();};
 const deleteVideoFromCloud=async(videoId)=>{try{await fbStorage.ref(`videos/${videoId}`).delete();}catch(e){}};
-const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",positions:player.positions||[],profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",phone:player.phone||"",categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
+const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",positions:player.positions||[],profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",phone:player.phone||"",gameLinks:player.gameLinks||[],categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
 const deletePlayerFromCloud=async(playerId)=>{try{await fbDb.collection("players").doc(playerId).delete();}catch(e){}};
 const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("players").get();return snap.docs.map(d=>{const p=d.data();return{...p,categories:(p.categories||[]).map(c=>({...c,videos:(c.videos||[]).map(v=>({...v,url:v.cloudUrl||""}))}))};});}catch(e){console.warn("Cloud load failed:",e);return[];}};
 
@@ -156,6 +170,42 @@ const saveFeedbackToCloud=async(fb)=>{try{await fbDb.collection("feedback").doc(
 const loadFeedbackFromCloud=async()=>{try{const snap=await fbDb.collection("feedback").orderBy("createdAt","desc").get();return snap.docs.map(d=>d.data());}catch(e){console.warn("Feedback load failed:",e);return[];}};
 const updateFeedbackStatus=async(id,status,note)=>{try{await fbDb.collection("feedback").doc(id).update({status,adminNote:note||"",updatedAt:Date.now()});}catch(e){console.warn("Feedback update failed:",e);}};
 const deleteFeedbackFromCloud=async(id)=>{try{await fbDb.collection("feedback").doc(id).delete();}catch(e){}};
+
+/* ═══ VIDEO STATUS / PIPELINE ═══ */
+const VIDEO_STAGES=["submitted","review","editing","approved"];
+const STAGE_META={
+  submitted:{label:"Submitted",icon:"upload",color:"#3b82f6",desc:"Your video has been received and is queued for review.",est:"1–2 days"},
+  review:{label:"In Review",icon:"eye",color:"#f59e0b",desc:"An editor is reviewing your footage for quality and content.",est:"2–3 days"},
+  editing:{label:"Editing",icon:"film",color:"#a78bfa",desc:"Your highlight reel is being crafted by an editor.",est:"5–7 days"},
+  approved:{label:"Ready",icon:"check",color:"#22c55e",desc:"Your highlight is complete and ready to view!",est:"Done"}
+};
+const saveVideoStatus=async(playerId,videoId,status)=>{try{await fbDb.collection("videoStatus").doc(`${playerId}_${videoId}`).set(status,{merge:true});}catch(e){console.warn("Status save failed:",e);}};
+const loadVideoStatuses=async(playerId)=>{try{const snap=await fbDb.collection("videoStatus").where("playerId","==",playerId).get();const out={};snap.docs.forEach(d=>{const data=d.data();out[data.videoId]=data;});return out;}catch(e){console.warn("Status load failed:",e);return {};}};
+const loadAllVideoStatuses=async()=>{try{const snap=await fbDb.collection("videoStatus").get();const out={};snap.docs.forEach(d=>{const data=d.data();out[`${data.playerId}_${data.videoId}`]=data;});return out;}catch(e){console.warn("All status load failed:",e);return {};}};
+const advanceVideoStage=async(playerId,videoId,newStage,editorName)=>{
+  const now=Date.now();
+  const docId=`${playerId}_${videoId}`;
+  const ref=fbDb.collection("videoStatus").doc(docId);
+  try{
+    const doc=await ref.get();
+    const prev=doc.exists?doc.data():{};
+    const activity=prev.activity||[];
+    activity.push({action:`Moved to ${STAGE_META[newStage].label}`,by:editorName||"Editor",at:now});
+    await ref.set({playerId,videoId,stage:newStage,editor:editorName||(prev.editor||""),activity,updatedAt:now,createdAt:prev.createdAt||now},{merge:true});
+  }catch(e){console.warn("Stage advance failed:",e);}
+};
+const assignVideoEditor=async(playerId,videoId,editorName)=>{
+  const now=Date.now();
+  const docId=`${playerId}_${videoId}`;
+  const ref=fbDb.collection("videoStatus").doc(docId);
+  try{
+    const doc=await ref.get();
+    const prev=doc.exists?doc.data():{};
+    const activity=prev.activity||[];
+    activity.push({action:`Assigned to ${editorName}`,by:editorName,at:now});
+    await ref.set({playerId,videoId,editor:editorName,activity,updatedAt:now},{merge:true});
+  }catch(e){console.warn("Editor assign failed:",e);}
+};
 
 /* ═══ WAVEFORM ═══ */
 const Waveform=({w,h,color,seed=0})=>{const bars=Math.max(4,Math.floor(w/3));const pts=[];let s=seed||1;for(let i=0;i<bars;i++){s=(s*16807+i*13)%2147483647;const n=(s%1000)/1000;const amp=0.2+n*0.8;pts.push(amp);}
@@ -1147,9 +1197,14 @@ function EditProfileModal({player,onSave,onClose}){
 }
 
 /* ═══════════ ATHLETE: UPLOAD PORTAL ═══════════ */
-function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}){
+function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,videoStatuses,onStatusChange}){
   const[editCat,setEditCat]=useState(null);const[editName,setEditName]=useState("");
+  const[showPipeline,setShowPipeline]=useState(false);const[expandedVid,setExpandedVid]=useState(null);
   const[showAdd,setShowAdd]=useState(false);const[newCat,setNewCat]=useState("");
+  const[showAddLink,setShowAddLink]=useState(false);const[newLinkUrl,setNewLinkUrl]=useState("");const[newLinkTitle,setNewLinkTitle]=useState("");const[newLinkNotes,setNewLinkNotes]=useState("");
+  const[mobileTab,setMobileTab]=useState("videos"); /* "videos"|"journey"|"links"|"profile" */
+  const[isMobile,setIsMobile]=useState(window.innerWidth<=640);
+  useEffect(()=>{const h=()=>setIsMobile(window.innerWidth<=640);window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);},[]);
   const[uploadCat,setUploadCat]=useState(null);const fileRef=useRef(null);
   const[dragIdx,setDragIdx]=useState(null);const[overIdx,setOverIdx]=useState(null);
   const[dragVid,setDragVid]=useState(null);const[dragVidCatId,setDragVidCatId]=useState(null);const[dropTargetCat,setDropTargetCat]=useState(null);
@@ -1252,12 +1307,28 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
     const updated={...player,categories:player.categories.map(c=>c.id===catId?{...c,videos:[...c.videos,...vids]}:c)};
     onUpdatePlayer(updated);
     savePlayerToCloud(updated);
+    /* Auto-create "submitted" status for each uploaded video */
+    for(const v of vids){
+      const now=Date.now();
+      saveVideoStatus(player.id,v.id,{playerId:player.id,videoId:v.id,videoName:v.name,stage:"submitted",editor:"",activity:[{action:"Video submitted",by:player.name,at:now}],createdAt:now,updatedAt:now});
+    }
+    if(onStatusChange)onStatusChange();
   };
   const trigUpload=catId=>{setUploadCat(catId);if(fileRef.current){fileRef.current.value="";fileRef.current.click();}};
   const onFile=e=>{if(uploadCat&&e.target.files.length>0)handleUpload(uploadCat,Array.from(e.target.files));};
   const addCat=name=>{if(!name.trim())return;const updated={...player,categories:[...player.categories,{id:uid("cat"),name:name.trim(),videos:[]}]};onUpdatePlayer(updated);savePlayerToCloud(updated);setNewCat("");setShowAdd(false);};
   const renameCat=(catId,name)=>{if(!name.trim())return;const updated={...player,categories:player.categories.map(c=>c.id===catId?{...c,name:name.trim()}:c)};onUpdatePlayer(updated);savePlayerToCloud(updated);setEditCat(null);};
   const removeVid=(catId,vidId)=>{deleteBlob(vidId).catch(()=>{});deleteVideoFromCloud(vidId).catch(()=>{});const updated={...player,categories:player.categories.map(c=>c.id===catId?{...c,videos:c.videos.filter(v=>v.id!==vidId)}:c)};onUpdatePlayer(updated);savePlayerToCloud(updated);};
+
+  /* ── Game Links helpers ── */
+  const addGameLink=()=>{if(!newLinkUrl.trim())return;
+    const link={id:uid("link"),url:newLinkUrl.trim(),title:newLinkTitle.trim()||"Game Link",notes:newLinkNotes.trim(),addedAt:Date.now(),addedBy:player.name};
+    const updated={...player,gameLinks:[...(player.gameLinks||[]),link]};
+    onUpdatePlayer(updated);savePlayerToCloud(updated);
+    setNewLinkUrl("");setNewLinkTitle("");setNewLinkNotes("");setShowAddLink(false);
+  };
+  const removeGameLink=(linkId)=>{const updated={...player,gameLinks:(player.gameLinks||[]).filter(l=>l.id!==linkId)};onUpdatePlayer(updated);savePlayerToCloud(updated);};
+  const getLinkType=(url)=>{if(/youtube\.com|youtu\.be/i.test(url))return{label:"YouTube",color:"#ff0000",icon:"▶"};if(/vimeo\.com/i.test(url))return{label:"Vimeo",color:"#1ab7ea",icon:"▶"};if(/wyscout|hudl/i.test(url))return{label:"Scouting",color:"#22c55e",icon:"⚽"};if(/drive\.google/i.test(url))return{label:"Google Drive",color:"#f59e0b",icon:"📁"};if(/dropbox/i.test(url))return{label:"Dropbox",color:"#0061ff",icon:"📁"};return{label:"Link",color:AUSA.blue,icon:"🔗"};};
 
   const handleCatDragStart=(e,idx)=>{if(player.categories[idx].isInbox){e.preventDefault();return;}if(e.target.closest&&e.target.closest("[draggable]")!==e.currentTarget)return;setDragIdx(idx);e.dataTransfer.effectAllowed="move";};
   const handleCatDragOver=(e,idx)=>{if(dragIdx===null&&!dragVid)return;e.preventDefault();if(dragIdx===null||dragIdx===idx||player.categories[idx].isInbox)return;setOverIdx(idx);};
@@ -1293,7 +1364,8 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
           <span className="ath-brand" style={{fontWeight:900,fontSize:16,color:"#fff",fontStyle:"italic",flexShrink:0}}>ATHLETES</span>
           <span className="ath-brand" style={{fontWeight:900,fontSize:16,color:AUSA.red,fontStyle:"italic",flexShrink:0}}>USA</span>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+        {/* Desktop buttons */}
+        <div className="ath-mobile-header-btns" style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
           {isEditorMode&&<button className="ath-zip-btn" onClick={handleZipDownload} disabled={!!zipProg}
             style={{display:"flex",alignItems:"center",gap:6,background:AUSA.navy+"33",border:`1px solid ${AUSA.blue}44`,borderRadius:8,padding:"8px 16px",color:AUSA.light,cursor:zipProg?"wait":"pointer",fontSize:12,fontWeight:600,letterSpacing:0.5,flexShrink:0,opacity:zipProg?0.6:1}}
             onMouseEnter={e=>{if(!zipProg)e.currentTarget.style.background=AUSA.navy+"55";}} onMouseLeave={e=>{e.currentTarget.style.background=AUSA.navy+"33";}}>
@@ -1318,6 +1390,11 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
             <LogOutIcon size={14}/> Sign Out
           </button>
         </div>
+        {/* Mobile: just sign-out icon */}
+        <div className="ath-mobile-tabs" style={{display:"none",alignItems:"center",gap:6}}>
+          <button onClick={()=>{setShowWelcome(true);setTourStep(null);}} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:C.sub}}><EyeIcon size={16} color={AUSA.light}/></button>
+          <button onClick={onBack} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:C.sub}}><LogOutIcon size={16}/></button>
+        </div>
       </div>
       <div className="ath-photos-row" style={{display:"flex",gap:8,marginTop:8,marginBottom:4,alignItems:"center",flexWrap:"wrap"}}>
         <span style={{color:C.overlay,fontSize:11,fontWeight:600}}>Photos:</span>
@@ -1330,7 +1407,133 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
       <div style={{height:1,background:`linear-gradient(90deg,${AUSA.blue}66,${AUSA.red}66)`,marginBottom:0}}/>
     </div>
 
-    <div className="ath-cats-scroll" style={{flex:1,overflowX:"auto",overflowY:"hidden",WebkitOverflowScrolling:"touch",padding:"32px 40px"}}>
+    {/* ═══ MOBILE: Content wrapper ═══ */}
+    {(!isMobile||mobileTab==="journey")&&<>{/* ═══ VIDEO PIPELINE / JOURNEY TRACKER ═══ */}
+    {(()=>{
+      const allVids=player.categories.flatMap(c=>c.videos.map(v=>({...v,catName:c.name})));
+      const tracked=allVids.filter(v=>videoStatuses&&videoStatuses[v.id]);
+      const untracked=allVids.filter(v=>!videoStatuses||!videoStatuses[v.id]);
+      const totalTracked=tracked.length;
+      const stageCounts={submitted:0,review:0,editing:0,approved:0};
+      tracked.forEach(v=>{const s=(videoStatuses[v.id]||{}).stage||"submitted";if(stageCounts[s]!==undefined)stageCounts[s]++;});
+      const pipeOpen=showPipeline||(isMobile&&mobileTab==="journey");
+      if(allVids.length===0&&!pipeOpen)return null;
+      return(
+      <div style={{padding:isMobile?"0":"12px 40px 0",flexShrink:isMobile?undefined:0,flex:isMobile?1:undefined,overflow:isMobile?"auto":undefined}}>
+        {!isMobile&&<div onClick={()=>setShowPipeline(p=>!p)} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"10px 16px",background:`linear-gradient(135deg,${AUSA.navy}22,${C.s0})`,borderRadius:pipeOpen?"12px 12px 0 0":12,border:`1px solid ${AUSA.blue}33`,borderBottom:pipeOpen?"none":undefined}}
+          onMouseEnter={e=>e.currentTarget.style.background=`linear-gradient(135deg,${AUSA.navy}33,${C.s0})`} onMouseLeave={e=>e.currentTarget.style.background=`linear-gradient(135deg,${AUSA.navy}22,${C.s0})`}>
+          <div style={{width:28,height:28,borderRadius:"50%",background:`linear-gradient(135deg,${AUSA.blue}44,${AUSA.navy}44)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <FilmIcon size={14} color={AUSA.light}/>
+          </div>
+          <span style={{fontWeight:800,fontSize:14,color:"#fff",letterSpacing:0.5,flex:1}}>MY VIDEO JOURNEY</span>
+          {totalTracked>0&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
+            {VIDEO_STAGES.map(s=>stageCounts[s]>0&&<span key={s} style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:10,background:STAGE_META[s].color+"22",color:STAGE_META[s].color,border:`1px solid ${STAGE_META[s].color}44`}}>{stageCounts[s]} {STAGE_META[s].label}</span>)}
+          </div>}
+          <ChevronDownIcon size={16} color={C.sub} style={{transform:pipeOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}/>
+        </div>}
+        {pipeOpen&&<div style={{background:isMobile?"transparent":C.s0,border:isMobile?"none":`1px solid ${AUSA.blue}33`,borderTop:"none",borderRadius:isMobile?0:"0 0 12px 12px",padding:isMobile?0:16,maxHeight:isMobile?"none":360,overflowY:"auto"}}>
+          {allVids.length===0?<div style={{textAlign:"center",color:C.overlay,fontSize:12,padding:20}}>Upload videos to see their journey here</div>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {allVids.map(v=>{
+              const st=videoStatuses&&videoStatuses[v.id]?videoStatuses[v.id]:{stage:"submitted",editor:"",activity:[],createdAt:Date.now()};
+              const stageIdx=VIDEO_STAGES.indexOf(st.stage);
+              const meta=STAGE_META[st.stage]||STAGE_META.submitted;
+              const isExpanded=expandedVid===v.id;
+              return(
+              <div key={v.id} style={{background:C.mantle,borderRadius:10,border:`1px solid ${isExpanded?meta.color+"66":C.s1}`,overflow:"hidden",transition:"border 0.2s"}}>
+                <div onClick={()=>setExpandedVid(isExpanded?null:v.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.s0+"88"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <FilmIcon size={12} color={meta.color}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div>
+                    <div style={{fontSize:10,color:C.overlay}}>{v.catName} &bull; {fmtTime(v.duration)}</div>
+                  </div>
+                  {/* Mini stage tracker */}
+                  <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+                    {VIDEO_STAGES.map((s,i)=>{
+                      const done=i<=stageIdx;const active=i===stageIdx;
+                      return<React.Fragment key={s}>
+                        {i>0&&<div style={{width:12,height:2,background:done?STAGE_META[s].color+"88":C.s1,borderRadius:1,transition:"background 0.3s"}}/>}
+                        <div style={{width:active?10:7,height:active?10:7,borderRadius:"50%",background:done?STAGE_META[s].color:C.s1,boxShadow:active?`0 0 8px ${STAGE_META[s].color}88`:"none",transition:"all 0.3s",border:active?`2px solid ${STAGE_META[s].color}`:"none"}}/>
+                      </React.Fragment>;
+                    })}
+                  </div>
+                  <span style={{fontSize:10,fontWeight:700,color:meta.color,background:meta.color+"18",padding:"2px 8px",borderRadius:6,flexShrink:0}}>{meta.label}</span>
+                  {st.editor&&<span style={{fontSize:9,color:C.sub,flexShrink:0}}>{st.editor}</span>}
+                  <ChevronDownIcon size={12} color={C.overlay} style={{transform:isExpanded?"rotate(180deg)":"none",transition:"transform 0.2s",flexShrink:0}}/>
+                </div>
+                {isExpanded&&<div style={{borderTop:`1px solid ${C.s1}`,padding:"12px 14px"}}>
+                  {/* Stage detail */}
+                  <div style={{display:"flex",alignItems:"stretch",gap:0,marginBottom:14}}>
+                    {VIDEO_STAGES.map((s,i)=>{
+                      const done=i<=stageIdx;const active=i===stageIdx;const sm=STAGE_META[s];
+                      return<div key={s} style={{flex:1,textAlign:"center",position:"relative"}}>
+                        {i>0&&<div style={{position:"absolute",top:12,left:0,right:"50%",height:3,background:done?sm.color:C.s1,zIndex:0}}/>}
+                        {i<VIDEO_STAGES.length-1&&<div style={{position:"absolute",top:12,left:"50%",right:0,height:3,background:(i<stageIdx)?STAGE_META[VIDEO_STAGES[i+1]].color:C.s1,zIndex:0}}/>}
+                        <div style={{width:26,height:26,borderRadius:"50%",background:done?sm.color:C.s0,border:`2px solid ${done?sm.color:C.s1}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto",position:"relative",zIndex:1,boxShadow:active?`0 0 12px ${sm.color}66`:"none"}}>
+                          {s==="submitted"&&<UploadIcon size={11} color={done?"#fff":C.overlay}/>}
+                          {s==="review"&&<EyeIcon size={11} color={done?"#fff":C.overlay}/>}
+                          {s==="editing"&&<FilmIcon size={11} color={done?"#fff":C.overlay}/>}
+                          {s==="approved"&&<CheckIcon size={11} color={done?"#fff":C.overlay}/>}
+                        </div>
+                        <div style={{fontSize:9,fontWeight:active?800:600,color:done?sm.color:C.overlay,marginTop:4}}>{sm.label}</div>
+                        <div style={{fontSize:8,color:C.overlay,marginTop:1}}>{sm.est}</div>
+                      </div>;
+                    })}
+                  </div>
+                  {/* Current stage description */}
+                  <div style={{background:meta.color+"0D",border:`1px solid ${meta.color}33`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+                    <div style={{fontSize:11,color:meta.color,fontWeight:700,marginBottom:2}}>{meta.label}</div>
+                    <div style={{fontSize:11,color:C.sub,lineHeight:1.4}}>{meta.desc}</div>
+                  </div>
+                  {/* Editor assignment */}
+                  {st.editor&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"6px 10px",background:C.s0,borderRadius:6}}>
+                    <div style={{width:22,height:22,borderRadius:"50%",background:AUSA.blue+"33",display:"flex",alignItems:"center",justifyContent:"center"}}><UserIcon size={10} color={AUSA.light}/></div>
+                    <div><div style={{fontSize:10,color:C.overlay}}>Your Editor</div><div style={{fontSize:11,fontWeight:700,color:"#fff"}}>{st.editor}</div></div>
+                  </div>}
+                  {/* Activity feed */}
+                  {st.activity&&st.activity.length>0&&<div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.overlay,marginBottom:6,letterSpacing:0.5}}>ACTIVITY</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+                      {[...st.activity].reverse().map((a,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"4px 0"}}>
+                          <div style={{width:6,height:6,borderRadius:"50%",background:i===0?C.green:C.s1,marginTop:4,flexShrink:0}}/>
+                          <div style={{flex:1}}><span style={{fontSize:10,color:i===0?"#fff":C.sub}}>{a.action}</span>{a.by&&<span style={{fontSize:9,color:C.overlay}}> — {a.by}</span>}</div>
+                          <span style={{fontSize:9,color:C.overlay,flexShrink:0}}>{a.at?new Date(a.at).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>}
+                  {/* Editor controls — only in editor mode */}
+                  {isEditorMode&&<div style={{borderTop:`1px solid ${C.s1}`,marginTop:10,paddingTop:10}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.peach,marginBottom:6,letterSpacing:0.5}}>EDITOR CONTROLS</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                      {VIDEO_STAGES.map((s,i)=>{
+                        const sm=STAGE_META[s];const isCurrent=s===st.stage;
+                        return<button key={s} disabled={isCurrent} onClick={async()=>{await advanceVideoStage(player.id,v.id,s,"Editor");if(onStatusChange)onStatusChange();}}
+                          style={{fontSize:10,fontWeight:isCurrent?800:600,padding:"4px 10px",borderRadius:6,cursor:isCurrent?"default":"pointer",
+                            background:isCurrent?sm.color+"33":"transparent",color:isCurrent?sm.color:C.sub,
+                            border:`1px solid ${isCurrent?sm.color:C.s1}`,opacity:isCurrent?1:0.7}}
+                          onMouseEnter={e=>{if(!isCurrent)e.currentTarget.style.opacity="1";}} onMouseLeave={e=>{if(!isCurrent)e.currentTarget.style.opacity="0.7";}}>
+                          {sm.label}
+                        </button>;
+                      })}
+                      <div style={{width:1,height:16,background:C.s1,margin:"0 4px"}}/>
+                      <button onClick={async()=>{const name=prompt("Editor name:");if(name){await assignVideoEditor(player.id,v.id,name);if(onStatusChange)onStatusChange();}}}
+                        style={{fontSize:10,fontWeight:600,padding:"4px 10px",borderRadius:6,cursor:"pointer",background:AUSA.blue+"18",color:AUSA.light,border:`1px solid ${AUSA.blue}44`}}>
+                        <UserIcon size={9} color={AUSA.light}/> Assign
+                      </button>
+                    </div>
+                  </div>}
+                </div>}
+              </div>);
+            })}
+          </div>}
+        </div>}
+      </div>);
+    })()}</>}
+
+    {(!isMobile||mobileTab==="videos")&&<><div className="ath-cats-scroll" style={{flex:1,overflowX:"auto",overflowY:"hidden",WebkitOverflowScrolling:"touch",padding:"32px 40px"}}>
       <div className="ath-cats-flex" style={{display:"flex",gap:20,height:"100%",alignItems:"stretch"}}>
         {player.categories.map((cat,ci)=>{const color=cat.isInbox?"#BFD7EA":CAT_COLORS[ci%CAT_COLORS.length];const isDrag=dragIdx===ci;const isOver=overIdx===ci&&dragIdx!==ci;const isVidDropTarget=dropTargetCat===cat.id&&dragVidCatId!==cat.id;
         return(
@@ -1393,9 +1596,180 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
             </div>
           </div>
         );})}
+
+        {/* ═══ GAME LINKS CARD (desktop, inside horizontal scroll) ═══ */}
+        {!isMobile&&<div className="ath-cat-card" data-tour="tour-links" style={{minWidth:280,width:280,flexShrink:0,display:"flex",flexDirection:"column",background:`linear-gradient(180deg,${AUSA.red}12,${C.s0})`,borderRadius:12,border:`1px solid ${AUSA.red}44`,overflow:"hidden"}}>
+          <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${AUSA.red}33`,flexShrink:0,background:`linear-gradient(90deg,${AUSA.red}18,${AUSA.red}08)`}}>
+            <LinkIcon size={16} color={AUSA.red} style={{marginRight:8,flexShrink:0}}/>
+            <span style={{color:AUSA.red,fontSize:14,fontWeight:800,flex:1,letterSpacing:0.5}}>Game Links</span>
+            <span style={{color:AUSA.red+"88",fontSize:10,fontWeight:600,background:AUSA.red+"15",padding:"2px 8px",borderRadius:4}}>{(player.gameLinks||[]).length}</span>
+          </div>
+          <div style={{flex:1,padding:10,overflow:"auto",display:"flex",flexDirection:"column",gap:6}}>
+            {(!player.gameLinks||player.gameLinks.length===0)&&!showAddLink&&(
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:C.overlay,fontSize:12,gap:8,minHeight:80}}>
+                <LinkIcon size={28} color={AUSA.red+"44"}/>
+                <span style={{color:AUSA.red+"88",fontWeight:600,textAlign:"center",lineHeight:1.4}}>Share YouTube, Hudl, or<br/>game video links here</span>
+                <span style={{color:C.overlay,fontSize:10}}>Editors will use these for highlights</span>
+              </div>
+            )}
+            {(player.gameLinks||[]).map(link=>{
+              const lt=getLinkType(link.url);
+              return(
+              <div key={link.id} style={{background:C.mantle,borderRadius:8,border:`1px solid ${C.s1}`,overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px"}}>
+                  <span style={{fontSize:12,flexShrink:0}}>{lt.icon}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{link.title||"Game Link"}</div>
+                    <div style={{fontSize:9,color:lt.color,fontWeight:600}}>{lt.label}</div>
+                  </div>
+                  <a href={link.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{...ib,color:AUSA.blue,padding:3}} title="Open link"><ExternalLinkIcon size={12}/></a>
+                  <button onClick={()=>removeGameLink(link.id)} style={{...ib,color:C.overlay,padding:2}} title="Remove"><XIcon size={11}/></button>
+                </div>
+                {link.notes&&<div style={{padding:"0 10px 8px",fontSize:10,color:C.sub,lineHeight:1.3,borderTop:`1px solid ${C.s1}22`,paddingTop:6,marginTop:0}}>
+                  <span style={{color:C.overlay,fontWeight:600}}>Notes:</span> {link.notes}
+                </div>}
+                <div style={{padding:"0 10px 6px",fontSize:8,color:C.overlay}}>{link.addedAt?new Date(link.addedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}  {link.addedBy&&`by ${link.addedBy}`}</div>
+              </div>);
+            })}
+            {showAddLink&&(
+              <div style={{background:C.mantle,borderRadius:8,border:`1px solid ${AUSA.red}44`,padding:10,display:"flex",flexDirection:"column",gap:6}}>
+                <input value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)} placeholder="Paste video URL..." autoFocus
+                  onKeyDown={e=>{if(e.key==="Enter"&&newLinkUrl.trim())addGameLink();if(e.key==="Escape"){setShowAddLink(false);setNewLinkUrl("");setNewLinkTitle("");setNewLinkNotes("");}}}
+                  style={{...inputStyle,fontSize:12,padding:"8px 10px"}}/>
+                <input value={newLinkTitle} onChange={e=>setNewLinkTitle(e.target.value)} placeholder="Title (optional, e.g. 'vs FC Dallas')"
+                  style={{...inputStyle,fontSize:11,padding:"6px 10px"}}/>
+                <textarea value={newLinkNotes} onChange={e=>setNewLinkNotes(e.target.value)} placeholder="Notes (optional, e.g. 'Goal at 23:15, assist at 41:00')" rows={2}
+                  style={{...inputStyle,fontSize:11,padding:"6px 10px",resize:"vertical",minHeight:40}}/>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={addGameLink} disabled={!newLinkUrl.trim()}
+                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:newLinkUrl.trim()?AUSA.red:C.s1,color:newLinkUrl.trim()?"#fff":C.overlay,border:"none",borderRadius:6,padding:"8px 0",cursor:newLinkUrl.trim()?"pointer":"default",fontSize:11,fontWeight:700}}>
+                    <CheckIcon size={12}/> Add Link
+                  </button>
+                  <button onClick={()=>{setShowAddLink(false);setNewLinkUrl("");setNewLinkTitle("");setNewLinkNotes("");}}
+                    style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:"transparent",color:C.sub,border:`1px solid ${C.s1}`,borderRadius:6,padding:"8px 12px",cursor:"pointer",fontSize:11,fontWeight:600}}>
+                    <XIcon size={11}/>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+          <div style={{padding:10,flexShrink:0}}>
+            <button onClick={()=>setShowAddLink(true)}
+              style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                background:AUSA.red,color:"#fff",border:"none",borderRadius:8,padding:"11px 16px",cursor:"pointer",fontSize:13,fontWeight:700,letterSpacing:0.5}}
+              onMouseEnter={e=>e.currentTarget.style.opacity="0.85"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+              <LinkIcon size={15}/> Add Game Link
+            </button>
+          </div>
+        </div>}
       </div>
-    </div>
-    <div data-tour="tour-add-cat" style={{flexShrink:0,padding:"12px 40px 16px"}}>
+    </div></>}
+
+    {/* ═══ MOBILE: Game Links tab ═══ */}
+    {isMobile&&mobileTab==="links"&&<div style={{flex:1,overflow:"auto",WebkitOverflowScrolling:"touch",padding:16}}>
+      <div style={{display:"flex",flexDirection:"column",background:`linear-gradient(180deg,${AUSA.red}12,${C.s0})`,borderRadius:12,border:`1px solid ${AUSA.red}44`,overflow:"hidden",minHeight:"100%"}}>
+        <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:`1px solid ${AUSA.red}33`,background:`linear-gradient(90deg,${AUSA.red}18,${AUSA.red}08)`}}>
+          <LinkIcon size={18} color={AUSA.red} style={{marginRight:10,flexShrink:0}}/>
+          <span style={{color:AUSA.red,fontSize:16,fontWeight:800,flex:1}}>Game Links</span>
+          <span style={{color:AUSA.red+"88",fontSize:11,fontWeight:600,background:AUSA.red+"15",padding:"3px 10px",borderRadius:6}}>{(player.gameLinks||[]).length}</span>
+        </div>
+        <div style={{flex:1,padding:12,display:"flex",flexDirection:"column",gap:8}}>
+          {(!player.gameLinks||player.gameLinks.length===0)&&!showAddLink&&(
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:C.overlay,fontSize:13,gap:10,padding:32}}>
+              <LinkIcon size={36} color={AUSA.red+"44"}/>
+              <span style={{color:AUSA.red+"88",fontWeight:600,textAlign:"center",lineHeight:1.5}}>Share your game video links here</span>
+              <span style={{color:C.overlay,fontSize:11,textAlign:"center"}}>YouTube, Hudl, Wyscout, or any video link — editors will use these for your highlights</span>
+            </div>
+          )}
+          {(player.gameLinks||[]).map(link=>{
+            const lt=getLinkType(link.url);
+            return(
+            <div key={link.id} style={{background:C.mantle,borderRadius:10,border:`1px solid ${C.s1}`,overflow:"hidden"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px"}}>
+                <span style={{fontSize:14,flexShrink:0}}>{lt.icon}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{link.title||"Game Link"}</div>
+                  <div style={{fontSize:10,color:lt.color,fontWeight:600}}>{lt.label}</div>
+                </div>
+                <a href={link.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{...ib,color:AUSA.blue,padding:6,background:AUSA.blue+"18",borderRadius:6}} title="Open"><ExternalLinkIcon size={14}/></a>
+                <button onClick={()=>removeGameLink(link.id)} style={{...ib,color:C.overlay,padding:6}} title="Remove"><XIcon size={13}/></button>
+              </div>
+              {link.notes&&<div style={{padding:"0 12px 10px",fontSize:11,color:C.sub,lineHeight:1.4}}><span style={{color:C.overlay,fontWeight:600}}>Notes:</span> {link.notes}</div>}
+            </div>);
+          })}
+          {showAddLink&&(
+            <div style={{background:C.mantle,borderRadius:10,border:`1px solid ${AUSA.red}44`,padding:12,display:"flex",flexDirection:"column",gap:8}}>
+              <input value={newLinkUrl} onChange={e=>setNewLinkUrl(e.target.value)} placeholder="Paste video URL..." autoFocus
+                style={{...inputStyle,fontSize:14,padding:"12px 14px",borderRadius:8}}/>
+              <input value={newLinkTitle} onChange={e=>setNewLinkTitle(e.target.value)} placeholder="Title (optional)"
+                style={{...inputStyle,fontSize:13,padding:"10px 14px",borderRadius:8}}/>
+              <textarea value={newLinkNotes} onChange={e=>setNewLinkNotes(e.target.value)} placeholder="Notes (optional, e.g. timestamps)" rows={2}
+                style={{...inputStyle,fontSize:13,padding:"10px 14px",resize:"vertical",minHeight:50,borderRadius:8}}/>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={addGameLink} disabled={!newLinkUrl.trim()}
+                  style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:newLinkUrl.trim()?AUSA.red:C.s1,color:newLinkUrl.trim()?"#fff":C.overlay,border:"none",borderRadius:8,padding:"12px 0",cursor:newLinkUrl.trim()?"pointer":"default",fontSize:13,fontWeight:700}}>
+                  <CheckIcon size={14}/> Add Link
+                </button>
+                <button onClick={()=>{setShowAddLink(false);setNewLinkUrl("");setNewLinkTitle("");setNewLinkNotes("");}}
+                  style={{display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:C.sub,border:`1px solid ${C.s1}`,borderRadius:8,padding:"12px 16px",cursor:"pointer",fontSize:13}}><XIcon size={13}/></button>
+              </div>
+            </div>
+          )}
+        </div>
+        {!showAddLink&&<div style={{padding:12,flexShrink:0}}>
+          <button onClick={()=>setShowAddLink(true)}
+            style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:AUSA.red,color:"#fff",border:"none",borderRadius:10,padding:"14px 16px",cursor:"pointer",fontSize:14,fontWeight:700}}>
+            <LinkIcon size={16}/> Add Game Link
+          </button>
+        </div>}
+      </div>
+    </div>}
+
+    {/* ═══ MOBILE: Profile tab ═══ */}
+    {isMobile&&mobileTab==="profile"&&<div style={{flex:1,overflow:"auto",WebkitOverflowScrolling:"touch",padding:16}}>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {/* Profile card */}
+        <div style={{background:C.s0,borderRadius:12,border:`1px solid ${C.s1}`,padding:20,textAlign:"center"}}>
+          {player.profilePicUrl?<img src={player.profilePicUrl} style={{width:72,height:72,borderRadius:"50%",objectFit:"cover",border:`3px solid ${AUSA.blue}`,margin:"0 auto 12px",display:"block"}}/>
+          :<div style={{width:72,height:72,borderRadius:"50%",background:AUSA.navy+"44",border:`3px solid ${AUSA.blue}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px"}}><span style={{color:AUSA.light,fontWeight:800,fontSize:28}}>{player.name.charAt(0)}</span></div>}
+          <div style={{fontSize:20,fontWeight:800,color:"#fff",marginBottom:4}}>{player.name}</div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
+            {player.shirtNumber&&<span style={{background:AUSA.navy+"44",color:AUSA.light,fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:6}}>#{player.shirtNumber}</span>}
+            <span style={{color:C.overlay,fontSize:12}}>Class {player.recruitingClass}</span>
+            {player.size&&<span style={{color:C.overlay,fontSize:12}}>{player.size}</span>}
+          </div>
+          {player.positions&&player.positions.length>0&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,flexWrap:"wrap",marginBottom:12}}>
+            {player.positions.map(p=><span key={p} style={{background:"#22c55e22",color:"#22c55e",fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:4}}>{p}</span>)}
+          </div>}
+          {player.uniformDesc&&<div style={{color:C.overlay,fontSize:11,marginBottom:8}}>{player.uniformDesc}</div>}
+        </div>
+        {/* Actions */}
+        <button onClick={()=>setShowEditProfile(true)} data-tour="tour-edit-profile"
+          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:AUSA.blue,color:"#fff",border:"none",borderRadius:10,padding:"14px 0",cursor:"pointer",fontSize:14,fontWeight:700}}>
+          <Edit3Icon size={16}/> Edit Profile
+        </button>
+        {/* Photos section */}
+        <div style={{background:C.s0,borderRadius:12,border:`1px solid ${C.s1}`,padding:16}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#fff",marginBottom:10}}>Photos</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {player.profilePicUrl?<button onClick={()=>downloadImage(player.profilePicUrl,`${player.name.replace(/\s+/g,"_")}_profile.jpg`)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:AUSA.blue+"18",border:`1px solid ${AUSA.blue}44`,color:AUSA.light,borderRadius:8,padding:"10px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}><DownloadIcon size={12}/> Profile Pic</button>
+            :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No profile pic</span>}
+            {player.playingPicUrl?<button onClick={()=>downloadImage(player.playingPicUrl,`${player.name.replace(/\s+/g,"_")}_action.jpg`)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:AUSA.red+"18",border:`1px solid ${AUSA.red}44`,color:AUSA.red,borderRadius:8,padding:"10px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}><DownloadIcon size={12}/> Action Pic</button>
+            :<span style={{color:C.overlay,fontSize:11,fontStyle:"italic"}}>No action pic</span>}
+          </div>
+        </div>
+        <button onClick={()=>{setShowWelcome(true);setTourStep(null);}}
+          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:AUSA.navy+"33",border:`1px solid ${AUSA.blue}66`,borderRadius:10,padding:"12px 0",cursor:"pointer",color:AUSA.light,fontSize:13,fontWeight:600}}>
+          <EyeIcon size={14}/> Show Guide Tour
+        </button>
+        <button onClick={onBack}
+          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:10,padding:"12px 0",cursor:"pointer",color:C.sub,fontSize:13,fontWeight:600}}>
+          <LogOutIcon size={14}/> Sign Out
+        </button>
+      </div>
+    </div>}
+
+    {(!isMobile||mobileTab==="videos")&&<div data-tour="tour-add-cat" style={{flexShrink:0,padding:isMobile?"8px 16px 12px":"12px 40px 16px"}}>
       {showAdd?(
         <div style={{display:"flex",alignItems:"center",gap:10,background:C.s0+"88",borderRadius:12,border:`1px dashed ${C.s1}`,padding:"12px 16px"}}>
           <input value={newCat} onChange={e=>setNewCat(e.target.value)} placeholder="Category name..."
@@ -1413,7 +1787,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
           <span style={{fontSize:13,fontWeight:700,letterSpacing:1.5}}>ADD CATEGORY</span>
         </div>
       )}
-    </div>
+    </div>}
     {uploadProg&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(8px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200}}>
       <div style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:16,padding:"36px 44px",width:420,textAlign:"center",animation:"fadeIn 0.3s ease-out",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
         <div style={{width:56,height:56,borderRadius:"50%",background:`linear-gradient(135deg,${AUSA.blue}22,${AUSA.navy}18)`,border:`1px solid ${AUSA.blue}44`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><UploadIcon size={26} color={AUSA.light}/></div>
@@ -1435,6 +1809,22 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay}
         </div>
         <div style={{color:C.overlay,fontSize:10}}>{zipProg.pct||0}%</div>
       </div>
+    </div>}
+    {/* ═══ MOBILE BOTTOM TAB BAR ═══ */}
+    {isMobile&&<div style={{display:"flex",alignItems:"stretch",background:C.mantle,borderTop:`1px solid ${C.s1}`,flexShrink:0,position:"relative",zIndex:50}}>
+      {[
+        {id:"videos",label:"Videos",icon:<FilmIcon size={18}/>},
+        {id:"journey",label:"Journey",icon:<EyeIcon size={18}/>},
+        {id:"links",label:"Links",icon:<LinkIcon size={18}/>},
+        {id:"profile",label:"Profile",icon:<UserIcon size={18}/>}
+      ].map(tab=>{
+        const active=mobileTab===tab.id;
+        return<button key={tab.id} onClick={()=>setMobileTab(tab.id)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"10px 0 8px",background:"none",border:"none",cursor:"pointer",color:active?AUSA.blue:C.overlay,position:"relative",WebkitTapHighlightColor:"transparent"}}>
+          {active&&<div style={{position:"absolute",top:0,left:"20%",right:"20%",height:2,background:AUSA.blue,borderRadius:"0 0 2px 2px"}}/>}
+          {React.cloneElement(tab.icon,{color:active?AUSA.blue:C.overlay})}
+          <span style={{fontSize:10,fontWeight:active?700:500,letterSpacing:0.3}}>{tab.label}</span>
+        </button>;
+      })}
     </div>}
     <FeedbackFAB playerName={player.name}/>
     {showEditProfile&&<EditProfileModal player={player} onSave={updated=>onUpdatePlayer(updated)} onClose={()=>setShowEditProfile(false)}/>}
@@ -2055,7 +2445,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const addClip=useCallback((trackId,data,start,isAudio=false)=>{pushHist();
     const clip={id:uid("clip"),videoId:data.id,categoryId:data.categoryId||"",playerId:data.playerId||"editor",playerName:data.playerName||"Editor",
       name:data.name,url:data.url,trackStart:Math.max(0,start),clipStart:0,clipEnd:data.duration,isAudio:isAudio};
-    setClipProps(p=>({...p,[clip.id]:{volume:100,scale:1}}));
+    setClipProps(p=>({...p,[clip.id]:{volume:100,scale:1,panX:0,panY:0}}));
     if(isAudio){setAudioTracks(p=>{const n=p.map(t=>t.id===trackId?{...t,clips:[...t.clips,clip].sort((a,b)=>a.trackStart-b.trackStart)}:t);recalcAll(tracks,tagTrack,n);return n;});}
     else{setTracks(p=>{const n=p.map(t=>t.id===trackId?{...t,clips:[...t.clips,clip].sort((a,b)=>a.trackStart-b.trackStart)}:t);recalcAll(n,tagTrack,audioTracks);return n;});compactV1();}
   },[pushHist,recalcAll,tracks,tagTrack,audioTracks,compactV1]);
@@ -2129,7 +2519,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       const a={...c,id:uid("clip"),clipEnd:c.clipStart+cut};aId=a.id;
       const b={...c,id:uid("clip"),trackStart:playhead,clipStart:c.clipStart+cut};bId=b.id;
       splitSourceTime=c.clipStart+cut;
-      setClipProps(p=>({...p,[a.id]:{...(p[c.id]||{volume:100,scale:1})},[b.id]:{...(p[c.id]||{volume:100,scale:1})}}));
+      setClipProps(p=>({...p,[a.id]:{...(p[c.id]||{volume:100,scale:1,panX:0,panY:0})},[b.id]:{...(p[c.id]||{volume:100,scale:1,panX:0,panY:0})}}));
       return{...t,clips:t.clips.filter(x=>x.id!==clipId).concat([a,b]).sort((x,y)=>x.trackStart-y.trackStart)};});
     let found=false;tracks.forEach(t=>{if(t.clips.find(c=>c.id===clipId))found=true;});
     if(found){setTracks(p=>{const n=docut(p);recalcAll(n,tagTrack,audioTracks);return n;});compactV1();}
@@ -2393,8 +2783,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
        Computes where the video lands on the output canvas, replicating
        CSS object-fit:contain + transform:scale exactly.
        Returns {dx, dy, dw, dh} — the destination rectangle on the canvas. */
-    const computeVideoTransform=(srcW,srcH,outW,outH,scale)=>{
-      const s=scale||1;
+    const computeVideoTransform=(srcW,srcH,outW,outH,scale,panX,panY)=>{
+      const s=scale||1;const px=panX||0;const py=panY||0;
       const vidAsp=srcW/srcH,canAsp=outW/outH;
       let dw,dh;
       if(vidAsp>canAsp){dw=outW;dh=outW/vidAsp;}
@@ -2402,15 +2792,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       /* CSS transform:scale() scales visually around center without changing layout.
          We replicate this by scaling dw/dh then re-centering. */
       dw*=s;dh*=s;
-      return{dx:(outW-dw)/2,dy:(outH-dh)/2,dw,dh};
+      /* Pan offset: px/py are percentages (-100 to 100). Convert to pixel shift
+         based on how much the scaled video overflows the canvas. */
+      const overflowX=Math.max(0,dw-outW);
+      const overflowY=Math.max(0,dh-outH);
+      const shiftX=(px/100)*(overflowX/2);
+      const shiftY=(py/100)*(overflowY/2);
+      return{dx:(outW-dw)/2+shiftX,dy:(outH-dh)/2+shiftY,dw,dh};
     };
 
     /* drawVideoFit: draws video onto canvas using the canonical transform. */
-    const drawVideoFit=(vel,scale)=>{
+    const drawVideoFit=(vel,scale,panX,panY)=>{
       if(!vel||vel.readyState<2)return;
       const vw=vel.videoWidth,vh=vel.videoHeight;
       if(!vw||!vh)return;
-      const t=computeVideoTransform(vw,vh,W,H,scale);
+      const t=computeVideoTransform(vw,vh,W,H,scale,panX,panY);
       try{cx.drawImage(vel,t.dx,t.dy,t.dw,t.dh);}catch(e){}
     };
 
@@ -2503,8 +2899,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             if(!vel.paused)vel.pause();
             /* Use clip's actual scale — NOT hardcoded 1 — so vertical videos
                stay zoomed/fitted the same way as during normal playback */
-            const tagPr=clipProps[seg.clipId]||{volume:100,scale:1};
-            drawVideoFit(vel,tagPr.scale||1);
+            const tagPr=clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0};
+            drawVideoFit(vel,tagPr.scale||1,tagPr.panX||0,tagPr.panY||0);
           }
           /* No fade — spotlight appears/disappears instantly */
           if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,1);
@@ -2518,7 +2914,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
         }else if(seg){
           /* VIDEO SEGMENT: play video from srcStart→srcEnd mapped to tlStart→tlEnd */
-          const pr=clipProps[seg.clipId]||{volume:100,scale:1};
+          const pr=clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0};
           const progress=(ph-seg.tlStart)/(seg.tlEnd-seg.tlStart);
           const srcTime=seg.srcStart+progress*(seg.srcEnd-seg.srcStart);
           const vel=videoEls[seg.clipId];
@@ -2543,7 +2939,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               if(Math.abs(vel.currentTime-srcTime)>0.3)vel.currentTime=Math.max(0,srcTime);
             }
             if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100;
-            drawVideoFit(vel,pr.scale||1);
+            drawVideoFit(vel,pr.scale||1,pr.panX||0,pr.panY||0);
 
             /* Draw overlay tags (zero-duration) that fall within TAG_OVERLAY_DUR of srcTime */
             if(seg.overlayTags&&seg.overlayTags.length>0){
@@ -2687,7 +3083,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
     /* NORMAL CLIP playback */
     const wasInTag=prevTagRef.current!==null;prevTagRef.current=null;
-    const pr=clipProps[clip.id]||{volume:100,scale:1};
+    const pr=clipProps[clip.id]||{volume:100,scale:1,panX:0,panY:0};
     const fo=freezeOffset(clip.trackStart,playhead);
     const vt=clip.clipStart+(playhead-clip.trackStart-fo);
     const vol=pr.volume/100;
@@ -2721,7 +3117,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(tag){if(a)a.pause();prevAudioTagRef.current=tag.id;return;}
     const wasAudioTag=prevAudioTagRef.current!==null;prevAudioTagRef.current=null;
     if(!clip){if(a){a.pause();a.removeAttribute("src");a.load();}prevAudioRef.current=null;return;}
-    const pr=clipProps[clip.id]||{volume:100,scale:1};const fo=freezeOffset(clip.trackStart,playhead);const at=clip.clipStart+(playhead-clip.trackStart-fo);
+    const pr=clipProps[clip.id]||{volume:100,scale:1,panX:0,panY:0};const fo=freezeOffset(clip.trackStart,playhead);const at=clip.clipStart+(playhead-clip.trackStart-fo);
     if(a){a.volume=pr.volume/100;if(prevAudioRef.current!==clip.id){prevAudioRef.current=clip.id;a.src=clip.url;a.currentTime=Math.max(0,at);if(isPlaying)a.play().catch(()=>{});}
     else if(wasAudioTag){a.currentTime=Math.max(0,at);if(isPlaying)a.play().catch(()=>{});}
     else if(!isPlaying){a.pause();if(Math.abs(a.currentTime-at)>.1)a.currentTime=Math.max(0,at);}
@@ -2754,9 +3150,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const activeFreezeTag=findActiveTag(playhead); /* freeze tags only (duration>0) */
   const activeSpotTag=findOverlayTag(activeClip,playhead); /* overlay spotlight (duration===0) */
   const activeTag=activeFreezeTag||activeSpotTag; /* backward compat — used by video pool sync etc */
-  const actProps=activeClip?(clipProps[activeClip.id]||{volume:100,scale:1}):null;
+  const actProps=activeClip?(clipProps[activeClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
   const selClip=(()=>{for(const t of [...tracks,...audioTracks]){const c=t.clips.find(x=>x.id===selectedClipId);if(c)return c;}for(const c of tagTrack.clips){if(c.id===selectedClipId)return c;}return null;})();
-  const selProps=selClip?(clipProps[selClip.id]||{volume:100,scale:1}):null;
+  const selProps=selClip?(clipProps[selClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
 
   const sidebar=(
   <div style={{width:260,minWidth:260,background:C.mantle,borderRight:`1px solid ${C.s0}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -2868,9 +3264,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   <div style={{flex:1,display:"flex",flexDirection:"column",background:C.crust,overflow:"hidden"}}>
     <audio ref={audioRef} preload="auto"/>
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",minHeight:0,padding:8}}>
-      <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}} style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":"default"}}>
+      <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}}
+        onMouseDown={e=>{if(spotlightMode)return;if(!actProps||actProps.scale<=1)return;e.preventDefault();const startX=e.clientX,startY=e.clientY;const startPanX=actProps.panX||0,startPanY=actProps.panY||0;const rect=e.currentTarget.getBoundingClientRect();const cid=activeClip?.id;if(!cid)return;
+          const onMove=ev=>{const dx=(ev.clientX-startX)/rect.width*200;const dy=(ev.clientY-startY)/rect.height*200;const nx=Math.max(-100,Math.min(100,startPanX+dx));const ny=Math.max(-100,Math.min(100,startPanY+dy));setClipProps(p=>({...p,[cid]:{...p[cid],panX:nx,panY:ny}}));};
+          const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
+          document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);}}
+        style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":(actProps&&actProps.scale>1?"grab":"default")}}>
         {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
-        <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`scale(${actProps.scale})`:undefined}}/>
+        <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`translate(${(actProps.panX||0)*(actProps.scale-1)/2}%, ${(actProps.panY||0)*(actProps.scale-1)/2}%) scale(${actProps.scale})`:undefined}}/>
         {/* FREEZE — no badge on video */}
         {/* SPOTLIGHT overlay — shows on freeze tags with hasSpotlight, OR standalone overlay tags */}
         {(()=>{
@@ -2982,6 +3383,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 <span style={{color:C.sub,fontSize:10}}>Scale</span>
                 <input type="range" min={50} max={300} step={5} value={Math.round(selProps.scale*100)} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,scale:+e.target.value/100}}))} style={{width:70,accentColor:C.lavender}}/>
                 <span style={{color:C.overlay,minWidth:28}}>{Math.round(selProps.scale*100)}%</span>
+                {selProps.scale>1&&<>
+                  <div style={{width:1,height:14,background:C.s0}}/>
+                  <MoveIcon size={12} color={C.sub}/>
+                  <span style={{color:C.sub,fontSize:10}}>X</span>
+                  <input type="range" min={-100} max={100} step={1} value={selProps.panX||0} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,panX:+e.target.value}}))} style={{width:50,accentColor:C.peach}}/>
+                  <span style={{color:C.sub,fontSize:10}}>Y</span>
+                  <input type="range" min={-100} max={100} step={1} value={selProps.panY||0} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,panY:+e.target.value}}))} style={{width:50,accentColor:C.peach}}/>
+                  <span style={{color:C.overlay,cursor:"pointer",fontSize:9}} onClick={()=>setClipProps(p=>({...p,[selClip.id]:{...selProps,panX:0,panY:0}}))}>Reset</span>
+                </>}
               </>}
             </>
           ):(<>
@@ -3274,6 +3684,7 @@ function App(){
   const[cloudLoading,setCloudLoading]=useState(true);
   const[studioAuth,setStudioAuth]=useState(isSessionValid()); /* editor authenticated? */
   const[isEditorMode,setIsEditorMode]=useState(false); /* true when entering from studio route */
+  const[videoStatuses,setVideoStatuses]=useState({});
 
   /* Listen for hash changes */
   useEffect(()=>{
@@ -3288,6 +3699,8 @@ function App(){
     if(cloud.length>0){loadedPlayers=await hydratePlayerVideos(cloud);}
     else{const local=loadPlayers();if(local.length>0){loadedPlayers=await hydratePlayerVideos(local);}}
     setPlayers(loadedPlayers);setHydrated(true);setCloudLoading(false);
+    /* Load video statuses */
+    try{const allSt=await loadAllVideoStatuses();const byVid={};Object.values(allSt).forEach(s=>{byVid[s.videoId]=s;});setVideoStatuses(byVid);}catch(e){}
   }catch(e){console.warn("Init load error:",e);
     try{const local=loadPlayers();loadedPlayers=await hydratePlayerVideos(local);setPlayers(loadedPlayers);}catch(e2){}
     setHydrated(true);setCloudLoading(false);
@@ -3364,6 +3777,7 @@ function App(){
     goToLanding();
   };
   const refreshPlayers=async()=>{try{const cp=await loadPlayersFromCloud();if(cp.length>0){const hp=await hydratePlayerVideos(cp);setPlayers(hp);}}catch(e){console.warn("Refresh failed:",e);}};
+  const refreshStatuses=async()=>{try{const allSt=await loadAllVideoStatuses();const byVid={};Object.values(allSt).forEach(s=>{byVid[s.videoId]=s;});setVideoStatuses(byVid);}catch(e){}};
 
   /* Loading screen */
   if(cloudLoading)return(
@@ -3394,7 +3808,8 @@ function App(){
     if(athleteStep==="portal"&&activePlayer)return(<>
       <AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
         isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}
-        onOpenOverlay={(name)=>{setOverlayName(name);}}/>
+        onOpenOverlay={(name)=>{setOverlayName(name);}}
+        videoStatuses={videoStatuses} onStatusChange={refreshStatuses}/>
       {showOnboarding&&<OnboardingGuide playerName={activePlayer.name} onDone={()=>setShowOnboarding(false)}/>}
     </>);
   }
