@@ -1579,30 +1579,34 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
                   :<><FilmIcon size={28} color={C.s2}/><span>{isMobile?"No clips yet":"No clips — drop here"}</span></>}
                 </div>
               )}
-              {cat.videos.map(v=>(
-                <div key={v.id} style={{position:"relative"}}>
+              {cat.videos.map(v=>{const isExpanded=isMobile&&moveVidMenu&&moveVidMenu.vidId===v.id;return(
+                <div key={v.id}>
                 <div draggable={!isMobile} onDragStart={e=>{if(isMobile)return;e.stopPropagation();handleVidDragStart(e,v,cat.id);}} onDragEnd={e=>{e.stopPropagation();handleVidDragEnd();}}
-                  style={{display:"flex",alignItems:"center",gap:6,background:dragVid&&dragVid.id===v.id?AUSA.blue+"22":C.mantle,borderRadius:8,padding:isMobile?"10px 10px":"7px 10px",border:dragVid&&dragVid.id===v.id?`1px solid ${AUSA.blue}66`:`1px solid ${C.s1}`,cursor:isMobile?"default":"grab",opacity:dragVid&&dragVid.id===v.id?0.5:1,transition:"opacity 0.15s, background 0.15s"}}>
+                  onClick={()=>{if(isMobile&&player.categories.length>1)setMoveVidMenu(isExpanded?null:{vidId:v.id,catId:cat.id});}}
+                  style={{display:"flex",alignItems:"center",gap:6,background:isExpanded?AUSA.blue+"18":dragVid&&dragVid.id===v.id?AUSA.blue+"22":C.mantle,borderRadius:isExpanded?"8px 8px 0 0":8,padding:isMobile?"12px 12px":"7px 10px",border:isExpanded?`1px solid ${AUSA.blue}44`:dragVid&&dragVid.id===v.id?`1px solid ${AUSA.blue}66`:`1px solid ${C.s1}`,borderBottom:isExpanded?"none":undefined,cursor:isMobile?"pointer":"grab",opacity:dragVid&&dragVid.id===v.id?0.5:1,transition:"all 0.15s"}}>
                   {!isMobile&&<GripIcon size={10} color={C.overlay} style={{flexShrink:0}}/>}
-                  <FilmIcon size={isMobile?13:11} color={color}/>
-                  <span style={{color:C.text,fontSize:isMobile?13:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{v.name}</span>
+                  <FilmIcon size={isMobile?14:11} color={color}/>
+                  <span style={{color:C.text,fontSize:isMobile?13:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,fontWeight:isExpanded?600:400}}>{v.name}</span>
                   <span style={{color:C.overlay,fontSize:isMobile?10:9,flexShrink:0}}>{fmtTime(v.duration)}</span>
-                  {isMobile&&player.categories.length>1&&<button onClick={()=>setMoveVidMenu(moveVidMenu&&moveVidMenu.vidId===v.id?null:{vidId:v.id,catId:cat.id})} style={{...ib,color:AUSA.blue,padding:4}}><FolderIcon size={14}/></button>}
-                  <button onClick={()=>removeVid(cat.id,v.id)} style={{...ib,color:C.overlay,padding:isMobile?4:2}}><XIcon size={isMobile?13:11}/></button>
+                  {isMobile&&<ChevronDownIcon size={12} color={C.overlay} style={{flexShrink:0,transform:isExpanded?"rotate(180deg)":"none",transition:"transform 0.2s"}}/>}
+                  <button onClick={e=>{e.stopPropagation();removeVid(cat.id,v.id);}} style={{...ib,color:C.overlay,padding:isMobile?4:2}}><XIcon size={isMobile?13:11}/></button>
                 </div>
-                {/* Mobile "Move to" dropdown */}
-                {isMobile&&moveVidMenu&&moveVidMenu.vidId===v.id&&<div style={{position:"absolute",right:4,top:"100%",zIndex:100,background:C.base,border:`1px solid ${AUSA.blue}66`,borderRadius:10,padding:6,boxShadow:"0 8px 24px rgba(0,0,0,0.4)",minWidth:180}}>
-                  <div style={{color:C.overlay,fontSize:10,fontWeight:700,padding:"4px 8px",letterSpacing:0.5}}>MOVE TO:</div>
-                  {player.categories.filter(tc=>tc.id!==cat.id).map(tc=>(
-                    <button key={tc.id} onClick={()=>moveVidToCat(v,cat.id,tc.id)}
-                      style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:"transparent",border:"none",color:C.text,fontSize:13,fontWeight:600,padding:"10px 8px",borderRadius:6,cursor:"pointer",textAlign:"left"}}
-                      onTouchStart={e=>e.currentTarget.style.background=AUSA.blue+"22"} onTouchEnd={e=>e.currentTarget.style.background="transparent"}>
-                      <FolderIcon size={14} color={tc.isInbox?"#BFD7EA":AUSA.blue}/> {tc.name}
-                    </button>
-                  ))}
+                {/* Mobile: tap video → show category buttons inline below */}
+                {isExpanded&&<div style={{background:C.base,border:`1px solid ${AUSA.blue}44`,borderTop:"none",borderRadius:"0 0 8px 8px",padding:"8px 10px"}}>
+                  <div style={{color:C.overlay,fontSize:10,fontWeight:700,marginBottom:6,letterSpacing:0.5}}>MOVE TO:</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                    {player.categories.filter(tc=>tc.id!==cat.id).map(tc=>{const catColor=tc.isInbox?"#BFD7EA":CAT_COLORS[player.categories.indexOf(tc)%CAT_COLORS.length];return(
+                      <button key={tc.id} onClick={e=>{e.stopPropagation();moveVidToCat(v,cat.id,tc.id);}}
+                        style={{display:"flex",alignItems:"center",gap:6,background:catColor+"18",border:`1px solid ${catColor}55`,color:C.text,fontSize:12,fontWeight:600,padding:"8px 14px",borderRadius:20,cursor:"pointer"}}
+                        onTouchStart={e=>e.currentTarget.style.background=catColor+"44"} onTouchEnd={e=>e.currentTarget.style.background=catColor+"18"}>
+                        <FolderIcon size={12} color={catColor}/> {tc.name}
+                      </button>
+                    );})}
+                  </div>
                 </div>}
                 </div>
-              ))}
+              );})}
+
               {isVidDropTarget&&cat.videos.length>0&&(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:8,border:`2px dashed ${AUSA.blue}66`,borderRadius:8,color:AUSA.light,fontSize:11,fontWeight:600,background:AUSA.blue+"08"}}>
                   Drop video here
