@@ -60,6 +60,7 @@
     .ath-pipeline-desktop{display:none!important}
     .ath-addcat-desktop{display:none!important}
     .ath-mobile-section{display:flex!important;flex-direction:column!important;flex:1!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch!important}
+    .ath-feedback-fab{bottom:72px!important;right:16px!important;width:44px!important;height:44px!important}
   }
   @media(min-width:641px){
     .ath-mobile-tabs{display:none!important}
@@ -830,7 +831,7 @@ function FeedbackModal({onClose,playerName}){
 function FeedbackFAB({playerName}){
   const[showModal,setShowModal]=useState(false);
   return(<>
-    <button data-tour="tour-feedback" onClick={()=>setShowModal(true)}
+    <button className="ath-feedback-fab" data-tour="tour-feedback" onClick={()=>setShowModal(true)}
       style={{position:"fixed",bottom:24,right:24,width:52,height:52,borderRadius:"50%",
         background:`linear-gradient(135deg,${AUSA.blue},${AUSA.navy})`,border:"none",cursor:"pointer",
         display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 20px ${AUSA.blue}66`,zIndex:900,transition:"transform 0.2s"}}
