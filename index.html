@@ -1218,13 +1218,21 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
   const[tourStep,setTourStep]=useState(null); /* null=off, 0=intro, 1-5=steps */
   const[spotRect,setSpotRect]=useState(null);
 
-  const TOUR_STEPS=[
+  const TOUR_STEPS=isMobile?[
     {target:"tour-inbox",tab:"videos",title:"Upload Your Videos",desc:"This is your upload zone. Tap the red upload button to add your game videos here — everything starts in the Media Inbox.",icon:<InboxIcon size={20} color={AUSA.light}/>,color:AUSA.light},
-    {target:"tour-categories",tab:"videos",title:"Move Videos to Categories",desc:isMobile?"Once uploaded, tap any video to expand it — you'll see category buttons appear below (Goals, Assists, etc.). Just tap the category and the video moves there instantly!":"After uploading, drag any video from the inbox and drop it into the correct category — Goals, Assists, Defensive Actions, etc.",icon:<FolderIcon size={20} color={AUSA.blue}/>,color:AUSA.blue},
-    {target:"tour-add-cat",tab:"videos",title:"Create Categories",desc:isMobile?"Need a new category? Tap here to create one. You can rename categories with the edit icon, and reorder them with the arrow buttons.":"Need a new category? Click here to create one. You can rename categories by clicking the edit icon, and reorder them by dragging.",icon:<FolderIcon size={20} color={AUSA.light}/>,color:AUSA.light},
+    {target:"tour-categories",tab:"videos",title:"Move Videos to Categories",desc:"Once uploaded, tap any video to expand it — you'll see category buttons appear below (Goals, Assists, etc.). Just tap the category and the video moves there instantly!",icon:<FolderIcon size={20} color={AUSA.blue}/>,color:AUSA.blue},
+    {target:"tour-add-cat",tab:"videos",title:"Create Categories",desc:"Need a new category? Tap here to create one. You can rename categories with the edit icon, and reorder them with the arrow buttons.",icon:<FolderIcon size={20} color={AUSA.light}/>,color:AUSA.light},
+    {target:"tour-nav-bar",tab:"videos",title:"Navigate Your Portal",desc:"Use these tabs at the bottom to switch between sections — Videos for your uploads, Journey to track progress, Links to share game footage, and Profile to manage your info.",icon:<EyeIcon size={20} color="#a78bfa"/>,color:"#a78bfa"},
+    {target:"tour-links-section",tab:"links",title:"Add Game Links",desc:"Share your game footage links here — paste a YouTube, Wyscout, Hudl, or any video URL. Add a title and notes so the editors know exactly what to look for.",icon:<LinkIcon size={20} color={AUSA.red}/>,color:AUSA.red},
+    {target:"tour-edit-profile",tab:"profile",title:"Your Profile",desc:"Update your profile photo, positions, shirt number, size, and more. You can also upload extra photos here for the editors to use in your highlights.",icon:<Edit3Icon size={20} color={AUSA.blue}/>,color:AUSA.blue},
+    {target:"tour-journey",tab:"journey",title:"Track Your Progress",desc:"Once you've submitted videos, check their status here — see what stage they're in, who's editing them, and estimated timelines for your highlight reel.",icon:<EyeIcon size={20} color="#22c55e"/>,color:"#22c55e"}
+  ]:[
+    {target:"tour-inbox",tab:"videos",title:"Upload Your Videos",desc:"This is your upload zone. Click the upload button to add your game videos here — everything starts in the Media Inbox.",icon:<InboxIcon size={20} color={AUSA.light}/>,color:AUSA.light},
+    {target:"tour-categories",tab:"videos",title:"Drag & Drop to Categories",desc:"After uploading, drag any video from the inbox and drop it into the correct category — Goals, Assists, Defensive Actions, etc.",icon:<FolderIcon size={20} color={AUSA.blue}/>,color:AUSA.blue},
+    {target:"tour-add-cat",tab:"videos",title:"Create Categories",desc:"Need a new category? Click here to create one. You can rename categories by clicking the edit icon, and reorder them by dragging.",icon:<FolderIcon size={20} color={AUSA.light}/>,color:AUSA.light},
     {target:"tour-links-section",tab:"links",title:"Add Game Links",desc:"Share your game footage links here — paste a YouTube, Wyscout, or any other video URL. You can also add notes for each link so the editors know what to look for.",icon:<LinkIcon size={20} color={AUSA.red}/>,color:AUSA.red},
     {target:"tour-edit-profile",tab:"profile",title:"Edit Your Profile",desc:"Update your profile photo, positions, shirt number, size, and more. You can also upload extra photos here for the editors to use in your highlights.",icon:<Edit3Icon size={20} color={AUSA.blue}/>,color:AUSA.blue},
-    {target:"tour-journey",tab:"journey",title:"Track Your Progress",desc:"Check the status of your highlight videos here — see what stage they're in, who's editing them, and estimated timelines.",icon:<EyeIcon size={20} color="#a78bfa"/>,color:"#a78bfa"}
+    {target:"tour-journey",tab:"journey",title:"Track Your Progress",desc:"Check the status of your highlight videos here — see what stage they're in, who's editing them, and estimated timelines.",icon:<EyeIcon size={20} color="#22c55e"/>,color:"#22c55e"}
   ];
 
   /* Position spotlight on current tour target — switch tab first on mobile */
@@ -1874,7 +1882,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
       </div>
     </div>}
     {/* ═══ MOBILE BOTTOM TAB BAR ═══ */}
-    {isMobile&&<div style={{display:"flex",alignItems:"stretch",background:C.mantle,borderTop:`1px solid ${C.s1}`,flexShrink:0,position:"relative",zIndex:50}}>
+    {isMobile&&<div data-tour="tour-nav-bar" style={{display:"flex",alignItems:"stretch",background:C.mantle,borderTop:`1px solid ${C.s1}`,flexShrink:0,position:"relative",zIndex:50}}>
       {[
         {id:"videos",label:"Videos",icon:<FilmIcon size={18}/>},
         {id:"journey",label:"Journey",icon:<EyeIcon size={18}/>},
