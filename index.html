@@ -209,6 +209,33 @@ const assignVideoEditor=async(playerId,videoId,editorName)=>{
   }catch(e){console.warn("Editor assign failed:",e);}
 };
 
+/* ═══ VIDEO BATCHES — batch-level progress tracking ═══ */
+const BATCH_STAGES=["submitted","editing","approved"];
+const BATCH_META={
+  submitted:{label:"Submitted",color:"#3b82f6",desc:"Your videos have been received and are waiting for an editor.",icon:"upload"},
+  editing:{label:"Being Edited",color:"#a78bfa",desc:"An editor is working on your highlight reel from these clips.",icon:"film"},
+  approved:{label:"Highlights Ready",color:"#22c55e",desc:"Your highlight reel is complete and ready to view!",icon:"check"}
+};
+const saveBatch=async(batch)=>{try{await fbDb.collection("videoBatches").doc(batch.id).set(batch,{merge:true});}catch(e){console.warn("Batch save failed:",e);}};
+const loadBatches=async(playerId)=>{try{const snap=await fbDb.collection("videoBatches").where("playerId","==",playerId).orderBy("createdAt","asc").get();return snap.docs.map(d=>d.data());}catch(e){console.warn("Batch load failed:",e);return[];}};
+const loadAllBatches=async()=>{try{const snap=await fbDb.collection("videoBatches").get();const out={};snap.docs.forEach(d=>{const b=d.data();if(!out[b.playerId])out[b.playerId]=[];out[b.playerId].push(b);});return out;}catch(e){console.warn("All batches load failed:",e);return{};}};
+const advanceBatchStage=async(batchId,newStage,editorName)=>{const now=Date.now();try{const ref=fbDb.collection("videoBatches").doc(batchId);const doc=await ref.get();if(!doc.exists)return;const prev=doc.data();const activity=prev.activity||[];activity.push({action:`Moved to ${BATCH_META[newStage].label}`,by:editorName||"Editor",at:now});await ref.update({stage:newStage,editor:editorName||(prev.editor||""),activity,updatedAt:now});}catch(e){console.warn("Batch advance failed:",e);}};
+/* Create a new batch when editor downloads videos */
+const createBatchFromDownload=async(player,editorName)=>{
+  const now=Date.now();const allVids=player.categories.flatMap(c=>c.videos);
+  if(allVids.length===0)return null;
+  /* Check existing batches to only include NEW (unbatched) videos */
+  const existing=await loadBatches(player.id);
+  const batchedIds=new Set();existing.forEach(b=>(b.videoIds||[]).forEach(id=>batchedIds.add(id)));
+  const newVids=allVids.filter(v=>!batchedIds.has(v.id));
+  if(newVids.length===0)return null;/* all videos already in a batch */
+  const batch={id:uid("batch"),playerId:player.id,playerName:player.name,videoIds:newVids.map(v=>v.id),videoNames:newVids.map(v=>v.name),videoCount:newVids.length,stage:"editing",editor:editorName||"Editor",createdAt:now,updatedAt:now,downloadedAt:now,activity:[{action:"Videos downloaded by editor",by:editorName||"Editor",at:now},{action:"Editing started",by:editorName||"Editor",at:now}]};
+  await saveBatch(batch);
+  /* Also mark individual video statuses for backward compatibility */
+  for(const v of newVids){await advanceVideoStage(player.id,v.id,"editing",editorName||"Editor");}
+  return batch;
+};
+
 /* ═══ WAVEFORM ═══ */
 const Waveform=({w,h,color,seed=0})=>{const bars=Math.max(4,Math.floor(w/3));const pts=[];let s=seed||1;for(let i=0;i<bars;i++){s=(s*16807+i*13)%2147483647;const n=(s%1000)/1000;const amp=0.2+n*0.8;pts.push(amp);}
   return(<svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{display:"block"}}>{pts.map((a,i)=>{const bw=w/bars;const bh=Math.max(1,a*h);return<rect key={i} x={i*bw} y={(h-bh)/2} width={Math.max(1,bw-1)} height={bh} fill={color} rx={0.5}/>;})}</svg>);};
@@ -442,7 +469,7 @@ function StudioLandingPage({onEnterStudio,onEnterAthleteReview}){
 }
 
 /* ═══════════ ATHLETE: PROFILE SELECT ═══════════ */
-function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,onPhoneLogin}){
+function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,onPhoneLogin,allBatches}){
   const[confirmDel,setConfirmDel]=useState(null);
   const[searchQ,setSearchQ]=useState("");
   const[loginPhone,setLoginPhone]=useState("");
@@ -482,10 +509,19 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,o
           {players.length>3&&<div style={{maxWidth:320,margin:"0 auto 24px"}}><input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Search by name..." style={{...inputStyle,textAlign:"center",fontSize:13}}/></div>}
           {editorFiltered.length>0&&(
             <div className="ath-select-grid" style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:16,marginBottom:32}}>
-              {editorFiltered.map((pl,i)=>(
+              {editorFiltered.map((pl,i)=>{
+                const totalVids=pl.categories.reduce((a,c)=>a+c.videos.length,0);
+                const plBatches=(allBatches||{})[pl.id]||[];
+                const batchedIds=new Set();plBatches.forEach(b=>(b.videoIds||[]).forEach(id=>batchedIds.add(id)));
+                const newVidCount=pl.categories.reduce((a,c)=>a+c.videos.filter(v=>!batchedIds.has(v.id)).length,0);
+                return(
                 <div key={pl.id} style={{background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:12,padding:"16px 16px 14px",cursor:"pointer",transition:"all 0.2s",textAlign:"center",position:"relative"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor=PLAYER_COLORS[i%8]+"66";e.currentTarget.style.transform="translateY(-2px)";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor=C.s0;e.currentTarget.style.transform="none";}}>
+                  {/* New videos badge */}
+                  {newVidCount>0&&<div style={{position:"absolute",top:-6,left:-6,background:"#f59e0b",color:"#000",fontSize:9,fontWeight:800,padding:"3px 8px",borderRadius:8,zIndex:3,boxShadow:"0 2px 8px rgba(245,158,11,0.4)",animation:"fadeIn 0.3s ease-out"}}>
+                    +{newVidCount} new video{newVidCount>1?"s":""}
+                  </div>}
                   <button onClick={e=>{e.stopPropagation();setConfirmDel(pl.id);}} style={{position:"absolute",top:8,right:8,...ib,color:C.overlay,padding:3,zIndex:2}} title="Delete profile"
                     onMouseEnter={e=>e.currentTarget.style.color=C.red} onMouseLeave={e=>e.currentTarget.style.color=C.overlay}><Trash2Icon size={13}/></button>
                   <div onClick={()=>onSelect(pl.id)}>
@@ -500,12 +536,13 @@ function AthleteSelect({players,isEditorMode,onSelect,onCreate,onBack,onDelete,o
                       <span style={{color:C.overlay,fontSize:11}}>Class {pl.recruitingClass}</span>
                     </div>
                     {pl.positions&&pl.positions.length>0&&<div style={{display:"flex",flexWrap:"wrap",justifyContent:"center",gap:3,marginBottom:4}}>{pl.positions.map(p=><span key={p} style={{background:C.green+"22",color:C.green||"#a6e3a1",fontSize:8,fontWeight:700,padding:"1px 6px",borderRadius:3}}>{p}</span>)}</div>}
-                    <div style={{color:C.overlay,fontSize:10}}>{pl.categories.reduce((a,c)=>a+c.videos.length,0)} clips uploaded</div>
+                    <div style={{color:C.overlay,fontSize:10}}>{totalVids} clips uploaded</div>
                   </div>
                   {pl.playingPicUrl&&<div style={{marginTop:8,borderRadius:6,overflow:"hidden",height:80}}>
                     <img src={pl.playingPicUrl} style={{width:"100%",height:"100%",objectFit:"cover",opacity:0.6}}/>
                   </div>}
-                </div>))}
+                </div>);})}
+
             </div>)}
           <button onClick={onCreate}
             style={{display:"inline-flex",alignItems:"center",gap:8,background:C.blue,color:"#fff",border:"none",borderRadius:10,padding:"12px 28px",fontSize:14,fontWeight:700,cursor:"pointer",letterSpacing:1}}>
@@ -1199,7 +1236,7 @@ function EditProfileModal({player,onSave,onClose}){
 }
 
 /* ═══════════ ATHLETE: UPLOAD PORTAL ═══════════ */
-function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,videoStatuses,onStatusChange}){
+function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,videoStatuses,onStatusChange,playerBatches,onBatchChange}){
   const[editCat,setEditCat]=useState(null);const[editName,setEditName]=useState("");
   const[showPipeline,setShowPipeline]=useState(false);const[expandedVid,setExpandedVid]=useState(null);
   const[showAdd,setShowAdd]=useState(false);const[newCat,setNewCat]=useState("");
@@ -1312,6 +1349,12 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
     try{
       const result=await downloadPlayerZip(player,setZipProg);
       setZipProg(null);
+      /* Auto-create batch & mark videos as editing when editor downloads */
+      if(isEditorMode){
+        await createBatchFromDownload(player,"Editor");
+        if(onStatusChange)onStatusChange();
+        if(onBatchChange)onBatchChange();
+      }
       if(result.missing>0)alert("Download complete. "+result.downloaded+"/"+result.total+" clips downloaded. "+result.missing+" file(s) missing — see MISSING_FILES.txt in the zip.");
     }catch(e){console.error("Zip error:",e);setZipProg(null);alert("Zip download failed: "+e.message);}
   };
@@ -1434,13 +1477,12 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
     {(!isMobile||mobileTab==="journey")&&<>{/* ═══ VIDEO PIPELINE / JOURNEY TRACKER ═══ */}
     {(()=>{
       const allVids=player.categories.flatMap(c=>c.videos.map(v=>({...v,catName:c.name})));
-      const tracked=allVids.filter(v=>videoStatuses&&videoStatuses[v.id]);
-      const untracked=allVids.filter(v=>!videoStatuses||!videoStatuses[v.id]);
-      const totalTracked=tracked.length;
-      const stageCounts={submitted:0,review:0,editing:0,approved:0};
-      tracked.forEach(v=>{const s=(videoStatuses[v.id]||{}).stage||"submitted";if(stageCounts[s]!==undefined)stageCounts[s]++;});
+      const batches=playerBatches||[];
+      /* Determine unbatched videos (submitted but not yet downloaded by an editor) */
+      const batchedIds=new Set();batches.forEach(b=>(b.videoIds||[]).forEach(id=>batchedIds.add(id)));
+      const unbatched=allVids.filter(v=>!batchedIds.has(v.id));
       const pipeOpen=showPipeline||(isMobile&&mobileTab==="journey");
-      if(allVids.length===0&&!pipeOpen)return null;
+      if(allVids.length===0&&batches.length===0&&!pipeOpen)return null;
       return(
       <div data-tour="tour-journey" style={{padding:isMobile?"0":"12px 40px 0",flexShrink:isMobile?undefined:0,flex:isMobile?1:undefined,overflow:isMobile?"auto":undefined}}>
         {!isMobile&&<div onClick={()=>setShowPipeline(p=>!p)} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"10px 16px",background:`linear-gradient(135deg,${AUSA.navy}22,${C.s0})`,borderRadius:pipeOpen?"12px 12px 0 0":12,border:`1px solid ${AUSA.blue}33`,borderBottom:pipeOpen?"none":undefined}}
@@ -1449,76 +1491,95 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
             <FilmIcon size={14} color={AUSA.light}/>
           </div>
           <span style={{fontWeight:800,fontSize:14,color:"#fff",letterSpacing:0.5,flex:1}}>MY VIDEO JOURNEY</span>
-          {totalTracked>0&&<div style={{display:"flex",gap:6,alignItems:"center"}}>
-            {VIDEO_STAGES.map(s=>stageCounts[s]>0&&<span key={s} style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:10,background:STAGE_META[s].color+"22",color:STAGE_META[s].color,border:`1px solid ${STAGE_META[s].color}44`}}>{stageCounts[s]} {STAGE_META[s].label}</span>)}
-          </div>}
+          <div style={{display:"flex",gap:6,alignItems:"center"}}>
+            {batches.length>0&&<span style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:10,background:AUSA.blue+"22",color:AUSA.light}}>{batches.length} batch{batches.length>1?"es":""}</span>}
+            {unbatched.length>0&&<span style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:10,background:"#f59e0b22",color:"#f59e0b"}}>+{unbatched.length} new</span>}
+          </div>
           <ChevronDownIcon size={16} color={C.sub} style={{transform:pipeOpen?"rotate(180deg)":"none",transition:"transform 0.2s"}}/>
         </div>}
-        {pipeOpen&&<div style={{background:isMobile?"transparent":C.s0,border:isMobile?"none":`1px solid ${AUSA.blue}33`,borderTop:"none",borderRadius:isMobile?0:"0 0 12px 12px",padding:isMobile?0:16,maxHeight:isMobile?"none":360,overflowY:"auto"}}>
-          {allVids.length===0?<div style={{textAlign:"center",color:C.overlay,fontSize:12,padding:20}}>Upload videos to see their journey here</div>
-          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {allVids.map(v=>{
-              const st=videoStatuses&&videoStatuses[v.id]?videoStatuses[v.id]:{stage:"submitted",editor:"",activity:[],createdAt:Date.now()};
-              const stageIdx=VIDEO_STAGES.indexOf(st.stage);
-              const meta=STAGE_META[st.stage]||STAGE_META.submitted;
-              const isExpanded=expandedVid===v.id;
-              return(
-              <div key={v.id} style={{background:C.mantle,borderRadius:10,border:`1px solid ${isExpanded?meta.color+"66":C.s1}`,overflow:"hidden",transition:"border 0.2s"}}>
-                <div onClick={()=>setExpandedVid(isExpanded?null:v.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",cursor:"pointer"}}
-                  onMouseEnter={e=>e.currentTarget.style.background=C.s0+"88"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <FilmIcon size={12} color={meta.color}/>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</div>
-                    <div style={{fontSize:10,color:C.overlay}}>{v.catName} &bull; {fmtTime(v.duration)}</div>
-                  </div>
-                  {/* Mini stage tracker */}
-                  <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
-                    {VIDEO_STAGES.map((s,i)=>{
-                      const done=i<=stageIdx;const active=i===stageIdx;
-                      return<React.Fragment key={s}>
-                        {i>0&&<div style={{width:12,height:2,background:done?STAGE_META[s].color+"88":C.s1,borderRadius:1,transition:"background 0.3s"}}/>}
-                        <div style={{width:active?10:7,height:active?10:7,borderRadius:"50%",background:done?STAGE_META[s].color:C.s1,boxShadow:active?`0 0 8px ${STAGE_META[s].color}88`:"none",transition:"all 0.3s",border:active?`2px solid ${STAGE_META[s].color}`:"none"}}/>
-                      </React.Fragment>;
-                    })}
-                  </div>
-                  <span style={{fontSize:10,fontWeight:700,color:meta.color,background:meta.color+"18",padding:"2px 8px",borderRadius:6,flexShrink:0}}>{meta.label}</span>
-                  {st.editor&&<span style={{fontSize:9,color:C.sub,flexShrink:0}}>{st.editor}</span>}
-                  <ChevronDownIcon size={12} color={C.overlay} style={{transform:isExpanded?"rotate(180deg)":"none",transition:"transform 0.2s",flexShrink:0}}/>
+        {pipeOpen&&<div style={{background:isMobile?"transparent":C.s0,border:isMobile?"none":`1px solid ${AUSA.blue}33`,borderTop:"none",borderRadius:isMobile?0:"0 0 12px 12px",padding:isMobile?12:16,maxHeight:isMobile?"none":460,overflowY:"auto"}}>
+          {allVids.length===0&&batches.length===0?<div style={{textAlign:"center",color:C.overlay,fontSize:12,padding:20}}>Upload videos to see your progress here</div>
+          :<div style={{display:"flex",flexDirection:"column",gap:12}}>
+            {/* ── Unbatched videos: waiting for editor pickup ── */}
+            {unbatched.length>0&&<div style={{background:C.mantle,borderRadius:12,border:`1px solid #f59e0b44`,overflow:"hidden"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px"}}>
+                <div style={{width:32,height:32,borderRadius:"50%",background:"#3b82f622",border:"2px solid #3b82f6",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><UploadIcon size={14} color="#3b82f6"/></div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>{unbatched.length} Video{unbatched.length>1?"s":""} Submitted</div>
+                  <div style={{fontSize:11,color:C.sub}}>Waiting for an editor to pick up your clips</div>
                 </div>
-                {isExpanded&&<div style={{borderTop:`1px solid ${C.s1}`,padding:"12px 14px"}}>
-                  {/* Stage detail */}
-                  <div style={{display:"flex",alignItems:"stretch",gap:0,marginBottom:14}}>
-                    {VIDEO_STAGES.map((s,i)=>{
-                      const done=i<=stageIdx;const active=i===stageIdx;const sm=STAGE_META[s];
-                      return<div key={s} style={{flex:1,textAlign:"center",position:"relative"}}>
-                        {i>0&&<div style={{position:"absolute",top:12,left:0,right:"50%",height:3,background:done?sm.color:C.s1,zIndex:0}}/>}
-                        {i<VIDEO_STAGES.length-1&&<div style={{position:"absolute",top:12,left:"50%",right:0,height:3,background:(i<stageIdx)?STAGE_META[VIDEO_STAGES[i+1]].color:C.s1,zIndex:0}}/>}
-                        <div style={{width:26,height:26,borderRadius:"50%",background:done?sm.color:C.s0,border:`2px solid ${done?sm.color:C.s1}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto",position:"relative",zIndex:1,boxShadow:active?`0 0 12px ${sm.color}66`:"none"}}>
-                          {s==="submitted"&&<UploadIcon size={11} color={done?"#fff":C.overlay}/>}
-                          {s==="review"&&<EyeIcon size={11} color={done?"#fff":C.overlay}/>}
-                          {s==="editing"&&<FilmIcon size={11} color={done?"#fff":C.overlay}/>}
-                          {s==="approved"&&<CheckIcon size={11} color={done?"#fff":C.overlay}/>}
-                        </div>
-                        <div style={{fontSize:9,fontWeight:active?800:600,color:done?sm.color:C.overlay,marginTop:4}}>{sm.label}</div>
-                        <div style={{fontSize:8,color:C.overlay,marginTop:1}}>{sm.est}</div>
-                      </div>;
-                    })}
+                <span style={{fontSize:10,fontWeight:700,color:"#3b82f6",background:"#3b82f618",padding:"3px 10px",borderRadius:6,flexShrink:0}}>Queued</span>
+              </div>
+              {/* Progress bar — submitted stage */}
+              <div style={{padding:"0 14px 12px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                  {BATCH_STAGES.map((s,i)=>{const done=i===0;const bm=BATCH_META[s];return<React.Fragment key={s}>
+                    {i>0&&<div style={{flex:1,height:3,background:C.s1,borderRadius:2}}/>}
+                    <div style={{width:done?12:8,height:done?12:8,borderRadius:"50%",background:done?bm.color:C.s1,boxShadow:done?`0 0 8px ${bm.color}66`:"none",transition:"all 0.3s"}}/>
+                  </React.Fragment>;})}
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  {BATCH_STAGES.map((s,i)=><span key={s} style={{fontSize:8,color:i===0?BATCH_META[s].color:C.overlay,fontWeight:i===0?700:500}}>{BATCH_META[s].label}</span>)}
+                </div>
+              </div>
+              {/* Video names */}
+              <div style={{padding:"0 14px 10px",display:"flex",flexWrap:"wrap",gap:4}}>
+                {unbatched.slice(0,6).map(v=><span key={v.id} style={{fontSize:9,color:C.sub,background:C.s0,padding:"2px 8px",borderRadius:4,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.name}</span>)}
+                {unbatched.length>6&&<span style={{fontSize:9,color:C.overlay,padding:"2px 4px"}}>+{unbatched.length-6} more</span>}
+              </div>
+            </div>}
+            {/* ── Batches: one progress line per batch ── */}
+            {[...batches].reverse().map((batch,bi)=>{
+              const bStageIdx=BATCH_STAGES.indexOf(batch.stage);
+              const bMeta=BATCH_META[batch.stage]||BATCH_META.submitted;
+              const isExp=expandedVid===batch.id;
+              return(
+              <div key={batch.id} style={{background:C.mantle,borderRadius:12,border:`1px solid ${isExp?bMeta.color+"66":C.s1}`,overflow:"hidden",transition:"border 0.2s"}}>
+                <div onClick={()=>setExpandedVid(isExp?null:batch.id)} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.s0+"88"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <div style={{width:32,height:32,borderRadius:"50%",background:bMeta.color+"22",border:`2px solid ${bMeta.color}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    {batch.stage==="submitted"&&<UploadIcon size={14} color={bMeta.color}/>}
+                    {batch.stage==="editing"&&<FilmIcon size={14} color={bMeta.color}/>}
+                    {batch.stage==="approved"&&<CheckIcon size={14} color={bMeta.color}/>}
                   </div>
-                  {/* Current stage description */}
-                  <div style={{background:meta.color+"0D",border:`1px solid ${meta.color}33`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
-                    <div style={{fontSize:11,color:meta.color,fontWeight:700,marginBottom:2}}>{meta.label}</div>
-                    <div style={{fontSize:11,color:C.sub,lineHeight:1.4}}>{meta.desc}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#fff"}}>{batch.videoCount} Video{batch.videoCount>1?"s":""} — {bMeta.label}</div>
+                    <div style={{fontSize:11,color:C.sub}}>{batch.editor?`Editor: ${batch.editor}`:"Waiting for editor"} &bull; {new Date(batch.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
                   </div>
-                  {/* Editor assignment */}
-                  {st.editor&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"6px 10px",background:C.s0,borderRadius:6}}>
+                  <ChevronDownIcon size={12} color={C.overlay} style={{transform:isExp?"rotate(180deg)":"none",transition:"transform 0.2s",flexShrink:0}}/>
+                </div>
+                {/* Progress bar */}
+                <div style={{padding:"0 14px 10px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                    {BATCH_STAGES.map((s,i)=>{const done=i<=bStageIdx;const active=i===bStageIdx;const bm=BATCH_META[s];return<React.Fragment key={s}>
+                      {i>0&&<div style={{flex:1,height:3,background:done?bm.color+"88":C.s1,borderRadius:2,transition:"background 0.3s"}}/>}
+                      <div style={{width:active?12:8,height:active?12:8,borderRadius:"50%",background:done?bm.color:C.s1,boxShadow:active?`0 0 8px ${bm.color}66`:"none",transition:"all 0.3s"}}/>
+                    </React.Fragment>;})}
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    {BATCH_STAGES.map((s,i)=><span key={s} style={{fontSize:8,color:i<=bStageIdx?BATCH_META[s].color:C.overlay,fontWeight:i===bStageIdx?700:500}}>{BATCH_META[s].label}</span>)}
+                  </div>
+                </div>
+                {/* Expanded details */}
+                {isExp&&<div style={{borderTop:`1px solid ${C.s1}`,padding:"12px 14px"}}>
+                  <div style={{background:bMeta.color+"0D",border:`1px solid ${bMeta.color}33`,borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+                    <div style={{fontSize:11,color:bMeta.color,fontWeight:700,marginBottom:2}}>{bMeta.label}</div>
+                    <div style={{fontSize:11,color:C.sub,lineHeight:1.4}}>{bMeta.desc}</div>
+                  </div>
+                  {batch.editor&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"6px 10px",background:C.s0,borderRadius:6}}>
                     <div style={{width:22,height:22,borderRadius:"50%",background:AUSA.blue+"33",display:"flex",alignItems:"center",justifyContent:"center"}}><UserIcon size={10} color={AUSA.light}/></div>
-                    <div><div style={{fontSize:10,color:C.overlay}}>Your Editor</div><div style={{fontSize:11,fontWeight:700,color:"#fff"}}>{st.editor}</div></div>
+                    <div><div style={{fontSize:10,color:C.overlay}}>Your Editor</div><div style={{fontSize:11,fontWeight:700,color:"#fff"}}>{batch.editor}</div></div>
                   </div>}
+                  {/* Video list in this batch */}
+                  <div style={{fontSize:10,fontWeight:700,color:C.overlay,marginBottom:6,letterSpacing:0.5}}>VIDEOS IN THIS BATCH</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:10}}>
+                    {(batch.videoNames||[]).map((n,i)=><span key={i} style={{fontSize:10,color:C.text,background:C.s0,padding:"3px 8px",borderRadius:4}}>{n}</span>)}
+                  </div>
                   {/* Activity feed */}
-                  {st.activity&&st.activity.length>0&&<div>
+                  {batch.activity&&batch.activity.length>0&&<div>
                     <div style={{fontSize:10,fontWeight:700,color:C.overlay,marginBottom:6,letterSpacing:0.5}}>ACTIVITY</div>
                     <div style={{display:"flex",flexDirection:"column",gap:0}}>
-                      {[...st.activity].reverse().map((a,i)=>(
+                      {[...batch.activity].reverse().map((a,i)=>(
                         <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"4px 0"}}>
                           <div style={{width:6,height:6,borderRadius:"50%",background:i===0?C.green:C.s1,marginTop:4,flexShrink:0}}/>
                           <div style={{flex:1}}><span style={{fontSize:10,color:i===0?"#fff":C.sub}}>{a.action}</span>{a.by&&<span style={{fontSize:9,color:C.overlay}}> — {a.by}</span>}</div>
@@ -1530,22 +1591,16 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
                   {/* Editor controls — only in editor mode */}
                   {isEditorMode&&<div style={{borderTop:`1px solid ${C.s1}`,marginTop:10,paddingTop:10}}>
                     <div style={{fontSize:10,fontWeight:700,color:C.peach,marginBottom:6,letterSpacing:0.5}}>EDITOR CONTROLS</div>
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-                      {VIDEO_STAGES.map((s,i)=>{
-                        const sm=STAGE_META[s];const isCurrent=s===st.stage;
-                        return<button key={s} disabled={isCurrent} onClick={async()=>{await advanceVideoStage(player.id,v.id,s,"Editor");if(onStatusChange)onStatusChange();}}
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {BATCH_STAGES.map(s=>{
+                        const sm=BATCH_META[s];const isCurrent=s===batch.stage;
+                        return<button key={s} disabled={isCurrent} onClick={async()=>{await advanceBatchStage(batch.id,s,"Editor");if(onBatchChange)onBatchChange();}}
                           style={{fontSize:10,fontWeight:isCurrent?800:600,padding:"4px 10px",borderRadius:6,cursor:isCurrent?"default":"pointer",
                             background:isCurrent?sm.color+"33":"transparent",color:isCurrent?sm.color:C.sub,
-                            border:`1px solid ${isCurrent?sm.color:C.s1}`,opacity:isCurrent?1:0.7}}
-                          onMouseEnter={e=>{if(!isCurrent)e.currentTarget.style.opacity="1";}} onMouseLeave={e=>{if(!isCurrent)e.currentTarget.style.opacity="0.7";}}>
+                            border:`1px solid ${isCurrent?sm.color:C.s1}`,opacity:isCurrent?1:0.7}}>
                           {sm.label}
                         </button>;
                       })}
-                      <div style={{width:1,height:16,background:C.s1,margin:"0 4px"}}/>
-                      <button onClick={async()=>{const name=prompt("Editor name:");if(name){await assignVideoEditor(player.id,v.id,name);if(onStatusChange)onStatusChange();}}}
-                        style={{fontSize:10,fontWeight:600,padding:"4px 10px",borderRadius:6,cursor:"pointer",background:AUSA.blue+"18",color:AUSA.light,border:`1px solid ${AUSA.blue}44`}}>
-                        <UserIcon size={9} color={AUSA.light}/> Assign
-                      </button>
                     </div>
                   </div>}
                 </div>}
@@ -3772,6 +3827,8 @@ function App(){
   const[studioAuth,setStudioAuth]=useState(isSessionValid()); /* editor authenticated? */
   const[isEditorMode,setIsEditorMode]=useState(false); /* true when entering from studio route */
   const[videoStatuses,setVideoStatuses]=useState({});
+  const[allBatches,setAllBatches]=useState({}); /* {playerId: [batch, ...]} */
+  const refreshBatches=async()=>{try{const b=await loadAllBatches();setAllBatches(b);}catch(e){}};
 
   /* Listen for hash changes */
   useEffect(()=>{
@@ -3786,8 +3843,9 @@ function App(){
     if(cloud.length>0){loadedPlayers=await hydratePlayerVideos(cloud);}
     else{const local=loadPlayers();if(local.length>0){loadedPlayers=await hydratePlayerVideos(local);}}
     setPlayers(loadedPlayers);setHydrated(true);setCloudLoading(false);
-    /* Load video statuses */
+    /* Load video statuses and batches */
     try{const allSt=await loadAllVideoStatuses();const byVid={};Object.values(allSt).forEach(s=>{byVid[s.videoId]=s;});setVideoStatuses(byVid);}catch(e){}
+    try{const b=await loadAllBatches();setAllBatches(b);}catch(e){}
   }catch(e){console.warn("Init load error:",e);
     try{const local=loadPlayers();loadedPlayers=await hydratePlayerVideos(local);setPlayers(loadedPlayers);}catch(e2){}
     setHydrated(true);setCloudLoading(false);
@@ -3887,7 +3945,7 @@ function App(){
   /* ── INNER SCREENS (athlete flow + editor) ── */
   if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers}/>;
   if(screen==="athlete"){
-    if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode}
+    if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode} allBatches={allBatches}
       onSelect={id=>{setActivePlayerId(id);setAthleteStep("portal");}}
       onPhoneLogin={player=>{setMyAthletePhone(player.phone);setMyPlayerId(player.id);setActivePlayerId(player.id);setAthleteStep("portal");}}
       onCreate={()=>setAthleteStep("form")} onBack={goToLanding} onDelete={handleDeletePlayer}/>;
@@ -3896,7 +3954,8 @@ function App(){
       <AthletePortal player={activePlayer} onUpdatePlayer={handleUpdatePlayer}
         isEditorMode={isEditorMode} onBack={isEditorMode?()=>{setAthleteStep("select");setActivePlayerId(null);}:athleteSignOut}
         onOpenOverlay={(name)=>{setOverlayName(name);}}
-        videoStatuses={videoStatuses} onStatusChange={refreshStatuses}/>
+        videoStatuses={videoStatuses} onStatusChange={refreshStatuses}
+        playerBatches={allBatches[activePlayer.id]||[]} onBatchChange={refreshBatches}/>
       {showOnboarding&&<OnboardingGuide playerName={activePlayer.name} onDone={()=>setShowOnboarding(false)}/>}
     </>);
   }
