@@ -1219,26 +1219,35 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
   const[spotRect,setSpotRect]=useState(null);
 
   const TOUR_STEPS=[
-    {target:"tour-inbox",title:"Media Inbox",desc:"This is your central upload zone. Click the button below to upload all your game videos here first — everything goes into this inbox.",icon:<InboxIcon size={20} color={AUSA.light}/>,color:AUSA.light},
-    {target:"tour-categories",title:"Drag & Drop to Categories",desc:"After uploading, grab any video from the inbox and drag it to the correct category — Goals, Assists, Defensive Actions, etc. The clip moves instantly!",icon:<GripIcon size={20} color={AUSA.blue}/>,color:AUSA.blue},
-    {target:"tour-add-cat",title:"Organize Your Categories",desc:"Need a new category? Click here to create one. You can also rename existing categories by clicking the edit icon on each card, and reorder them by dragging.",icon:<FolderIcon size={20} color={AUSA.light}/>,color:AUSA.light},
-    {target:"tour-edit-profile",title:"Edit Your Profile",desc:"Update your profile photo, positions, shirt number, size, and other info. This helps the editing team find and identify you.",icon:<Edit3Icon size={20} color={AUSA.blue}/>,color:AUSA.blue},
-    {target:"tour-feedback",title:"Send Feedback",desc:"Have a request or note for the editors? Tap this button anytime to send feedback directly to the team.",icon:<MessageSquareIcon size={20} color={AUSA.red}/>,color:AUSA.red}
+    {target:"tour-inbox",tab:"videos",title:"Upload Your Videos",desc:"This is your upload zone. Tap the red upload button to add your game videos here — everything starts in the Media Inbox.",icon:<InboxIcon size={20} color={AUSA.light}/>,color:AUSA.light},
+    {target:"tour-categories",tab:"videos",title:"Move Videos to Categories",desc:isMobile?"Once uploaded, tap any video to expand it — you'll see category buttons appear below (Goals, Assists, etc.). Just tap the category and the video moves there instantly!":"After uploading, drag any video from the inbox and drop it into the correct category — Goals, Assists, Defensive Actions, etc.",icon:<FolderIcon size={20} color={AUSA.blue}/>,color:AUSA.blue},
+    {target:"tour-add-cat",tab:"videos",title:"Create Categories",desc:isMobile?"Need a new category? Tap here to create one. You can rename categories with the edit icon, and reorder them with the arrow buttons.":"Need a new category? Click here to create one. You can rename categories by clicking the edit icon, and reorder them by dragging.",icon:<FolderIcon size={20} color={AUSA.light}/>,color:AUSA.light},
+    {target:"tour-links-section",tab:"links",title:"Add Game Links",desc:"Share your game footage links here — paste a YouTube, Wyscout, or any other video URL. You can also add notes for each link so the editors know what to look for.",icon:<LinkIcon size={20} color={AUSA.red}/>,color:AUSA.red},
+    {target:"tour-edit-profile",tab:"profile",title:"Edit Your Profile",desc:"Update your profile photo, positions, shirt number, size, and more. You can also upload extra photos here for the editors to use in your highlights.",icon:<Edit3Icon size={20} color={AUSA.blue}/>,color:AUSA.blue},
+    {target:"tour-journey",tab:"journey",title:"Track Your Progress",desc:"Check the status of your highlight videos here — see what stage they're in, who's editing them, and estimated timelines.",icon:<EyeIcon size={20} color="#a78bfa"/>,color:"#a78bfa"}
   ];
 
-  /* Position spotlight on current tour target */
+  /* Position spotlight on current tour target — switch tab first on mobile */
   useEffect(()=>{
     if(tourStep===null||tourStep===0){setSpotRect(null);return;}
     const step=TOUR_STEPS[tourStep-1];if(!step)return;
-    const el=document.querySelector(`[data-tour="${step.target}"]`);
-    if(el){const r=el.getBoundingClientRect();setSpotRect({x:r.x-8,y:r.y-8,w:r.width+16,h:r.height+16});
-      el.scrollIntoView({behavior:"smooth",block:"nearest",inline:"nearest"});
-    }else{setSpotRect(null);}
+    /* Switch to the right tab on mobile before looking for the element */
+    if(isMobile&&step.tab){setMobileTab(step.tab);}
+    /* Small delay to let tab switch render, then find the element */
+    const timer=setTimeout(()=>{
+      const el=document.querySelector(`[data-tour="${step.target}"]`);
+      if(el){const r=el.getBoundingClientRect();setSpotRect({x:r.x-8,y:r.y-8,w:r.width+16,h:r.height+16});
+        el.scrollIntoView({behavior:"smooth",block:"center",inline:"nearest"});
+        /* Re-measure after scroll settles */
+        setTimeout(()=>{const r2=el.getBoundingClientRect();setSpotRect({x:r2.x-8,y:r2.y-8,w:r2.width+16,h:r2.height+16});},350);
+      }else{setSpotRect(null);}
+    },isMobile?150:50);
+    return()=>clearTimeout(timer);
   },[tourStep]);
 
   const startTour=()=>{setShowWelcome(false);setTourStep(1);};
-  const nextTourStep=()=>{if(tourStep>=TOUR_STEPS.length){setTourStep(null);setSpotRect(null);}else setTourStep(tourStep+1);};
-  const skipTour=()=>{setTourStep(null);setSpotRect(null);};
+  const nextTourStep=()=>{if(tourStep>=TOUR_STEPS.length){setTourStep(null);setSpotRect(null);if(isMobile)setMobileTab("videos");}else setTourStep(tourStep+1);};
+  const skipTour=()=>{setTourStep(null);setSpotRect(null);if(isMobile)setMobileTab("videos");};
 
   /* ── Show welcome guide on first visit ── */
   useEffect(()=>{
@@ -1424,7 +1433,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
       const pipeOpen=showPipeline||(isMobile&&mobileTab==="journey");
       if(allVids.length===0&&!pipeOpen)return null;
       return(
-      <div style={{padding:isMobile?"0":"12px 40px 0",flexShrink:isMobile?undefined:0,flex:isMobile?1:undefined,overflow:isMobile?"auto":undefined}}>
+      <div data-tour="tour-journey" style={{padding:isMobile?"0":"12px 40px 0",flexShrink:isMobile?undefined:0,flex:isMobile?1:undefined,overflow:isMobile?"auto":undefined}}>
         {!isMobile&&<div onClick={()=>setShowPipeline(p=>!p)} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"10px 16px",background:`linear-gradient(135deg,${AUSA.navy}22,${C.s0})`,borderRadius:pipeOpen?"12px 12px 0 0":12,border:`1px solid ${AUSA.blue}33`,borderBottom:pipeOpen?"none":undefined}}
           onMouseEnter={e=>e.currentTarget.style.background=`linear-gradient(135deg,${AUSA.navy}33,${C.s0})`} onMouseLeave={e=>e.currentTarget.style.background=`linear-gradient(135deg,${AUSA.navy}22,${C.s0})`}>
           <div style={{width:28,height:28,borderRadius:"50%",background:`linear-gradient(135deg,${AUSA.blue}44,${AUSA.navy}44)`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -1625,7 +1634,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
         );})}
 
         {/* ═══ GAME LINKS CARD (desktop, inside horizontal scroll) ═══ */}
-        {!isMobile&&<div className="ath-cat-card" data-tour="tour-links" style={{minWidth:280,width:280,flexShrink:0,display:"flex",flexDirection:"column",background:`linear-gradient(180deg,${AUSA.red}12,${C.s0})`,borderRadius:12,border:`1px solid ${AUSA.red}44`,overflow:"hidden"}}>
+        {!isMobile&&<div className="ath-cat-card" data-tour="tour-links-section" style={{minWidth:280,width:280,flexShrink:0,display:"flex",flexDirection:"column",background:`linear-gradient(180deg,${AUSA.red}12,${C.s0})`,borderRadius:12,border:`1px solid ${AUSA.red}44`,overflow:"hidden"}}>
           <div style={{display:"flex",alignItems:"center",padding:"12px 14px",borderBottom:`1px solid ${AUSA.red}33`,flexShrink:0,background:`linear-gradient(90deg,${AUSA.red}18,${AUSA.red}08)`}}>
             <LinkIcon size={16} color={AUSA.red} style={{marginRight:8,flexShrink:0}}/>
             <span style={{color:AUSA.red,fontSize:14,fontWeight:800,flex:1,letterSpacing:0.5}}>Game Links</span>
@@ -1694,7 +1703,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
 
     {/* ═══ MOBILE: Game Links tab ═══ */}
     {isMobile&&mobileTab==="links"&&<div style={{flex:1,overflow:"auto",WebkitOverflowScrolling:"touch",padding:16}}>
-      <div style={{display:"flex",flexDirection:"column",background:`linear-gradient(180deg,${AUSA.red}12,${C.s0})`,borderRadius:12,border:`1px solid ${AUSA.red}44`,overflow:"hidden",minHeight:"100%"}}>
+      <div data-tour="tour-links-section" style={{display:"flex",flexDirection:"column",background:`linear-gradient(180deg,${AUSA.red}12,${C.s0})`,borderRadius:12,border:`1px solid ${AUSA.red}44`,overflow:"hidden",minHeight:"100%"}}>
         <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:`1px solid ${AUSA.red}33`,background:`linear-gradient(90deg,${AUSA.red}18,${AUSA.red}08)`}}>
           <LinkIcon size={18} color={AUSA.red} style={{marginRight:10,flexShrink:0}}/>
           <span style={{color:AUSA.red,fontSize:16,fontWeight:800,flex:1}}>Game Links</span>
@@ -1909,49 +1918,64 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
     {/* ── Interactive Tour Spotlight ── */}
     {tourStep!==null&&tourStep>0&&tourStep<=TOUR_STEPS.length&&(()=>{
       const step=TOUR_STEPS[tourStep-1];const sr=spotRect;
-      /* Tooltip position: try to place it to the right of the spotlight, or below if no room */
-      const tipW=320;const tipH=200;
-      let tipX=sr?(sr.x+sr.w+16):100;
-      let tipY=sr?(sr.y+sr.h/2-tipH/2):100;
-      if(tipX+tipW>window.innerWidth-20){tipX=sr?Math.max(16,sr.x-tipW-16):100;}
-      if(tipY<16)tipY=16;if(tipY+tipH>window.innerHeight-16)tipY=window.innerHeight-tipH-16;
-      return<div style={{position:"fixed",inset:0,zIndex:1000}}>
+      const vw=window.innerWidth;const vh=window.innerHeight;
+      const tipW=isMobile?Math.min(vw-32,340):320;
+      /* Position tooltip: BELOW the highlighted element if there's room, otherwise ABOVE */
+      let tipX=16,tipY=16;
+      if(sr){
+        const spaceBelow=vh-(sr.y+sr.h);const spaceAbove=sr.y;
+        if(isMobile){
+          /* Mobile: center horizontally, place below or above */
+          tipX=Math.max(16,Math.min((vw-tipW)/2,vw-tipW-16));
+          if(spaceBelow>220){tipY=sr.y+sr.h+12;}
+          else if(spaceAbove>220){tipY=sr.y-220;}
+          else{tipY=vh-240;}
+        }else{
+          /* Desktop: try right side, then left, then below */
+          const spaceRight=vw-(sr.x+sr.w);
+          if(spaceRight>tipW+32){tipX=sr.x+sr.w+16;tipY=Math.max(16,Math.min(sr.y,vh-240));}
+          else if(sr.x>tipW+32){tipX=sr.x-tipW-16;tipY=Math.max(16,Math.min(sr.y,vh-240));}
+          else if(spaceBelow>240){tipX=Math.max(16,sr.x);tipY=sr.y+sr.h+12;}
+          else{tipX=Math.max(16,sr.x);tipY=Math.max(16,sr.y-220);}
+        }
+      }
+      return<div style={{position:"fixed",inset:0,zIndex:1000}} onClick={e=>{if(e.target===e.currentTarget)nextTourStep();}}>
         {/* Dark overlay with cutout using SVG */}
-        <svg width="100%" height="100%" style={{position:"absolute",inset:0}}>
+        <svg width="100%" height="100%" style={{position:"absolute",inset:0,pointerEvents:"none"}}>
           <defs>
             <mask id="tourMask">
               <rect width="100%" height="100%" fill="white"/>
               {sr&&<rect x={sr.x} y={sr.y} width={sr.w} height={sr.h} rx="12" fill="black"/>}
             </mask>
           </defs>
-          <rect width="100%" height="100%" fill="rgba(0,0,0,0.82)" mask="url(#tourMask)"/>
+          <rect width="100%" height="100%" fill="rgba(0,0,0,0.78)" mask="url(#tourMask)"/>
         </svg>
         {/* Glowing border around spotlighted element */}
         {sr&&<div style={{position:"absolute",left:sr.x,top:sr.y,width:sr.w,height:sr.h,borderRadius:12,border:`2px solid ${step.color}`,boxShadow:`0 0 24px ${step.color}44, inset 0 0 24px ${step.color}11`,pointerEvents:"none",animation:"fadeIn 0.3s ease-out"}}/>}
+        {/* Arrow pointing from tooltip to highlighted area */}
+        {sr&&<div style={{position:"absolute",left:sr.x+sr.w/2-8,top:tipY>sr.y+sr.h?sr.y+sr.h:tipY>16?tipY-1:undefined,bottom:tipY<sr.y?undefined:undefined,width:0,height:0,borderLeft:"8px solid transparent",borderRight:"8px solid transparent",...(tipY>sr.y+sr.h?{borderBottom:`10px solid ${step.color}44`}:{borderTop:`10px solid ${step.color}44`}),pointerEvents:"none",zIndex:1001}}/>}
         {/* Tooltip card */}
-        <div style={{position:"absolute",left:tipX,top:tipY,width:tipW,background:`linear-gradient(135deg,${C.mantle},${C.s0})`,border:`1px solid ${step.color}44`,borderRadius:16,padding:"20px 22px",boxShadow:`0 12px 40px rgba(0,0,0,0.5), 0 0 20px ${step.color}22`,animation:"fadeIn 0.3s ease-out"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+        <div style={{position:"absolute",left:tipX,top:tipY,width:tipW,background:`linear-gradient(135deg,${C.mantle},${C.s0})`,border:`1px solid ${step.color}44`,borderRadius:16,padding:isMobile?"16px 18px":"20px 22px",boxShadow:`0 12px 40px rgba(0,0,0,0.5), 0 0 20px ${step.color}22`,animation:"fadeIn 0.3s ease-out",zIndex:1001}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
             <div style={{width:36,height:36,borderRadius:10,background:step.color+"18",border:`1px solid ${step.color}33`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{step.icon}</div>
-            <div>
-              <div style={{color:"#fff",fontSize:14,fontWeight:800}}>{step.title}</div>
+            <div style={{flex:1}}>
+              <div style={{color:"#fff",fontSize:isMobile?15:14,fontWeight:800}}>{step.title}</div>
               <div style={{color:step.color,fontSize:10,fontWeight:600}}>Step {tourStep} of {TOUR_STEPS.length}</div>
             </div>
           </div>
-          <div style={{color:C.sub,fontSize:12,lineHeight:1.6,marginBottom:18}}>{step.desc}</div>
+          <div style={{color:C.sub,fontSize:isMobile?13:12,lineHeight:1.6,marginBottom:16}}>{step.desc}</div>
           <div style={{display:"flex",gap:8}}>
             <button onClick={skipTour}
-              style={{flex:1,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:"9px 0",cursor:"pointer",color:C.sub,fontSize:11,fontWeight:600}}
-              onMouseEnter={e=>e.currentTarget.style.borderColor=C.overlay} onMouseLeave={e=>e.currentTarget.style.borderColor=C.s1}>
+              style={{flex:1,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:8,padding:isMobile?"11px 0":"9px 0",cursor:"pointer",color:C.sub,fontSize:11,fontWeight:600}}>
               Skip
             </button>
             <button onClick={nextTourStep}
-              style={{flex:2,background:step.color,border:"none",borderRadius:8,padding:"9px 0",cursor:"pointer",color:"#fff",fontSize:12,fontWeight:700,letterSpacing:0.5}}
-              onMouseEnter={e=>e.currentTarget.style.opacity="0.85"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+              style={{flex:2,background:step.color,border:"none",borderRadius:8,padding:isMobile?"11px 0":"9px 0",cursor:"pointer",color:"#fff",fontSize:12,fontWeight:700,letterSpacing:0.5}}>
               {tourStep>=TOUR_STEPS.length?"FINISH":"NEXT"}
             </button>
           </div>
           {/* Step dots */}
-          <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:14}}>
+          <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:12}}>
             {TOUR_STEPS.map((_,i)=><div key={i} style={{width:i+1===tourStep?20:8,height:8,borderRadius:4,background:i+1===tourStep?step.color:C.s1,transition:"all 0.3s"}}/>)}
           </div>
         </div>
