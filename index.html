@@ -217,8 +217,9 @@ const BATCH_META={
   approved:{label:"Highlights Ready",color:"#22c55e",desc:"Your highlight reel is complete and ready to view!",icon:"check"}
 };
 const saveBatch=async(batch)=>{try{await fbDb.collection("videoBatches").doc(batch.id).set(batch,{merge:true});}catch(e){console.warn("Batch save failed:",e);}};
-const loadBatches=async(playerId)=>{try{const snap=await fbDb.collection("videoBatches").where("playerId","==",playerId).orderBy("createdAt","asc").get();return snap.docs.map(d=>d.data());}catch(e){console.warn("Batch load failed:",e);return[];}};
-const loadAllBatches=async()=>{try{const snap=await fbDb.collection("videoBatches").get();const out={};snap.docs.forEach(d=>{const b=d.data();if(!out[b.playerId])out[b.playerId]=[];out[b.playerId].push(b);});return out;}catch(e){console.warn("All batches load failed:",e);return{};}};
+const loadBatches=async(playerId)=>{try{const snap=await fbDb.collection("videoBatches").where("playerId","==",playerId).get();const arr=snap.docs.map(d=>d.data());arr.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));return arr;}catch(e){console.warn("Batch load failed:",e);return[];}};
+const loadAllBatches=async()=>{try{const snap=await fbDb.collection("videoBatches").get();const out={};snap.docs.forEach(d=>{const b=d.data();if(!out[b.playerId])out[b.playerId]=[];out[b.playerId].push(b);});Object.values(out).forEach(arr=>arr.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0)));return out;}catch(e){console.warn("All batches load failed:",e);return{};}};
+
 const advanceBatchStage=async(batchId,newStage,editorName)=>{const now=Date.now();try{const ref=fbDb.collection("videoBatches").doc(batchId);const doc=await ref.get();if(!doc.exists)return;const prev=doc.data();const activity=prev.activity||[];activity.push({action:`Moved to ${BATCH_META[newStage].label}`,by:editorName||"Editor",at:now});await ref.update({stage:newStage,editor:editorName||(prev.editor||""),activity,updatedAt:now});}catch(e){console.warn("Batch advance failed:",e);}};
 /* Create a new batch when editor downloads videos */
 const createBatchFromDownload=async(player,editorName)=>{
