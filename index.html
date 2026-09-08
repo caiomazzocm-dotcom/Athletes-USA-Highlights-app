@@ -2412,6 +2412,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const[showFeedbackPanel,setShowFeedbackPanel]=useState(false);
   const[expandedPlayers,setExpandedPlayers]=useState({});const[expandedCats,setExpandedCats]=useState({});
   const[activePlayerId,setActivePlayerId]=useState(null);
+  const activePlayerIdRef=useRef(activePlayerId);activePlayerIdRef.current=activePlayerId;
   const[editorVideos,setEditorVideos]=useState([]);const[editorMusic,setEditorMusic]=useState([]);const edMediaHydRef=useRef(false);
   const[exporting,setExporting]=useState(false);const[exportProgress,setExportProgress]=useState(0);const[exportFmt,setExportFmt]=useState("");const exportCancelRef=useRef(false);
   const[showEditorSection,setShowEditorSection]=useState(false);
@@ -2441,113 +2442,165 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   useEffect(()=>{if(!edMediaHydRef.current)return;try{localStorage.setItem(STORAGE_KEY_EDVIDS,JSON.stringify(editorVideos.map(v=>({id:v.id,name:v.name,duration:v.duration}))));localStorage.setItem(STORAGE_KEY_EDMUSIC,JSON.stringify(editorMusic.map(m=>({id:m.id,name:m.name,duration:m.duration}))));}catch(e){}},[editorVideos,editorMusic]);
   useEffect(()=>{try{localStorage.setItem("aua_clipFeedback",JSON.stringify(clipFeedback));}catch(e){}},[clipFeedback]);
 
-  /* ═══ PROJECT PERSISTENCE ═══
-     The timeline survives a reload. Only the edit itself is stored — clip
-     positions, trims, tags and per-clip settings — never video data.
+  /* ═══ PROJECT PERSISTENCE (one project per player) ═══
+     Each athlete gets their own timeline. Selecting a player in the sidebar saves
+     the project you were on and opens theirs, so switching between athletes never
+     mixes their edits.
 
-     Clip URLs are deliberately NOT saved: a blob: URL is dead the moment the
-     page reloads. Each clip already carries `videoId`, so on restore the URL is
-     looked up again from the player's media, the editor media, or IndexedDB. */
+     Only the edit itself is stored — clip positions, trims, tags and per-clip
+     settings — never video data. Clip URLs are deliberately NOT saved: a blob: URL
+     is dead the moment the page reloads. Each clip carries `videoId`, so on restore
+     the URL is looked up again from the player's media, editor media, or IndexedDB. */
+  const projectKey=pid=>STORAGE_KEY_PROJECT+":"+(pid||"editor");
   const projectRestoredRef=useRef(false);
+  const loadedProjectRef=useRef(undefined);/* which player's project is currently open */
   const[projectSavedAt,setProjectSavedAt]=useState(null);
   const[restoreNote,setRestoreNote]=useState(null);
   const[saveArmed,setSaveArmed]=useState(false);/* re-runs the autosave effect once restore finishes */
-  const playheadRef=useRef(playhead);playheadRef.current=playhead;
 
-  /* Latest values without making the restore effect re-run — it must fire exactly
-     once, and a dependency changing mid-restore would otherwise abandon it. */
+  /* Latest values, read without making the persistence effects re-run on every edit. */
+  const playheadRef=useRef(playhead);playheadRef.current=playhead;
+  const tracksRef=useRef(tracks);tracksRef.current=tracks;
+  const audioTracksRef=useRef(audioTracks);audioTracksRef.current=audioTracks;
+  const clipPropsRef=useRef(clipProps);clipPropsRef.current=clipProps;
+  const zoomRef=useRef(zoom);zoomRef.current=zoom;
   const playersRef=useRef(players);playersRef.current=players;
   const edVidsRef=useRef(editorVideos);edVidsRef.current=editorVideos;
   const edMusRef=useRef(editorMusic);edMusRef.current=editorMusic;
 
+  const writeProject=useCallback((pid)=>{
+    try{
+      const slim=trks=>trks.map(t=>({...t,clips:t.clips.map(c=>{
+        const{url,...rest}=c;
+        return{...rest,srcUrl:url&&!url.startsWith("blob:")?url:""};
+      })}));
+      const stamp=Date.now();
+      localStorage.setItem(projectKey(pid),JSON.stringify({
+        v:1,savedAt:stamp,playerId:pid||null,
+        tracks:slim(tracksRef.current),audioTracks:slim(audioTracksRef.current),
+        tagTrack:tagTrackRef.current,clipProps:clipPropsRef.current,
+        zoom:zoomRef.current,playhead:playheadRef.current}));
+      return stamp;
+    }catch(e){return null;/* quota or private mode — editing still works, just unsaved */}
+  },[]);
+
+  const emptyTimeline=useCallback(()=>{
+    setTracks(p=>p.map(t=>({...t,clips:[]})));
+    setAudioTracks(p=>p.map(t=>({...t,clips:[]})));
+    setTagTrack(p=>({...p,clips:[]}));
+    setClipProps({});setSelectedClipId(null);setPlayhead(0);setHistory([]);
+    setProjectSavedAt(null);
+  },[]);
+
+  /* Read a player's project and put it on the timeline. Always resolves the
+     timeline to *something* — an empty one when that player has no project yet —
+     so switching players never leaves the previous athlete's clips behind. */
+  const loadProject=useCallback(async(pid)=>{
+    let saved=null;
+    try{saved=JSON.parse(localStorage.getItem(projectKey(pid))||"null");}catch(e){}
+    /* One-time adoption of the pre-per-player save, so an edit in progress
+       when this shipped isn't stranded under the old key. */
+    if(!saved){
+      try{
+        const legacy=JSON.parse(localStorage.getItem(STORAGE_KEY_PROJECT)||"null");
+        if(legacy&&Array.isArray(legacy.tracks)){saved=legacy;localStorage.removeItem(STORAGE_KEY_PROJECT);}
+      }catch(e){}
+    }
+    if(!saved||!Array.isArray(saved.tracks)){emptyTimeline();setRestoreNote(null);return;}
+    const byId={};
+    playersRef.current.forEach(pl=>(pl.categories||[]).forEach(cat=>(cat.videos||[]).forEach(v=>{if(v.url||v.cloudUrl)byId[v.id]=v.url||v.cloudUrl;})));
+    edVidsRef.current.forEach(v=>{if(v.url)byId[v.id]=v.url;});
+    edMusRef.current.forEach(m=>{if(m.url)byId[m.id]=m.url;});
+    let dropped=0;
+    const rehydrate=async trks=>{
+      const out=[];
+      for(const t of trks){
+        const clips=[];
+        for(const c of t.clips){
+          let url=byId[c.videoId]||"";
+          if(!url){try{const b=await getBlob(c.videoId);if(b)url=URL.createObjectURL(b);}catch(e){}}
+          if(!url&&c.srcUrl&&!c.srcUrl.startsWith("blob:"))url=c.srcUrl;
+          if(url)clips.push({...c,url});else dropped++;
+        }
+        out.push({...t,clips});
+      }
+      return out;
+    };
+    const vt=await rehydrate(saved.tracks);
+    const at=await rehydrate(saved.audioTracks||[]);
+    setTracks(p=>vt.length?vt:p.map(t=>({...t,clips:[]})));
+    setAudioTracks(p=>at.length?at:p.map(t=>({...t,clips:[]})));
+    setTagTrack(saved.tagTrack&&saved.tagTrack.clips?saved.tagTrack:{id:uid("ttag"),name:"TAGS",clips:[]});
+    setClipProps(saved.clipProps||{});
+    if(typeof saved.zoom==="number")setZoom(saved.zoom);
+    setPlayhead(typeof saved.playhead==="number"?saved.playhead:0);
+    setSelectedClipId(null);setHistory([]);
+    setProjectSavedAt(saved.savedAt||null);
+    const anyClips=vt.some(t=>t.clips.length)||at.some(t=>t.clips.length);
+    if(!anyClips&&dropped===0){setRestoreNote(null);return;}
+    const who=playersRef.current.find(p=>p.id===pid);
+    const label=who?`${who.name}'s timeline`:"your timeline";
+    const when=saved.savedAt?new Date(saved.savedAt).toLocaleString():"your last session";
+    setRestoreNote(dropped>0
+      ?`Restored ${label} from ${when} — ${dropped} clip(s) skipped, their media is no longer available.`
+      :`Restored ${label} from ${when}.`);
+  },[emptyTimeline]);
+
+  /* Initial load: runs once, after players/editor media have had a moment to
+     arrive, since their URLs are what the saved clips get re-pointed at. */
   useEffect(()=>{
     let alive=true;
     (async()=>{
-      /* Give players / editor media a moment to load; their URLs are what the
-         saved clips are re-pointed at. Falls through for an empty project. */
       for(let i=0;i<30&&alive;i++){
         if(playersRef.current.length>0||edVidsRef.current.length>0)break;
         await new Promise(r=>setTimeout(r,100));
       }
       if(!alive)return;
       try{
-      let saved=null;
-      try{saved=JSON.parse(localStorage.getItem(STORAGE_KEY_PROJECT)||"null");}catch(e){}
-      if(!saved||!Array.isArray(saved.tracks))return;
-      /* Index every source we can currently resolve a URL for */
-      const byId={};
-      playersRef.current.forEach(pl=>(pl.categories||[]).forEach(cat=>(cat.videos||[]).forEach(v=>{if(v.url||v.cloudUrl)byId[v.id]=v.url||v.cloudUrl;})));
-      edVidsRef.current.forEach(v=>{if(v.url)byId[v.id]=v.url;});
-      edMusRef.current.forEach(m=>{if(m.url)byId[m.id]=m.url;});
-      let dropped=0;
-      const rehydrate=async trks=>{
-        const out=[];
-        for(const t of trks){
-          const clips=[];
-          for(const c of t.clips){
-            let url=byId[c.videoId]||"";
-            if(!url){try{const b=await getBlob(c.videoId);if(b)url=URL.createObjectURL(b);}catch(e){}}
-            if(!url&&c.srcUrl&&!c.srcUrl.startsWith("blob:"))url=c.srcUrl;
-            if(url)clips.push({...c,url});else dropped++;
-          }
-          out.push({...t,clips});
-        }
-        return out;
-      };
-      const vt=await rehydrate(saved.tracks);
-      const at=await rehydrate(saved.audioTracks||[]);
-      if(!alive)return;
-      const anyClips=vt.some(t=>t.clips.length)||at.some(t=>t.clips.length);
-      if(!anyClips&&dropped===0)return;
-      if(vt.length)setTracks(vt);
-      if(at.length)setAudioTracks(at);
-      if(saved.tagTrack&&saved.tagTrack.clips)setTagTrack(saved.tagTrack);
-      if(saved.clipProps)setClipProps(saved.clipProps);
-      if(typeof saved.zoom==="number")setZoom(saved.zoom);
-      if(typeof saved.playhead==="number")setPlayhead(saved.playhead);
-      const when=saved.savedAt?new Date(saved.savedAt).toLocaleString():"your last session";
-      setRestoreNote(dropped>0
-        ?`Restored your timeline from ${when} — ${dropped} clip(s) skipped, their media is no longer available.`
-        :`Restored your timeline from ${when}.`);
+        const pid=activePlayerIdRef.current||null;
+        loadedProjectRef.current=pid;
+        await loadProject(pid);
       }finally{
-        /* Always arm autosave, including when there was nothing to restore —
-           otherwise the first session never saves anything. */
         projectRestoredRef.current=true;
         if(alive)setSaveArmed(true);
       }
     })();
     return()=>{alive=false;};
-  },[]);
+  },[loadProject]);
 
-  /* Autosave, debounced. Skipped until the restore has run so an empty initial
-     timeline can never overwrite a saved project. */
+  /* Switching players swaps projects: save the one you are leaving, open theirs. */
+  useEffect(()=>{
+    if(!projectRestoredRef.current)return;
+    const target=activePlayerId||null;
+    if(loadedProjectRef.current===target)return;
+    const leaving=loadedProjectRef.current;
+    writeProject(leaving);
+    loadedProjectRef.current=target;
+    let alive=true;
+    (async()=>{if(alive)await loadProject(target);})();
+    return()=>{alive=false;};
+    /* saveArmed re-runs this once the initial load finishes, catching a player
+       selected while that load was still in flight. */
+  },[activePlayerId,saveArmed,loadProject,writeProject]);
+
+  /* Autosave, debounced. Disarmed until the initial load finishes so an empty
+     starting timeline can never overwrite a saved project. */
   useEffect(()=>{
     if(!projectRestoredRef.current)return;
     const id=setTimeout(()=>{
-      try{
-        const slim=trks=>trks.map(t=>({...t,clips:t.clips.map(c=>{
-          const{url,...rest}=c;
-          return{...rest,srcUrl:url&&!url.startsWith("blob:")?url:""};
-        })}));
-        localStorage.setItem(STORAGE_KEY_PROJECT,JSON.stringify({
-          v:1,savedAt:Date.now(),
-          tracks:slim(tracks),audioTracks:slim(audioTracks),
-          tagTrack,clipProps,zoom,playhead:playheadRef.current}));
-        setProjectSavedAt(Date.now());
-      }catch(e){/* quota or private mode — editing still works, just not saved */}
+      const stamp=writeProject(loadedProjectRef.current);
+      if(stamp)setProjectSavedAt(stamp);
     },600);
     return()=>clearTimeout(id);
-  },[tracks,audioTracks,tagTrack,clipProps,zoom,saveArmed]);
+  },[tracks,audioTracks,tagTrack,clipProps,zoom,saveArmed,writeProject]);
 
   const clearProject=useCallback(()=>{
-    if(!confirm("Start a new timeline? Your current edit will be cleared.\n\nThis only clears the timeline — your videos and profiles are not touched."))return;
-    try{localStorage.removeItem(STORAGE_KEY_PROJECT);}catch(e){}
-    setTracks(p=>p.map(t=>({...t,clips:[]})));
-    setAudioTracks(p=>p.map(t=>({...t,clips:[]})));
-    setTagTrack(p=>({...p,clips:[]}));
-    setClipProps({});setSelectedClipId(null);setPlayhead(0);setHistory([]);
-    setProjectSavedAt(null);setRestoreNote(null);
-  },[]);
+    const who=playersRef.current.find(p=>p.id===loadedProjectRef.current);
+    const label=who?`${who.name}'s timeline`:"this timeline";
+    if(!confirm(`Start a new edit? ${label.charAt(0).toUpperCase()+label.slice(1)} will be cleared.\n\nThis only clears the timeline — videos and profiles are not touched.`))return;
+    try{localStorage.removeItem(projectKey(loadedProjectRef.current));}catch(e){}
+    emptyTimeline();setRestoreNote(null);
+  },[emptyTimeline]);
 
 
   const allState=useCallback(()=>({v:JSON.parse(JSON.stringify(tracks)),t:JSON.parse(JSON.stringify(tagTrack)),a:JSON.parse(JSON.stringify(audioTracks))}),[tracks,tagTrack,audioTracks]);
@@ -2656,9 +2709,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   /* Tag timing. FREEZE_DUR / TAG_OVERLAY_DUR are what you get when you add one;
      TAG_MAX_DUR is only a runaway guard on the resize handle, not the working length. */
-  const FREEZE_DUR=3;
-  const TAG_OVERLAY_DUR=3;
+  /* Defaults applied when a tag is created. Both stay freely resizable after —
+     duration via the clip's right edge, size via the Spotlight Scale slider. */
+  const FREEZE_DUR=1.3;
+  const TAG_OVERLAY_DUR=1.3;
   const TAG_MAX_DUR=10;
+  const SPOT_SCALE_DEFAULT=0.5;
   /* Spotlight tag colour — AUSA blue, matching the athlete portal and the Freeze
      control. SPOT_RGB is the same colour for canvas rgba() in the export renderer. */
   const SPOT_COLOR=C.blue;
@@ -2730,7 +2786,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const activeFreeze=findActiveTag(start);
     if(activeFreeze&&activeFreeze.type==="freeze"){
       /* Update the freeze tag to include spotlight data */
-      setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===activeFreeze.id?{...c,playerId,playerName:player.name,playerColor:playerColor(playerIdx),spotX,spotY,spotScale:1.0,hasSpotlight:true}:c)}));
+      setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===activeFreeze.id?{...c,playerId,playerName:player.name,playerColor:playerColor(playerIdx),spotX,spotY,spotScale:SPOT_SCALE_DEFAULT,hasSpotlight:true}:c)}));
       setSelectedClipId(activeFreeze.id);
       return;
     }
@@ -2739,8 +2795,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(!clip){console.warn("No video clip at playhead for tag");return;}
     const fo=freezeOffset(clip.trackStart,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
-    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:0,spotX,spotY,spotScale:1.0};
-    setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
+    const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:0,spotX,spotY,spotScale:SPOT_SCALE_DEFAULT};
+    setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:SPOT_SCALE_DEFAULT}}));
     setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(tag.id);
   },[pushHist,players,findActiveClip,findActiveTag,freezeOffset,recalcAll,tracks,audioTracks]);
@@ -2751,8 +2807,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(!clip){console.warn("No video clip at playhead for freeze");return;}
     const fo=freezeOffset(clip.trackStart,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
-    const tag={id:uid("frz"),type:"freeze",clipId:clip.id,sourceTime,playerId:null,playerName:"FREEZE",playerColor:"#60a5fa",trackStart:0,duration:FREEZE_DUR,spotX:50,spotY:50,spotScale:1.0};
-    setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
+    const tag={id:uid("frz"),type:"freeze",clipId:clip.id,sourceTime,playerId:null,playerName:"FREEZE",playerColor:"#60a5fa",trackStart:0,duration:FREEZE_DUR,spotX:50,spotY:50,spotScale:SPOT_SCALE_DEFAULT};
+    setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:SPOT_SCALE_DEFAULT}}));
     const nextTags={...tagTrack,clips:[...tagTrack.clips,tag]};
     setTagTrack(nextTags);
     recalcAll(tracks,nextTags,audioTracks);
@@ -2819,7 +2875,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const cut=playhead-tlStart;if(cut<=.05||cut>=resolved.duration-.05)return;
     setTagTrack(p=>{const c=p.clips.find(x=>x.id===tagId);if(!c)return p;
       const a={...c,id:uid("tag"),duration:cut};const b={...c,id:uid("tag"),sourceTime:c.sourceTime,duration:c.duration-cut};
-      setClipProps(pr=>({...pr,[a.id]:{...(pr[c.id]||{volume:100,scale:1,spotScale:1.0})},[b.id]:{...(pr[c.id]||{volume:100,scale:1,spotScale:1.0})}}));
+      setClipProps(pr=>({...pr,[a.id]:{...(pr[c.id]||{volume:100,scale:1,spotScale:SPOT_SCALE_DEFAULT})},[b.id]:{...(pr[c.id]||{volume:100,scale:1,spotScale:SPOT_SCALE_DEFAULT})}}));
       const n={...p,clips:p.clips.filter(x=>x.id!==tagId).concat([a,b])};recalcAll(tracks,n,audioTracks);return n;});
     setSelectedClipId(null);
   },[pushHist,playhead,tracks,audioTracks,recalcAll,resolvedTags]);
