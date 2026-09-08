@@ -3750,7 +3750,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   style={{position:"absolute",left:x,width:w,top:3,bottom:3,
                     background:`linear-gradient(180deg,${pCol}cc 60%,${pCol}44 60%)`,borderRadius:5,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
                     border:isSel?`2px solid ${C.text}`:`1px solid ${pCol}44`,boxShadow:isSel?`0 0 8px ${C.blue}55`:"none",
-                    display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1,position:"relative"}}>
+                    display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1}}>
                   <div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
                     <span style={{color:"#000",fontSize:10,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 0 4px rgba(255,255,255,0.3)"}}>{clip.name}</span>
