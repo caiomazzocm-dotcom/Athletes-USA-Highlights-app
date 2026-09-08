@@ -205,6 +205,11 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
     - `delClip` and `cutClip` now compact against the *post-change* tag track. `cutClip` was rewritten to compute the split synchronously so tags are re-pointed at the new clip halves before compaction.
     - Resizing a tag now re-flows V1 (previously skipped, so clips overlapped a lengthened freeze).
     - Export: added a hold-frame buffer so seeks no longer render black; removed redundant seeks at cut and freeze boundaries; `findSeg` tolerates sub-frame float gaps between segments.
+31. Studio usability pass (Sept 2026):
+    - **Space/pause fix.** The shortcut handler bailed on every `<input>`, but zoom and volume are `<input type="range">` — once focused they swallowed every shortcut. Guard now covers text entry only; Space is global (and blurs the focused control, since a focused button fires its own click on space); other shortcuts defer to a focused slider so its arrow keys still work.
+    - **Spotlight Scale fix.** The properties panel switched on `selClip.type!=="tag"`, but freeze tags are type `"freeze"`, so selecting a freeze showed the video-clip sliders and Scale wrote a property nothing reads. Panel now decides by tag-track membership (`selIsTag`).
+    - **Clips land on V1.** Dropping a video anywhere in the video area appends to the end of the main storyline via `v1EndPos()`; hold **Alt/Option** while dropping to place it on the exact track and position for deliberate layering. Previously a sloppy drop created a new stacked track per clip.
+    - **Spotlight tags are AUSA blue** (`SPOT_COLOR` = `C.blue`, `SPOT_RGB` for canvas rgba), matching the athlete portal and Freeze control. Freeze clips carrying a spotlight use the lighter `#60a5fa` so they stay distinguishable on the timeline. The standalone Overlay tool has its own colour picker and was left alone.
 
 ---
 

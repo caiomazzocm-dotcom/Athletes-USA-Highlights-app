@@ -2551,6 +2551,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const FREEZE_DUR=3;
   const TAG_OVERLAY_DUR=3;
   const TAG_MAX_DUR=10;
+  /* Spotlight tag colour — AUSA blue, matching the athlete portal and the Freeze
+     control. SPOT_RGB is the same colour for canvas rgba() in the export renderer. */
+  const SPOT_COLOR=C.blue;
+  const SPOT_RGB="59,130,246";
   const findOverlayTag=useCallback((clip,ph)=>{
     if(!clip)return null;
     const fo=freezeOffset(clip.trackStart,ph);
@@ -3030,8 +3034,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       cx.fillStyle="rgba(0,0,0,0.55)";cx.fill("evenodd");
       /* Circle border */
       cx.beginPath();cx.arc(sx,sy,r,0,Math.PI*2);
-      cx.strokeStyle="#22c55e";cx.lineWidth=Math.round(3*previewToExport);
-      cx.shadowColor="rgba(34,197,94,0.4)";cx.shadowBlur=Math.round(20*previewToExport);
+      cx.strokeStyle=SPOT_COLOR;cx.lineWidth=Math.round(3*previewToExport);
+      cx.shadowColor=`rgba(${SPOT_RGB},0.4)`;cx.shadowBlur=Math.round(20*previewToExport);
       cx.stroke();cx.shadowBlur=0;
       /* Player name label */
       const fontSize=Math.round(13*previewToExport);
@@ -3042,7 +3046,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       const padX=Math.round(16*previewToExport),padY=Math.round(4*previewToExport);
       cx.fillStyle="rgba(0,0,0,0.8)";
       cx.fillRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
-      cx.strokeStyle="rgba(34,197,94,0.33)";cx.lineWidth=Math.round(1*previewToExport);
+      cx.strokeStyle=`rgba(${SPOT_RGB},0.33)`;cx.lineWidth=Math.round(1*previewToExport);
       cx.strokeRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
       cx.fillStyle="#fff";cx.fillText(txt,sx,labelY);
       /* SPOTLIGHT badge removed from export */
@@ -3425,7 +3429,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   <span style={{color:C.overlay,fontSize:9}}>{cat.videos.length}</span>
                 </div>
                 {cExp&&cat.videos.map(v=>(
-                  <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>{const lastV1=tracks[0].clips.length>0?tracks[0].clips[tracks[0].clips.length-1]:null;const start=lastV1?lastV1.trackStart+(lastV1.clipEnd-lastV1.clipStart):0;addClip(tracks[0].id,{...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration},start,false);}}
+                  <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>{const start=v1EndPos();addClip(tracks[0].id,{...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration},start,false);}}
                     style={{display:"flex",alignItems:"center",gap:5,padding:"3px 14px 3px 52px",cursor:"grab",borderRadius:4,margin:"0 4px",fontSize:10}}
                     onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <FilmIcon size={10} color={cColor}/>
@@ -3459,7 +3463,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           </button>
         </div>
         {editorVideos.map(v=>(
-          <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,playerId:"editor",playerName:"Editor",duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>{const lastV1=tracks[0].clips.length>0?tracks[0].clips[tracks[0].clips.length-1]:null;const start=lastV1?lastV1.trackStart+(lastV1.clipEnd-lastV1.clipStart):0;addClip(tracks[0].id,{...v,playerId:"editor",playerName:"Editor",duration:v.duration},start,false);}}
+          <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,playerId:"editor",playerName:"Editor",duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>{const start=v1EndPos();addClip(tracks[0].id,{...v,playerId:"editor",playerName:"Editor",duration:v.duration},start,false);}}
             style={{display:"flex",alignItems:"center",gap:5,padding:"3px 4px",cursor:"grab",borderRadius:4,fontSize:10}}
             onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
             <FilmIcon size={10} color={C.peach}/>
@@ -3506,9 +3510,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           return(
         <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:4}}>
           <div style={{position:"absolute",inset:0,background:`radial-gradient(circle ${rad}px at ${sx}% ${sy}%, transparent ${rad-10}px, rgba(0,0,0,0.55) ${rad+2}px)`}}/>
-          <div onMouseDown={handleSpotDrag} style={{position:"absolute",left:`${sx}%`,top:`${sy}%`,transform:"translate(-50%,-50%)",width:diam,height:diam,borderRadius:"50%",border:`3px solid ${C.green}`,boxShadow:`0 0 20px ${C.green}44, 0 0 40px ${C.green}22`,cursor:"grab",pointerEvents:"auto"}}/>
+          <div onMouseDown={handleSpotDrag} style={{position:"absolute",left:`${sx}%`,top:`${sy}%`,transform:"translate(-50%,-50%)",width:diam,height:diam,borderRadius:"50%",border:`3px solid ${SPOT_COLOR}`,boxShadow:`0 0 20px ${SPOT_COLOR}44, 0 0 40px ${SPOT_COLOR}22`,cursor:"grab",pointerEvents:"auto"}}/>
           <div style={{position:"absolute",left:`${sx}%`,top:`calc(${sy}% + ${rad+12}px)`,transform:"translateX(-50%)",textAlign:"center",whiteSpace:"nowrap"}}>
-            <div style={{background:"rgba(0,0,0,0.8)",padding:"4px 16px",borderRadius:4,display:"inline-block",border:`1px solid ${C.green}55`}}>
+            <div style={{background:"rgba(0,0,0,0.8)",padding:"4px 16px",borderRadius:4,display:"inline-block",border:`1px solid ${SPOT_COLOR}55`}}>
               <span style={{color:"#fff",fontSize:13,fontWeight:700,letterSpacing:1}}>{spotSrc.playerName.toUpperCase()}</span>
             </div>
           </div>
@@ -3529,7 +3533,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           <span style={{position:"absolute",right:12,top:12,color:"#ffd700",fontSize:10,fontWeight:600,opacity:0.5}}>1920×1080</span>
         </div>}
         {spotlightMode&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.3)",cursor:"crosshair",pointerEvents:"none"}}>
-          <div style={{background:C.green,padding:"8px 20px",borderRadius:8}}>
+          <div style={{background:SPOT_COLOR,padding:"8px 20px",borderRadius:8}}>
             <span style={{color:"#000",fontSize:13,fontWeight:700}}>Click to place spotlight</span>
           </div>
         </div>}
@@ -3563,7 +3567,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           if(ap){setSpotlightMode(ap.id);setShowTagMenu(false);}
           else if(players.length===1){setSpotlightMode(players[0].id);setShowTagMenu(false);}
           else{setShowTagMenu(p=>!p);}
-        }} style={{...tb,background:showTagMenu||spotlightMode?C.green:C.green+"22",color:showTagMenu||spotlightMode?"#000":C.green,border:`1px solid ${C.green}`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}>
+        }} style={{...tb,background:showTagMenu||spotlightMode?SPOT_COLOR:SPOT_COLOR+"22",color:showTagMenu||spotlightMode?"#fff":SPOT_COLOR,border:`1px solid ${SPOT_COLOR}`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}>
           &#9673; {activePlayerId&&players.find(p=>p.id===activePlayerId)?`Tag ${players.find(p=>p.id===activePlayerId).name}`:"Add Spotlight"}
         </button>
         {showTagMenu&&<div style={{position:"absolute",bottom:"100%",left:0,marginBottom:4,background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:8,padding:6,minWidth:160,zIndex:50,boxShadow:"0 -4px 20px rgba(0,0,0,0.4)"}}>
@@ -3615,9 +3619,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               </>}
             </>
           ):(<>
-            <EyeIcon size={12} color={C.green}/>
-            <span style={{color:C.green,fontSize:10}}>Spotlight Scale</span>
-            <input type="range" min={30} max={300} step={5} value={Math.round((selProps.spotScale||1)*100)} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,spotScale:+e.target.value/100}}))} style={{width:80,accentColor:C.green}}/>
+            <EyeIcon size={12} color={SPOT_COLOR}/>
+            <span style={{color:SPOT_COLOR,fontSize:10}}>Spotlight Scale</span>
+            <input type="range" min={30} max={300} step={5} value={Math.round((selProps.spotScale||1)*100)} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,spotScale:+e.target.value/100}}))} style={{width:80,accentColor:SPOT_COLOR}}/>
             <span style={{color:C.overlay,minWidth:28}}>{Math.round((selProps.spotScale||1)*100)}%</span>
           </>)}
           <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
@@ -3685,10 +3689,23 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       /* Resizing a tag changes how much room its clip needs, so V1 has to re-flow
          too — skipping this left the following clips overlapping the longer freeze. */
       if(!isAudio)compactV1();};document.addEventListener("mousemove",onM);document.addEventListener("mouseup",onU);};
+  /* End of the V1 storyline, freeze time included — where the next clip appends. */
+  const v1EndPos=useCallback(()=>{
+    const mt=tracks[0];if(!mt||mt.clips.length===0)return 0;
+    let end=0;
+    mt.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart)+clipFreezeDur(c,tagTrackRef.current.clips);if(e>end)end=e;});
+    return end;
+  },[tracks]);
+
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
     try{const d=JSON.parse(e.dataTransfer.getData("application/json"));const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
       let dropT=Math.max(0,x/zoom);dropT=snapToEdges(dropT,null,d.duration||0);
-      const dropIsAudio=isAudio||d.type==="audio";addClip(trkId,d,dropT,dropIsAudio);
+      const dropIsAudio=isAudio||d.type==="audio";
+      /* Video always joins the end of the main storyline, however sloppy the drop.
+         Otherwise a reel of 60 clips needs 60 stacked tracks. Hold Alt/Option to
+         drop on the exact track and position you aimed at, for deliberate layering. */
+      if(!dropIsAudio&&!e.altKey){addClip(tracks[0].id,d,v1EndPos(),false);return;}
+      addClip(trkId,d,dropT,dropIsAudio);
     }catch(err){}};
 
   const totalW=tlDur*zoom;const tickI=zoom>=80?1:zoom>=40?5:10;const ticks=[];for(let i=0;i<=tlDur;i+=tickI)ticks.push(i);const subI=tickI/5;
@@ -3703,7 +3720,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         {tracks.map(t=><div key={t.id} style={{height:TRACK_H,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${C.s0}22`,color:C.overlay,fontSize:10,fontWeight:600}}>{t.name}</div>)}
         <button onClick={addTrack} style={{width:"100%",height:24,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:C.overlay,cursor:"pointer",fontSize:9}} title="Add video track"><PlusIcon size={10}/></button>
         <div style={{height:TAG_TRACK_H,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${C.s0}22`,color:"#60a5fa",fontSize:8,fontWeight:700,letterSpacing:0.5}}>FREEZE</div>
-        <div style={{height:TAG_TRACK_H,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${C.s0}22`,color:C.green,fontSize:8,fontWeight:700,letterSpacing:0.5}}>SPOT</div>
+        <div style={{height:TAG_TRACK_H,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${C.s0}22`,color:SPOT_COLOR,fontSize:8,fontWeight:700,letterSpacing:0.5}}>SPOT</div>
         <div style={{height:1,background:C.coral+"44"}}/>
         {audioTracks.map(t=><div key={t.id} style={{height:AUDIO_TRACK_H,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${C.s0}22`,color:C.lavender,fontSize:10,fontWeight:600}}><MusicIcon size={10} style={{marginRight:3}}/>{t.name}</div>)}
         <button onClick={addAudioTrack} style={{width:"100%",height:24,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:C.overlay,cursor:"pointer",fontSize:9}} title="Add audio track"><PlusIcon size={10}/></button>
@@ -3749,7 +3766,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                     const fzWidth=fz.duration/effectiveD*100;
                     fzAccum+=fz.duration;
                     return<div key={fz.id} style={{position:"absolute",left:`${fzLeft}%`,width:`${fzWidth}%`,top:0,bottom:0,
-                      background:fz.hasSpotlight?"linear-gradient(180deg,#3b82f6cc 50%,#22c55e88 100%)":"linear-gradient(180deg,#3b82f6cc 50%,#3b82f644 100%)",
+                      background:fz.hasSpotlight?"linear-gradient(180deg,#3b82f6cc 50%,#60a5fa88 100%)":"linear-gradient(180deg,#3b82f6cc 50%,#3b82f644 100%)",
                       display:"flex",alignItems:"center",justifyContent:"center",borderLeft:"1px solid #60a5fa",borderRight:"1px solid #60a5fa",zIndex:2}}>
                       <span style={{color:"#fff",fontSize:8,fontWeight:800,letterSpacing:0.5,textShadow:"0 0 3px rgba(0,0,0,0.5)"}}>{fz.hasSpotlight?"❄ "+fz.playerName:"❄ FREEZE"}</span>
                     </div>;});})()}
@@ -3765,7 +3782,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               return(
               <div key={tag.id} onMouseDown={e=>handleClipMDTag(e,{...tag,trackStart:tag._tlStart},true)} onClick={e=>e.stopPropagation()}
                 style={{position:"absolute",left:x,width:w,top:4,bottom:4,
-                  background:tag.hasSpotlight?"linear-gradient(90deg,#3b82f6,#22c55e)":"#3b82f6",borderRadius:4,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
+                  background:tag.hasSpotlight?"linear-gradient(90deg,#3b82f6,#60a5fa)":"#3b82f6",borderRadius:4,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
                   border:isSel?`2px solid ${C.text}`:"1px solid #3b82f688",boxShadow:isSel?"0 0 8px #3b82f655":"none",
                   display:"flex",alignItems:"center",justifyContent:"center",padding:"0 6px",gap:4,userSelect:"none",zIndex:isSel?5:1}}>
                 <span style={{color:"#fff",fontSize:9,fontWeight:700,textShadow:"0 0 2px rgba(0,0,0,0.3)"}}>{tag.hasSpotlight?`❄ ${tag.playerName}`:"FREEZE"}</span>
