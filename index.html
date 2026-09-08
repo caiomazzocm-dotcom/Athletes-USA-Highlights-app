@@ -3337,8 +3337,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       /* A focused button fires its own click on space and would undo this toggle */
       const ae=document.activeElement;
       if(ae&&ae!==document.body&&(ae.tagName==="BUTTON"||ae.tagName==="INPUT"))ae.blur();
-      togglePlay();}
-    else if((e.metaKey||e.ctrlKey)&&(e.key==="b"||e.key==="B")){e.preventDefault();
+      togglePlay();return;}
+    /* Space is the one shortcut that works everywhere. A focused slider or select
+       keeps its own arrow keys, so scale/zoom stay adjustable from the keyboard. */
+    if(tn==="INPUT"||tn==="SELECT")return;
+    if((e.metaKey||e.ctrlKey)&&(e.key==="b"||e.key==="B")){e.preventDefault();
       for(const tg of resolvedTags){if(playhead>tg._tlStart&&playhead<tg._tlStart+tg.duration){cutTag(tg.id);return;}}
       const allTrks=[...tracks,...audioTracks];for(const t of allTrks)for(const c of t.clips){const d=c.clipEnd-c.clipStart;if(playhead>c.trackStart&&playhead<c.trackStart+d){cutClip(t.id,c.id);return;}}
     }
@@ -3366,6 +3369,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const actProps=activeClip?(clipProps[activeClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
   const selClip=(()=>{for(const t of [...tracks,...audioTracks]){const c=t.clips.find(x=>x.id===selectedClipId);if(c)return c;}for(const c of tagTrack.clips){if(c.id===selectedClipId)return c;}return null;})();
   const selProps=selClip?(clipProps[selClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
+  /* Decided by membership in the tag track, not by type string: freeze tags carry
+     type "freeze" and a `type!=="tag"` test sent them to the video-clip controls,
+     so the Scale slider edited a clip property nothing on a tag ever reads. */
+  const selIsTag=!!selClip&&tagTrack.clips.some(c=>c.id===selClip.id);
 
   const sidebar=(
   <div style={{width:260,minWidth:260,background:C.mantle,borderRight:`1px solid ${C.s0}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -3585,7 +3592,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"5px 12px",fontSize:11}}>
           <span style={{color:C.sub,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:160}}>{selClip.playerName} — {selClip.name}</span>
           <div style={{width:1,height:14,background:C.s0}}/>
-          {!selClip.type||selClip.type!=="tag"?(
+          {!selIsTag?(
             <>
               <Volume2Icon size={12} color={C.sub}/>
               <input type="range" min={0} max={100} step={1} value={selProps.volume} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,volume:+e.target.value}}))} style={{width:70,accentColor:C.blue}}/>
