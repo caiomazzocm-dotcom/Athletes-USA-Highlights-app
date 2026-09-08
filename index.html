@@ -3324,8 +3324,20 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     else if(!isPlaying){a.pause();if(Math.abs(a.currentTime-at)>.1)a.currentTime=Math.max(0,at);}
     else{if(a.paused)a.play().catch(()=>{});}}},[playhead,isPlaying,findActiveAudio,findActiveTag,freezeOffset,clipProps]);
 
-  useEffect(()=>{const h=e=>{if(exporting)return;if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
-    if(e.key===" "){e.preventDefault();togglePlay();}
+  useEffect(()=>{const h=e=>{if(exporting)return;
+    /* Only bail for real text entry. The old check skipped EVERY <input>, so after
+       touching the zoom or volume slider (input type=range) that element kept focus
+       and swallowed every shortcut — Space included — until you clicked elsewhere. */
+    const tgt=e.target,tn=tgt.tagName;
+    const typing=tn==="TEXTAREA"||tgt.isContentEditable||
+      (tn==="INPUT"&&!/^(range|checkbox|radio|button|submit|reset|color|file)$/i.test(tgt.type||"text"));
+    if(typing)return;
+    if(e.key===" "){e.preventDefault();
+      if(e.repeat)return;/* holding space would otherwise toggle play dozens of times */
+      /* A focused button fires its own click on space and would undo this toggle */
+      const ae=document.activeElement;
+      if(ae&&ae!==document.body&&(ae.tagName==="BUTTON"||ae.tagName==="INPUT"))ae.blur();
+      togglePlay();}
     else if((e.metaKey||e.ctrlKey)&&(e.key==="b"||e.key==="B")){e.preventDefault();
       for(const tg of resolvedTags){if(playhead>tg._tlStart&&playhead<tg._tlStart+tg.duration){cutTag(tg.id);return;}}
       const allTrks=[...tracks,...audioTracks];for(const t of allTrks)for(const c of t.clips){const d=c.clipEnd-c.clipStart;if(playhead>c.trackStart&&playhead<c.trackStart+d){cutClip(t.id,c.id);return;}}
@@ -3519,7 +3531,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     </div>
     <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderTop:`1px solid ${C.s0}`,background:C.mantle,flexWrap:"wrap"}}>
       <button onClick={()=>setPlayhead(0)} style={{...ib,color:C.sub}}><SkipBackIcon size={15}/></button>
-      <button onClick={togglePlay} style={{...ib,color:C.text,background:C.s0,borderRadius:6,padding:"5px 9px"}}>{isPlaying?<PauseIcon size={15}/>:<PlayIcon size={15}/>}</button>
+      <button onClick={togglePlay} onMouseUp={e=>e.currentTarget.blur()} title={isPlaying?"Pause (Space)":"Play (Space)"} style={{...ib,color:C.text,background:C.s0,borderRadius:6,padding:"5px 9px"}}>{isPlaying?<PauseIcon size={15}/>:<PlayIcon size={15}/>}</button>
       <span style={{color:C.text,fontSize:12,fontFamily:"monospace",minWidth:85}}>{fmtTime(playhead)}</span>
       <div style={{width:1,height:18,background:C.s0}}/>
       <button onClick={()=>setTool("select")} style={{...tb,background:tool==="select"?C.blue+"33":"transparent",color:tool==="select"?C.blue:C.sub,border:tool==="select"?`1px solid ${C.blue}55`:"1px solid transparent",fontSize:11}}><MousePointerIcon size={13}/> Select</button>
