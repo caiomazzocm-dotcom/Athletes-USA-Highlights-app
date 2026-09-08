@@ -2400,6 +2400,11 @@ function SpotlightTagGenerator({onBack,defaultName}){
 function StudioApp({players,onLogout,onRefreshPlayers}){
   const[tracks,setTracks]=useState([{id:uid("trk"),name:"V1",clips:[]},{id:uid("trk"),name:"V2",clips:[]},{id:uid("trk"),name:"V3",clips:[]}]);
   const[tagTrack,setTagTrack]=useState({id:uid("ttag"),name:"TAGS",clips:[]});
+  /* Always-current tag track. compactV1 runs from callbacks that were created in an
+     earlier render (drag mouseup handlers, batched setState callers); reading tagTrack
+     out of those closures compacts V1 against stale freeze durations and the clips
+     end up overlapping or gapped. */
+  const tagTrackRef=useRef(tagTrack);tagTrackRef.current=tagTrack;
   const[audioTracks,setAudioTracks]=useState([{id:uid("atrk"),name:"A1",clips:[]}]);
   const[playhead,setPlayhead]=useState(0);const[zoom,setZoom]=useState(60);const[isPlaying,setIsPlaying]=useState(false);
   const[selectedClipId,setSelectedClipId]=useState(null);const[tool,setTool]=useState("select");
@@ -2469,6 +2474,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     return result.sort((a,b)=>a._tlStart-b._tlStart);
   },[tracks,tagTrack]);
 
+  /* Total freeze time a clip carries: sum of durations of tags anchored to this clip
+     whose sourceTime falls inside the clip's trimmed range. Single source of truth —
+     compactV1, recalcAll and findActiveClip must agree or clips overlap on the timeline. */
+  const clipFreezeDur=(clip,tagClips)=>{let fz=0;
+    for(const tg of tagClips){if(tg.clipId===clip.id&&tg.sourceTime>=clip.clipStart&&tg.sourceTime<clip.clipEnd)fz+=tg.duration;}
+    return fz;};
+
   const recalcAll=useCallback((vt,tt,at)=>{
     /* Rebuild resolved positions inline for accurate duration calc */
     const allC=[];vt.forEach(t=>t.clips.forEach(c=>allC.push(c)));
@@ -2476,7 +2488,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     tt.clips.forEach(tg=>{if(tg.clipId){if(!byClip[tg.clipId])byClip[tg.clipId]=[];byClip[tg.clipId].push(tg);}else{resolved.push({...tg,_tlStart:tg.trackStart});}});
     Object.keys(byClip).forEach(cid=>{const cl=allC.find(c=>c.id===cid);if(!cl)return;const tags=byClip[cid].filter(t=>t.sourceTime>=cl.clipStart&&t.sourceTime<cl.clipEnd).sort((a,b)=>a.sourceTime-b.sourceTime);let fz=0;tags.forEach(tg=>{resolved.push({...tg,_tlStart:cl.trackStart+(tg.sourceTime-cl.clipStart)+fz});fz+=tg.duration;});});
     let mx=120;
-    vt.forEach(t=>t.clips.forEach(c=>{const rawD=c.clipEnd-c.clipStart;let fz=0;resolved.forEach(tg=>{if(tg._tlStart>=c.trackStart&&tg._tlStart<c.trackStart+rawD+fz)fz+=tg.duration;});const e=c.trackStart+rawD+fz;if(e>mx)mx=e;}));
+    vt.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart)+clipFreezeDur(c,tt.clips);if(e>mx)mx=e;}));
     resolved.forEach(c=>{const e=c._tlStart+c.duration;if(e>mx)mx=e;});
     at.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>mx)mx=e;}));
     setTlDur(mx+30);
@@ -2534,7 +2546,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
      The overlay displays for a fixed window (1.5s) after the sourceTime is reached during playback. */
   const freezeOffset=useCallback((clipStart,ph)=>{let total=0;for(const tg of resolvedTags){const tEnd=tg._tlStart+tg.duration;if(tEnd<=clipStart||tg._tlStart>=ph)continue;const s=Math.max(tg._tlStart,clipStart);const e=Math.min(tEnd,ph);if(e>s)total+=e-s;}return total;},[resolvedTags]);
 
-  const TAG_OVERLAY_DUR=1.5;
+  /* Tag timing. FREEZE_DUR / TAG_OVERLAY_DUR are what you get when you add one;
+     TAG_MAX_DUR is only a runaway guard on the resize handle, not the working length. */
+  const FREEZE_DUR=3;
+  const TAG_OVERLAY_DUR=3;
+  const TAG_MAX_DUR=10;
   const findOverlayTag=useCallback((clip,ph)=>{
     if(!clip)return null;
     const fo=freezeOffset(clip.trackStart,ph);
@@ -2547,9 +2563,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[tagTrack,freezeOffset]);
 
   const findActiveClip=useCallback(ph=>{for(let i=tracks.length-1;i>=0;i--)for(const cl of tracks[i].clips){const rawD=cl.clipEnd-cl.clipStart;
-    /* Count only tags that belong to THIS clip */
-    let fz=0;for(const tg of resolvedTags){if(tg.clipId&&tg.clipId!==cl.id)continue;if(!tg.clipId){const tEnd=tg._tlStart+tg.duration;if(tEnd<=cl.trackStart||tg._tlStart>=cl.trackStart+rawD)continue;}fz+=tg.duration;}
-    const effectiveD=rawD+fz;if(ph>=cl.trackStart&&ph<cl.trackStart+effectiveD)return cl;}return null;},[tracks,resolvedTags]);
+    let fz=clipFreezeDur(cl,tagTrack.clips);
+    /* Legacy tags carry no clipId — count those whose span overlaps this clip */
+    for(const tg of resolvedTags){if(tg.clipId)continue;const tEnd=tg._tlStart+tg.duration;if(tEnd<=cl.trackStart||tg._tlStart>=cl.trackStart+rawD)continue;fz+=tg.duration;}
+    const effectiveD=rawD+fz;if(ph>=cl.trackStart&&ph<cl.trackStart+effectiveD)return cl;}return null;},[tracks,tagTrack,resolvedTags]);
 
   const findActiveAudio=useCallback(ph=>{for(const t of audioTracks)for(const cl of t.clips){const d=cl.clipEnd-cl.clipStart;if(ph>=cl.trackStart&&ph<cl.trackStart+d)return cl;}return null;},[audioTracks]);
 
@@ -2563,17 +2580,18 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
      During drag, compaction is deferred to mouseUp to avoid jumping.
      IMPORTANT: effective duration includes tag/spotlight freeze time so freezes
      don't overlap with the next clip. */
-  const compactV1=useCallback(()=>{
+  /* tagOverride: callers that just changed the tag track must pass the NEW tag track.
+     State updates are async, so the `tagTrack` captured here is one render behind —
+     compacting with it drops the freeze time that was just added and the following
+     clips slide left on top of the freeze. */
+  const compactV1=useCallback((tagOverride)=>{
+    const tt=tagOverride||tagTrackRef.current;
     setTracks(prev=>{
       const mt=prev[0];if(!mt||mt.clips.length===0)return prev;
       const sorted=[...mt.clips].sort((a,b)=>a.trackStart-b.trackStart);
       let pos=0;let changed=false;
       const compacted=sorted.map(c=>{
-        const rawD=c.clipEnd-c.clipStart;
-        /* Calculate freeze time from tags anchored to this clip */
-        let fz=0;
-        tagTrack.clips.forEach(tg=>{if(tg.clipId===c.id&&tg.sourceTime>=c.clipStart&&tg.sourceTime<c.clipEnd)fz+=tg.duration;});
-        const effectiveD=rawD+fz;
+        const effectiveD=(c.clipEnd-c.clipStart)+clipFreezeDur(c,tt.clips);
         if(Math.abs(c.trackStart-pos)>0.001)changed=true;
         const nc={...c,trackStart:pos};
         pos+=effectiveD;
@@ -2581,7 +2599,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       });
       if(!changed)return prev;
       const n=prev.map((t,i)=>i===0?{...t,clips:compacted}:t);
-      recalcAll(n,tagTrack,audioTracks);return n;
+      recalcAll(n,tt,audioTracks);return n;
     });
   },[recalcAll,tagTrack,audioTracks]);
 
@@ -2621,12 +2639,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(!clip){console.warn("No video clip at playhead for freeze");return;}
     const fo=freezeOffset(clip.trackStart,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
-    const tag={id:uid("frz"),type:"freeze",clipId:clip.id,sourceTime,playerId:null,playerName:"FREEZE",playerColor:"#60a5fa",trackStart:0,duration:1.5,spotX:50,spotY:50,spotScale:1.0};
+    const tag={id:uid("frz"),type:"freeze",clipId:clip.id,sourceTime,playerId:null,playerName:"FREEZE",playerColor:"#60a5fa",trackStart:0,duration:FREEZE_DUR,spotX:50,spotY:50,spotScale:1.0};
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:1.0}}));
-    setTagTrack(p=>{const n={...p,clips:[...p.clips,tag]};recalcAll(tracks,n,audioTracks);return n;});
-    compactV1();
+    const nextTags={...tagTrack,clips:[...tagTrack.clips,tag]};
+    setTagTrack(nextTags);
+    recalcAll(tracks,nextTags,audioTracks);
+    /* Pass the new tag track — compactV1's own copy is a render behind */
+    compactV1(nextTags);
     setSelectedClipId(tag.id);
-  },[pushHist,findActiveClip,freezeOffset,recalcAll,tracks,audioTracks,compactV1]);
+  },[pushHist,findActiveClip,freezeOffset,recalcAll,tracks,tagTrack,audioTracks,compactV1]);
 
   const updateTagPos=useCallback((tagId,newX,newY)=>{
     setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===tagId?{...c,spotX:Math.max(5,Math.min(95,newX)),spotY:Math.max(5,Math.min(95,newY))}:c)}));
@@ -2645,7 +2666,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       /* For source-anchored tags, only adjust duration. Left edge does nothing (sourceTime is fixed). Right edge changes duration. */
       if(!isLeft){
         const resolved=resolvedTags.find(t=>t.id===clipId);if(!resolved)return;
-        const newDur=Math.max(0.1,newPos-resolved._tlStart);
+        const newDur=Math.min(TAG_MAX_DUR,Math.max(0.1,newPos-resolved._tlStart));
         setTagTrack(p=>{const n={...p,clips:p.clips.map(c=>c.id===clipId?{...c,duration:newDur}:c)};recalcAll(tracks,n,audioTracks);return n;});
       }
     }else if(isAudio){
@@ -2655,22 +2676,28 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     }
   },[recalcAll,tracks,tagTrack,audioTracks,resolvedTags]);
 
-  const cutClip=useCallback((trackId,clipId)=>{pushHist();
-    let aId=null,bId=null,splitSourceTime=null;
-    const docut=trks=>trks.map(t=>{if(t.id!==trackId)return t;const c=t.clips.find(x=>x.id===clipId);if(!c)return t;
-      const d=c.clipEnd-c.clipStart;const fo=freezeOffset(c.trackStart,playhead);const cut=playhead-c.trackStart-fo;if(cut<=.05||cut>=d-.05)return t;
-      const a={...c,id:uid("clip"),clipEnd:c.clipStart+cut};aId=a.id;
-      const b={...c,id:uid("clip"),trackStart:playhead,clipStart:c.clipStart+cut};bId=b.id;
-      splitSourceTime=c.clipStart+cut;
-      setClipProps(p=>({...p,[a.id]:{...(p[c.id]||{volume:100,scale:1,panX:0,panY:0})},[b.id]:{...(p[c.id]||{volume:100,scale:1,panX:0,panY:0})}}));
-      return{...t,clips:t.clips.filter(x=>x.id!==clipId).concat([a,b]).sort((x,y)=>x.trackStart-y.trackStart)};});
-    let found=false;tracks.forEach(t=>{if(t.clips.find(c=>c.id===clipId))found=true;});
-    if(found){setTracks(p=>{const n=docut(p);recalcAll(n,tagTrack,audioTracks);return n;});compactV1();}
-    else setAudioTracks(p=>{const n=docut(p);recalcAll(tracks,tagTrack,n);return n;});
-    /* Reassign tags from old clipId to appropriate new clip */
-    if(aId&&bId&&splitSourceTime!==null){
-      setTagTrack(p=>{const newClips=p.clips.map(tg=>{if(tg.clipId!==clipId)return tg;return tg.sourceTime<splitSourceTime?{...tg,clipId:aId}:{...tg,clipId:bId};});return{...p,clips:newClips};});
-    }
+  /* The split is computed up front rather than inside a setState updater, so the two
+     new clip ids exist before the tags are re-pointed at them. Compacting first and
+     re-pointing after left every tag orphaned at compaction time, and V1 closed up
+     over the freeze it was supposed to leave room for. */
+  const cutClip=useCallback((trackId,clipId)=>{
+    const isVideo=tracks.some(t=>t.clips.some(c=>c.id===clipId));
+    const srcTrks=isVideo?tracks:audioTracks;
+    const trk=srcTrks.find(t=>t.id===trackId);if(!trk)return;
+    const c=trk.clips.find(x=>x.id===clipId);if(!c)return;
+    const d=c.clipEnd-c.clipStart;const fo=freezeOffset(c.trackStart,playhead);const cut=playhead-c.trackStart-fo;
+    if(cut<=.05||cut>=d-.05)return;
+    pushHist();
+    const a={...c,id:uid("clip"),clipEnd:c.clipStart+cut};
+    const b={...c,id:uid("clip"),trackStart:playhead,clipStart:c.clipStart+cut};
+    const splitSourceTime=c.clipStart+cut;
+    setClipProps(p=>({...p,[a.id]:{...(p[c.id]||{volume:100,scale:1,panX:0,panY:0})},[b.id]:{...(p[c.id]||{volume:100,scale:1,panX:0,panY:0})}}));
+    const applied=srcTrks.map(t=>t.id!==trackId?t:{...t,clips:t.clips.filter(x=>x.id!==clipId).concat([a,b]).sort((x,y)=>x.trackStart-y.trackStart)});
+    /* Each tag follows whichever half still contains its source frame */
+    const nextTags={...tagTrack,clips:tagTrack.clips.map(tg=>tg.clipId!==clipId?tg:(tg.sourceTime<splitSourceTime?{...tg,clipId:a.id}:{...tg,clipId:b.id}))};
+    setTagTrack(nextTags);
+    if(isVideo){setTracks(applied);recalcAll(applied,nextTags,audioTracks);compactV1(nextTags);}
+    else{setAudioTracks(applied);recalcAll(tracks,nextTags,applied);}
     setSelectedClipId(null);
   },[pushHist,playhead,tracks,tagTrack,audioTracks,recalcAll,compactV1,freezeOffset]);
 
@@ -2694,8 +2721,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setTracks(p=>{const n=p.map(t=>({...t,clips:t.clips.filter(c=>c.id!==selectedClipId)}));recalcAll(n,tagTrack,audioTracks);return n;});
     setAudioTracks(p=>{const n=p.map(t=>({...t,clips:t.clips.filter(c=>c.id!==selectedClipId)}));recalcAll(tracks,tagTrack,n);return n;});
     /* Remove tag if it's the selected item, OR remove all tags anchored to this clip */
-    setTagTrack(p=>{const n={...p,clips:p.clips.filter(c=>c.id!==selectedClipId&&c.clipId!==selectedClipId)};recalcAll(tracks,n,audioTracks);return n;});
-    compactV1();
+    const nextTags={...tagTrack,clips:tagTrack.clips.filter(c=>c.id!==selectedClipId&&c.clipId!==selectedClipId)};
+    setTagTrack(nextTags);
+    recalcAll(tracks,nextTags,audioTracks);
+    /* Compact against the tags that remain, or V1 keeps room for the deleted freeze */
+    compactV1(nextTags);
     /* Snap playhead to where the deleted clip was (after compaction, the next clip slides here) */
     if(deletedStart!==null)setPlayhead(deletedStart);
     setSelectedClipId(null);
@@ -2793,9 +2823,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           tlPos+=tagSrcT-srcPos;
         }
         /* Tag segment: freeze frame with spotlight overlay. Duration = tag.duration.
-           srcStart === srcEnd so the video stays on this exact frame. */
-        segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+tg.duration,srcStart:tagSrcT,srcEnd:tagSrcT,isTag:true,tag:tg});
-        tlPos+=tg.duration;
+           srcStart === srcEnd so the video stays on this exact frame.
+           Same runaway guard the resize handle uses, so export matches the timeline. */
+        const safeDur=Math.min(TAG_MAX_DUR,tg.duration);
+        segments.push({clipId:cl.id,url:cl.url,tlStart:tlPos,tlEnd:tlPos+safeDur,srcStart:tagSrcT,srcEnd:tagSrcT,isTag:true,tag:tg});
+        tlPos+=safeDur;
         srcPos=tagSrcT;
       });
       /* Remaining video after last freeze tag */
@@ -2820,7 +2852,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const hideCss="position:fixed;left:0;bottom:0;width:1px;height:1px;pointer-events:none;z-index:-1;";
 
     /* Lookup: given a frame time, find the segment */
-    const findSeg=(t)=>{for(let i=segments.length-1;i>=0;i--){const s=segments[i];if(t>=s.tlStart&&t<s.tlEnd)return s;}return null;};
+    const findSeg=(t)=>{
+      for(let i=segments.length-1;i>=0;i--){const s=segments[i];if(t>=s.tlStart&&t<s.tlEnd)return s;}
+      /* Segment bounds accumulate floats, so adjacent segments can leave a
+         sub-frame hole between them. Falling into the gap branch there paints a
+         black frame in the middle of continuous footage. Tolerate a half-frame. */
+      const tol=0.5/fps;
+      for(let i=segments.length-1;i>=0;i--){const s=segments[i];if(t>=s.tlStart-tol&&t<s.tlEnd+tol)return s;}
+      return null;};
 
     /* ── Step 1: Download ALL media URLs as local blobs ── */
     setExportFmt("Downloading media...");
@@ -2944,13 +2983,23 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       return{dx:(outW-dw)/2+shiftX,dy:(outH-dh)/2+shiftY,dw,dh};
     };
 
-    /* drawVideoFit: draws video onto canvas using the canonical transform. */
+    /* Last successfully drawn frame. A seek (every cut, every freeze) takes a few
+       frames to resolve, and during it the video element has nothing decodable to
+       draw — which is what produced the black flashes between clips. Holding the
+       previous frame over the gap is what an NLE does, and it is invisible at 30fps. */
+    const holdCvs=document.createElement("canvas");holdCvs.width=W;holdCvs.height=H;
+    const holdCx=holdCvs.getContext("2d");let haveHold=false;
+    const paintHold=()=>{if(haveHold)cx.drawImage(holdCvs,0,0);};
+    const saveHold=()=>{holdCx.drawImage(cvs,0,0);haveHold=true;};
+
+    /* drawVideoFit: draws video onto canvas using the canonical transform.
+       Returns false when the element has no frame ready, so the caller can hold. */
     const drawVideoFit=(vel,scale,panX,panY)=>{
-      if(!vel||vel.readyState<2)return;
+      if(!vel||vel.readyState<2)return false;
       const vw=vel.videoWidth,vh=vel.videoHeight;
-      if(!vw||!vh)return;
+      if(!vw||!vh)return false;
       const t=computeVideoTransform(vw,vh,W,H,scale,panX,panY);
-      try{cx.drawImage(vel,t.dx,t.dy,t.dw,t.dh);}catch(e){}
+      try{cx.drawImage(vel,t.dx,t.dy,t.dw,t.dh);return true;}catch(e){return false;}
     };
 
     /* drawSpotlight: overlay rendering that matches preview EXACTLY.
@@ -3036,15 +3085,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         if(seg&&seg.isTag){
           /* TAG SEGMENT: frozen frame + spotlight overlay with fade in/out */
           const vel=videoEls[seg.clipId];
+          let drew=false;
           if(vel){
             const targetT=Math.max(0,seg.srcStart);
-            if(Math.abs(vel.currentTime-targetT)>0.05)vel.currentTime=targetT;
             if(!vel.paused)vel.pause();
+            /* Seek once on entry, not every frame — re-seeking a paused element
+               restarts the seek and keeps the frame perpetually unavailable. */
+            if(Math.abs(vel.currentTime-targetT)>0.15&&!vel.seeking)vel.currentTime=targetT;
             /* Use clip's actual scale — NOT hardcoded 1 — so vertical videos
                stay zoomed/fitted the same way as during normal playback */
             const tagPr=clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0};
-            drawVideoFit(vel,tagPr.scale||1,tagPr.panX||0,tagPr.panY||0);
+            drew=drawVideoFit(vel,tagPr.scale||1,tagPr.panX||0,tagPr.panY||0);
           }
+          /* Hold the clean video frame, before overlays, so a held frame never
+             carries a stale spotlight into the next clip. */
+          if(drew)saveHold();else paintHold();
           /* No fade — spotlight appears/disappears instantly */
           if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,1);
           /* Freeze with attached spotlight — draw the spotlight overlay */
@@ -3069,7 +3124,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               curSegIdx=segIdx;
               /* Pause all other videos */
               Object.entries(videoEls).forEach(([cid,v])=>{if(cid!==seg.clipId&&!v.paused)v.pause();});
-              vel.currentTime=Math.max(0,srcTime);
+              /* Only seek if the element is not already near the right frame.
+                 Leaving a freeze back into its own clip needs no seek at all —
+                 seeking anyway threw away a good frame and rendered black. */
+              if(Math.abs(vel.currentTime-srcTime)>0.15)vel.currentTime=Math.max(0,srcTime);
               vel.play().catch(()=>{});
               /* Switch audio */
               Object.values(audioGains).forEach(g=>g.gain.value=0);
@@ -3082,7 +3140,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               if(Math.abs(vel.currentTime-srcTime)>0.3)vel.currentTime=Math.max(0,srcTime);
             }
             if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100;
-            drawVideoFit(vel,pr.scale||1,pr.panX||0,pr.panY||0);
+            if(drawVideoFit(vel,pr.scale||1,pr.panX||0,pr.panY||0))saveHold();else paintHold();
 
             /* Draw overlay tags (zero-duration) that fall within TAG_OVERLAY_DUR of srcTime */
             if(seg.overlayTags&&seg.overlayTags.length>0){
@@ -3092,7 +3150,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 }
               }
             }
-          }
+          }else{paintHold();}
 
           /* Audio track (A1/A2 music) */
           const au=findActiveAudio(ph);
@@ -3593,7 +3651,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(tool==="blade"){cutTag(clip.id);return;}
     setSelectedClipId(clip.id);
     /* Tags are source-anchored — no drag movement, only select */};
-  const handleEdgeMouseDown=(e,trkId,clipId,isLeft,isAudio,isTag)=>{e.stopPropagation();pushHist();const sx=e.clientX;const onM=ev=>{const dx=ev.clientX-sx;const newPos=Math.max(0,(isLeft?Math.max(0,findActiveClip(playhead)?.trackStart||0):playhead)*zoom+dx)/zoom;updateClipEdge(trkId,clipId,isLeft,newPos,isAudio,isTag);};const onU=()=>{document.removeEventListener("mousemove",onM);document.removeEventListener("mouseup",onU);if(!isAudio&&!isTag)compactV1();};document.addEventListener("mousemove",onM);document.addEventListener("mouseup",onU);};
+  const handleEdgeMouseDown=(e,trkId,clipId,isLeft,isAudio,isTag)=>{e.stopPropagation();pushHist();const sx=e.clientX;
+    /* Compute the actual starting position of the edge being dragged */
+    let startPos=0;
+    if(isTag){
+      const resolved=resolvedTags.find(t=>t.id===clipId);
+      if(resolved){startPos=isLeft?resolved._tlStart:(resolved._tlStart+resolved.duration);}
+    }else{
+      const allTrks=isAudio?audioTracks:tracks;let clip=null;
+      allTrks.forEach(t=>t.clips.forEach(c=>{if(c.id===clipId)clip=c;}));
+      if(clip){startPos=isLeft?clip.trackStart:(clip.trackStart+(clip.clipEnd-clip.clipStart));}
+    }
+    const onM=ev=>{const dx=ev.clientX-sx;const newPos=Math.max(0,startPos*zoom+dx)/zoom;updateClipEdge(trkId,clipId,isLeft,newPos,isAudio,isTag);};const onU=()=>{document.removeEventListener("mousemove",onM);document.removeEventListener("mouseup",onU);
+      /* Resizing a tag changes how much room its clip needs, so V1 has to re-flow
+         too — skipping this left the following clips overlapping the longer freeze. */
+      if(!isAudio)compactV1();};document.addEventListener("mousemove",onM);document.addEventListener("mouseup",onU);};
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
     try{const d=JSON.parse(e.dataTransfer.getData("application/json"));const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
       let dropT=Math.max(0,x/zoom);dropT=snapToEdges(dropT,null,d.duration||0);

@@ -198,6 +198,13 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
 27. Edit Profile modal (modify info after creation)
 28. Athlete profile isolation (v1): greyed-out view-only cards (REPLACED by phone login in #29)
 29. Phone-based athlete identity: athletes log in with phone number, each profile locked to its phone. No more browsing other profiles. Phone stored in Firestore and localStorage for auto-login.
+30. Timeline/export bug pass (Sept 2026):
+    - Freeze and spotlight tags now default to **3 seconds** (`FREEZE_DUR`, `TAG_OVERLAY_DUR`). `TAG_MAX_DUR` (10s) is only a runaway guard on the resize handle.
+    - Fixed V1 magnetic compaction running against a stale tag track (the cause of clips shifting/overlapping after adding a freeze). `compactV1` now reads `tagTrackRef.current` and accepts an explicit override.
+    - One shared `clipFreezeDur()` helper replaces three inconsistent effective-duration calculations (`compactV1`, `recalcAll`, `findActiveClip`).
+    - `delClip` and `cutClip` now compact against the *post-change* tag track. `cutClip` was rewritten to compute the split synchronously so tags are re-pointed at the new clip halves before compaction.
+    - Resizing a tag now re-flows V1 (previously skipped, so clips overlapped a lengthened freeze).
+    - Export: added a hold-frame buffer so seeks no longer render black; removed redundant seeks at cut and freeze boundaries; `findSeg` tolerates sub-frame float gaps between segments.
 
 ---
 
@@ -213,8 +220,11 @@ When starting a new session, the AI assistant should:
 
 ## Known Issues / Pending Tasks
 
-1. **Export tag/freeze rendering** — The freeze with fade in/out was implemented but the user reported it still doesn't look right after a second test video. May need further investigation of the canvas render loop timing.
-2. **Firebase Security Rules** — Currently using default/open rules. The user said "do not let me forget" about locking these down. Rules should restrict read/write to authenticated users or at least validate data structure.
+1. **Export tag/freeze rendering** — Reworked Sept 2026 (see Features #30). Black frames at cuts/freezes traced to unguarded seeks; now covered by a hold-frame buffer. **Not yet verified against a real export** — needs a test render.
+2. **Firebase Security Rules — URGENT, NOT just hardening.** Verified Sept 9 2026 against the live site:
+   - The `players` collection is **world-readable, unauthenticated**. An anonymous `GET` to the Firestore REST endpoint returns every athlete document, including `name`, `dob`, and `phone`. These are minors. This is a live data-exposure problem, not a todo.
+   - The app performs **no Firebase Auth at all** (no `signInAnonymously`, no `getAuth`), so any rule requiring `request.auth != null` will break the whole app until sign-in is added. Rules and anonymous auth must land together.
+   - The `status` and `batches` collections are already denied by default (no matching rule), so the batch/progress features from commits `34fd3ea`/`6af5eab` are **silently broken in production** — console shows `permission-denied` on every load.
 3. **Custom domain** — User owns `athletesusa.org` (managed by their company via WordPress/Elementor). A CNAME for `app.athletesusa.org` was attempted but reverted because DNS wasn't configured. The user's IT team needs to add a CNAME record pointing `app.athletesusa.org` → `caiomazzocm-dotcom.github.io` before re-enabling.
 
 ---
@@ -228,6 +238,9 @@ When starting a new session, the AI assistant should:
 - **`overscroll-behavior-x: none`** on html, body, #root prevents iOS horizontal bounce.
 - **Profile pics and playing pics** are uploaded to Firebase Storage under `profile_pics/` and `playing_pics/` paths.
 - **Feedback screenshots** go to `feedback/{feedbackId}/screenshot_{idx}_{timestamp}`.
+- **Never compact the timeline with a `tagTrack` read from a closure.** `setTagTrack` is async, so any function calling `compactV1()` right after changing tags sees the previous tag list and lays out V1 without the freeze time that was just added or removed. Pass the new tag track explicitly (`compactV1(nextTags)`); `tagTrackRef.current` covers callbacks created in an earlier render, like drag mouseup handlers.
+- **Effective clip duration = raw duration + `clipFreezeDur(clip, tagClips)`.** Use that one helper everywhere. Three hand-rolled copies of this calculation had drifted apart and disagreed, which is how clips ended up overlapping.
+- **Never leave the export canvas cleared-but-undrawn.** Setting `currentTime` starts an async seek; the element has no frame to draw for several rAF ticks, and the cleared canvas records as black. Hold the previous frame (`paintHold()`) whenever `drawVideoFit` returns false.
 
 ---
 
@@ -240,4 +253,4 @@ When starting a new session, the AI assistant should:
 
 ---
 
-*Last updated: March 3, 2026*
+*Last updated: September 9, 2026*
