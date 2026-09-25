@@ -69,6 +69,10 @@
   @media(max-width:380px){
     .ath-select-grid{grid-template-columns:1fr!important}
   }
+  /* Studio top bar: shortcut reminders and the resolution label go first so the
+     action buttons (Social, Export, Feedback, Exit) always stay on screen. */
+  @media(max-width:1600px){.studio-hints{display:none!important}}
+  @media(max-width:1250px){.studio-res{display:none!important}}
 </style>
 </head>
 <body>
@@ -4029,7 +4033,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   <div style={{flex:1,display:"flex",flexDirection:"column",background:C.crust,overflow:"hidden"}}>
     <audio ref={audioRef} preload="auto"/>
     <div style={{flex:1,display:"flex",minHeight:0}}>
-    <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",justifyContent:"center",padding:8}}>
+    <div style={{flex:1,minWidth:0,minHeight:0,display:"flex",alignItems:"center",justifyContent:"center",padding:8,containerType:"size"}}>
       <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);if(pendingFreezeRef.current){attachSpotlight(pendingFreezeRef.current,spotlightMode,+x,+y);pendingFreezeRef.current=null;}else addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}}
         onDragOver={e=>{const ty=e.dataTransfer.types?[...e.dataTransfer.types]:[];if(ty.includes("Files")||ty.includes("application/json"))e.preventDefault();}}
         onDrop={e=>{
@@ -4040,7 +4044,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           const onMove=ev=>{const dx=(ev.clientX-startX)/rect.width*200;const dy=(ev.clientY-startY)/rect.height*200;const nx=Math.max(-100,Math.min(100,startPanX+dx));const ny=Math.max(-100,Math.min(100,startPanY+dy));setClipParam(cid,"panX",nx,activeSrcT);setClipParam(cid,"panY",ny,activeSrcT);};
           const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
           document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);}}
-        style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":(actProps&&actProps.scale>1?"grab":"default")}}>
+        style={{position:"relative",
+          /* the smallest of: 720px, the space's width, and the width that fits its
+             height at 16:9. Sized by width alone, the box overflowed short windows
+             and covered the editing toolbar below it. */
+          width:"min(720px, 100cqw, calc(100cqh * 16 / 9))",aspectRatio:"16/9",flexShrink:0,background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":(actProps&&actProps.scale>1?"grab":"default")}}>
         {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
         <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`translate(${(actProps.panX||0)*(vS-1)/2}%, ${(actProps.panY||0)*(vS-1)/2}%) scale(${vS})`:undefined,filter:introIn&&introIn.blur>0?`blur(${(introIn.blur*pvW).toFixed(1)}px)`:undefined}}/>
         {activeClip&&activeClip.kind==="image"&&(activeClip.url
@@ -4101,7 +4109,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     </div>
     {socialOpen&&socialPanel}
     </div>
-    <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderTop:`1px solid ${C.s0}`,background:C.mantle,flexWrap:"wrap"}}>
+    <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderTop:`1px solid ${C.s0}`,background:C.mantle,flexWrap:"wrap",flexShrink:0,position:"relative",zIndex:8}}>
       <button onClick={()=>setPlayhead(0)} style={{...ib,color:C.sub}}><SkipBackIcon size={15}/></button>
       <button onClick={togglePlay} onMouseUp={e=>e.currentTarget.blur()} title={isPlaying?"Pause (Space)":"Play (Space)"} style={{...ib,color:C.text,background:C.s0,borderRadius:6,padding:"5px 9px"}}>{isPlaying?<PauseIcon size={15}/>:<PlayIcon size={15}/>}</button>
       <span style={{color:C.text,fontSize:12,fontFamily:"monospace",minWidth:85}}>{fmtTime(playhead)}</span>
@@ -4505,19 +4513,20 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   return(
   <div style={{width:"100%",height:"100vh",display:"flex",flexDirection:"column",background:C.base,fontFamily:"'Inter',sans-serif",color:C.text,overflow:"hidden"}}>
     <div style={{display:"flex",alignItems:"center",padding:"0 12px",height:44,background:C.mantle,borderBottom:`1px solid ${C.s0}`,flexShrink:0}}>
-      <button onClick={onLogout} style={{...ib,color:C.sub,marginRight:8}}><ArrowLeftIcon size={16}/></button>
+      <div style={{display:"flex",alignItems:"center",flex:"1 1 auto",minWidth:0,overflow:"hidden"}}>
+      <button onClick={onLogout} style={{...ib,color:C.sub,marginRight:8,flexShrink:0}}><ArrowLeftIcon size={16}/></button>
       <div style={{width:1,height:22,background:C.s0,marginRight:10}}/>
       <span style={{fontWeight:900,fontSize:14,color:"#fff",fontStyle:"italic",marginRight:4}}>ATHLETES</span>
       <span style={{fontWeight:900,fontSize:14,color:C.coral,fontStyle:"italic",marginRight:12}}>USA</span>
       <div style={{padding:"2px 8px",background:C.coral+"18",border:`1px solid ${C.coral}33`,borderRadius:5}}>
         <span style={{fontSize:9,fontWeight:700,color:C.coral,letterSpacing:2}}>STUDIO</span>
       </div>
-      <span style={{color:C.overlay,fontSize:9,marginLeft:8,letterSpacing:1}}>1920×1080 YouTube</span>
-      {(()=>{const op=players.find(p=>p.id===activePlayerId);return<span style={{marginLeft:12,padding:"3px 10px",borderRadius:12,fontSize:10,fontWeight:700,background:op?SPOT_COLOR+"22":C.s0,border:`1px solid ${op?SPOT_COLOR+"77":C.s1}`,color:op?C.text:C.overlay,whiteSpace:"nowrap"}}>
+      <span className="studio-res" style={{color:C.overlay,fontSize:9,marginLeft:8,letterSpacing:1,whiteSpace:"nowrap"}}>1920×1080 YouTube</span>
+      {(()=>{const op=players.find(p=>p.id===activePlayerId);return<span style={{marginLeft:12,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",flexShrink:1,padding:"3px 10px",borderRadius:12,fontSize:10,fontWeight:700,background:op?SPOT_COLOR+"22":C.s0,border:`1px solid ${op?SPOT_COLOR+"77":C.s1}`,color:op?C.text:C.overlay,whiteSpace:"nowrap"}}>
         {op?<>Editing: <span style={{color:"#fff"}}>{op.name}</span></>:"No player open — click Edit next to a player"}
       </span>;})()}
       <div style={{flex:1}}/>
-      <div style={{display:"flex",alignItems:"center",gap:10,color:C.overlay,fontSize:9}}>
+      <div className="studio-hints" style={{display:"flex",alignItems:"center",gap:10,color:C.overlay,fontSize:9,flexShrink:0,marginLeft:10}}>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>&#8984;B Split</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>&#8984;Z Undo</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>Del Delete</span>
@@ -4526,6 +4535,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>N Snap</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>M Magnet</span>
       </div>
+      </div>
+      <div style={{display:"flex",alignItems:"center",flexShrink:0}}>
       <button onClick={closeGaps} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}} title="Close gaps">Close Gaps</button>
       <span title={projectSavedAt?"Your timeline is saved in this browser and restores automatically":"Nothing to save yet"}
         style={{display:"flex",alignItems:"center",gap:5,marginLeft:8,color:projectSavedAt?C.green:C.s2,fontSize:10,fontWeight:600,whiteSpace:"nowrap"}}>
@@ -4539,6 +4550,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <button onClick={()=>exportVideo()} disabled={exporting} style={{display:"flex",alignItems:"center",gap:5,background:exporting?"transparent":"linear-gradient(135deg,#22c55e,#16a34a)",border:exporting?`1px solid ${C.s1}`:"1px solid #22c55e55",borderRadius:6,padding:"4px 12px",color:exporting?C.s1:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:10,fontWeight:700,marginLeft:8,letterSpacing:0.5}} title="Export video"><DownloadIcon size={12}/> Export</button>
       <button onClick={()=>setShowFeedbackAdmin(true)} style={{display:"flex",alignItems:"center",gap:5,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:6,padding:"4px 10px",color:C.blue,cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:8}}><MessageSquareIcon size={12}/> Feedback</button>
       <button onClick={onLogout} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}}><LogOutIcon size={12}/> Exit</button>
+      </div>
     </div>
     {restoreNote&&<div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 14px",background:C.blue+"1a",borderBottom:`1px solid ${C.blue}44`,color:C.text,fontSize:11}}>
       <span style={{color:C.blue,fontWeight:700}}>&#8635;</span>
