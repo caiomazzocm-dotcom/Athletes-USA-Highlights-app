@@ -235,6 +235,12 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
     - Pool `<video>` elements only use `crossOrigin` for absolute http(s) URLs; with it set, a relative `brand/` file opened from disk failed to load.
     - **Verified end to end** on a running Studio with a real export, inspected with ffprobe/ffmpeg: file 29.19s for a 29.2s edit, no black frames, cuts at exactly 6.0s (thumbnail→clip) and 23.2s (clip→outro), and the intro sound in 0–6s matching the reference within ~1 dB.
     - **Measurement note:** Chrome's `<video>` misreports duration and seeks inaccurately on MediaRecorder MP4s (reported 30.16s and a ~1s offset that didn't exist). Verify exports with ffprobe/ffmpeg, not by seeking in the browser.
+34. Template always present + Editor Media photos (Sept 25 2026):
+    - **Every project has the template automatically**, including ones saved before it existed. `loadProject` runs `withBrand` on any save without `brand:1`: the intro is inserted at 0 and *everything else shifts back by its length* (V1 via `layoutV1`, and V2/V3 overlays and A1 music by +6s) so overlays stay in sync; freezes move with their clips because tags are source-anchored. `writeProject` then writes `brand:1`, so an intro/outro removed on purpose stays removed.
+    - `layoutV1(clips,tagClips)` (module level) is now the single magnetic-layout routine, used by `compactV1` and `withBrand`.
+    - **"+ Intro / Outro"** moved from the top bar to beside **Freeze + Tag**, solid AUSA red, and only appears when a piece is missing. It now uses `withBrand`, so it also shifts overlays and music correctly.
+    - **Editor Media → Photo.** Photos are stored like videos/music (IndexedDB + `aua_editor_imgs`) and listed with a thumbnail. Uploading fills an empty intro automatically; double-click or drag a photo onto the preview/timeline to use it; the one in use shows an **INTRO** badge. A file dropped or picked for the intro is also added to Editor Media for reuse. `putThumbnail` restores a deleted intro first, so a thumbnail always has a slot.
+    - Verified in a running Studio: an old-style Leon project (29.5s clip + 1.5s freeze) opened as intro 0–6 / clip 6–37 / outro 37–43 with the freeze moved to 8.0s; Photo upload filled the intro; a deleted outro stayed deleted across a reload (flag honoured) and the red button restored it at 37.0 without duplicating the intro sound.
 
 ---
 

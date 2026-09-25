@@ -2413,7 +2413,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const[expandedPlayers,setExpandedPlayers]=useState({});const[expandedCats,setExpandedCats]=useState({});
   const[activePlayerId,setActivePlayerId]=useState(null);
   const activePlayerIdRef=useRef(activePlayerId);activePlayerIdRef.current=activePlayerId;
-  const[editorVideos,setEditorVideos]=useState([]);const[editorMusic,setEditorMusic]=useState([]);const edMediaHydRef=useRef(false);
+  const[editorVideos,setEditorVideos]=useState([]);const[editorMusic,setEditorMusic]=useState([]);const[editorImages,setEditorImages]=useState([]);const edMediaHydRef=useRef(false);
   const[exporting,setExporting]=useState(false);const[exportProgress,setExportProgress]=useState(0);const[exportFmt,setExportFmt]=useState("");const exportCancelRef=useRef(false);
   const[showEditorSection,setShowEditorSection]=useState(false);
   const[showGuide,setShowGuide]=useState(false);
@@ -2428,7 +2428,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const videoContainerRef=useRef(null);
   const activeVideoRef=useRef(null);/* currently-visible video element */
   const edVidRef=useRef(null);const edMusicRef=useRef(null);
-  const introImgRef=useRef(null);const introTargetRef=useRef(null);
+  const introImgRef=useRef(null);const introTargetRef=useRef(null);const edImgRef=useRef(null);
 
   const playerColor=i=>PLAYER_COLORS[i%PLAYER_COLORS.length];
 
@@ -2437,10 +2437,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const svRaw=localStorage.getItem(STORAGE_KEY_EDVIDS);const smRaw=localStorage.getItem(STORAGE_KEY_EDMUSIC);
     if(svRaw){const list=JSON.parse(svRaw);const hydV=[];for(const v of list){const blob=await getBlob(v.id);if(blob){hydV.push({...v,url:URL.createObjectURL(blob)});}};if(hydV.length)setEditorVideos(hydV);}
     if(smRaw){const list=JSON.parse(smRaw);const hydM=[];for(const m of list){const blob=await getBlob(m.id);if(blob){hydM.push({...m,url:URL.createObjectURL(blob)});}};if(hydM.length)setEditorMusic(hydM);}
+    const siRaw=localStorage.getItem(STORAGE_KEY_EDIMGS);
+    if(siRaw){const list=JSON.parse(siRaw);const hydI=[];for(const im of list){const blob=await getBlob(im.id);if(blob){hydI.push({...im,url:URL.createObjectURL(blob)});}};if(hydI.length)setEditorImages(hydI);}
     edMediaHydRef.current=true;
   }catch(e){edMediaHydRef.current=true;}})();},[]);
   /* save editor media metadata to localStorage */
-  useEffect(()=>{if(!edMediaHydRef.current)return;try{localStorage.setItem(STORAGE_KEY_EDVIDS,JSON.stringify(editorVideos.map(v=>({id:v.id,name:v.name,duration:v.duration}))));localStorage.setItem(STORAGE_KEY_EDMUSIC,JSON.stringify(editorMusic.map(m=>({id:m.id,name:m.name,duration:m.duration}))));}catch(e){}},[editorVideos,editorMusic]);
+  useEffect(()=>{if(!edMediaHydRef.current)return;try{localStorage.setItem(STORAGE_KEY_EDVIDS,JSON.stringify(editorVideos.map(v=>({id:v.id,name:v.name,duration:v.duration}))));localStorage.setItem(STORAGE_KEY_EDMUSIC,JSON.stringify(editorMusic.map(m=>({id:m.id,name:m.name,duration:m.duration}))));localStorage.setItem(STORAGE_KEY_EDIMGS,JSON.stringify(editorImages.map(im=>({id:im.id,name:im.name}))));}catch(e){}},[editorVideos,editorMusic,editorImages]);
   useEffect(()=>{try{localStorage.setItem("aua_clipFeedback",JSON.stringify(clipFeedback));}catch(e){}},[clipFeedback]);
 
   /* ═══ PROJECT PERSISTENCE (one project per player) ═══
@@ -2468,6 +2470,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const playersRef=useRef(players);playersRef.current=players;
   const edVidsRef=useRef(editorVideos);edVidsRef.current=editorVideos;
   const edMusRef=useRef(editorMusic);edMusRef.current=editorMusic;
+  const edImgsRef=useRef(editorImages);edImgsRef.current=editorImages;
 
   const writeProject=useCallback((pid)=>{
     try{
@@ -2477,7 +2480,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       })}));
       const stamp=Date.now();
       localStorage.setItem(projectKey(pid),JSON.stringify({
-        v:1,savedAt:stamp,playerId:pid||null,
+        v:1,brand:1,savedAt:stamp,playerId:pid||null,
         tracks:slim(tracksRef.current),audioTracks:slim(audioTracksRef.current),
         tagTrack:tagTrackRef.current,clipProps:clipPropsRef.current,
         zoom:zoomRef.current,playhead:playheadRef.current}));
@@ -2492,6 +2495,31 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       outro:{id:uid("clip"),brand:"outro",videoId:"brand-outro",name:"AUSA Outro",url:BRAND.outro,trackStart:d,clipStart:0,clipEnd:d,playerId:"brand",playerName:"Athletes USA",isAudio:false},
       audio:{id:uid("clip"),brand:"intro-audio",videoId:"brand-intro-audio",name:"AUSA intro sound",url:BRAND.introAudio,trackStart:0,clipStart:0,clipEnd:d,playerId:"brand",playerName:"Athletes USA",isAudio:true},
     };
+  };
+  /* Add whichever brand pieces a timeline is missing. Inserting the intro pushes
+     everything else back by its length — V2/V3 overlays and music too — so they
+     stay in sync with V1. Returns null when nothing is missing. */
+  const withBrand=(vt,at,pid,tagClips)=>{
+    if(!vt.length)return null;
+    const d=BRAND.dur;const bt=brandTemplate(pid);
+    const v1=vt[0].clips||[];
+    const needIntro=!v1.some(c=>c.brand==="intro"),needOutro=!v1.some(c=>c.brand==="outro");
+    const needAudio=!(at[0]&&at[0].clips.some(c=>c.brand==="intro-audio"));
+    if(!needIntro&&!needOutro&&!needAudio)return null;
+    const shift=needIntro?d:0;
+    const nv=vt.map((t,i)=>{
+      if(i!==0)return{...t,clips:t.clips.map(c=>({...c,trackStart:c.trackStart+shift}))};
+      let clips=[...t.clips];
+      if(needIntro)clips=[bt.intro,...clips];
+      if(needOutro)clips=[...clips,{...bt.outro,trackStart:1e9}];
+      return{...t,clips:layoutV1(clips,tagClips)};
+    });
+    const base=at.length?at:[{id:uid("atrk"),name:"A1",clips:[]}];
+    const na=base.map((t,i)=>{
+      const clips=t.clips.map(c=>c.brand==="intro-audio"?c:{...c,trackStart:c.trackStart+shift});
+      return{...t,clips:i===0&&needAudio?[bt.audio,...clips]:clips};
+    });
+    return{vt:nv,at:na};
   };
   /* A fresh project is never blank: it is the brand template, ready for clips. */
   const emptyTimeline=useCallback((pid)=>{
@@ -2521,6 +2549,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const byId={};
     playersRef.current.forEach(pl=>(pl.categories||[]).forEach(cat=>(cat.videos||[]).forEach(v=>{if(v.url||v.cloudUrl)byId[v.id]=v.url||v.cloudUrl;})));
     edVidsRef.current.forEach(v=>{if(v.url)byId[v.id]=v.url;});
+    edImgsRef.current.forEach(im=>{if(im.url)byId[im.id]=im.url;});
     edMusRef.current.forEach(m=>{if(m.url)byId[m.id]=m.url;});
     let dropped=0;
     const rehydrate=async trks=>{
@@ -2538,8 +2567,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       }
       return out;
     };
-    const vt=await rehydrate(saved.tracks);
-    const at=await rehydrate(saved.audioTracks||[]);
+    let vt=await rehydrate(saved.tracks);
+    let at=await rehydrate(saved.audioTracks||[]);
+    /* Projects saved before the template existed get it on first open. From then
+       on the save carries brand:1, so an outro removed on purpose stays removed. */
+    if(!saved.brand){const r=withBrand(vt,at,pid,(saved.tagTrack&&saved.tagTrack.clips)||[]);if(r){vt=r.vt;at=r.at;}}
     setTracks(p=>vt.length?vt:p.map(t=>({...t,clips:[]})));
     setAudioTracks(p=>at.length?at:p.map(t=>({...t,clips:[]})));
     setTagTrack(saved.tagTrack&&saved.tagTrack.clips?saved.tagTrack:{id:uid("ttag"),name:"TAGS",clips:[]});
@@ -2787,6 +2819,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   const findActiveAudio=useCallback(ph=>{for(const t of audioTracks)for(const cl of t.clips){const d=cl.clipEnd-cl.clipStart;if(ph>=cl.trackStart&&ph<cl.trackStart+d)return cl;}return null;},[audioTracks]);
 
+  /* Photos live in Editor Media like videos and music: stored in IndexedDB, listed
+     for reuse, and usable as the intro thumbnail. */
+  const addEditorImages=async files=>{
+    const out=[];
+    for(const f of files){if(!f||!f.type||!f.type.startsWith("image/"))continue;
+      const id=uid("img");try{await storeBlob(id,f);}catch(e){}
+      out.push({id,name:f.name.replace(/\.[^.]+$/,""),url:URL.createObjectURL(f)});}
+    if(out.length){setEditorImages(p=>[...p,...out]);setShowEditorSection(true);}
+    return out;
+  };
   const handleEdVidUpload=async(files)=>{const vids=[];for(const f of files){const id=uid("evid");const url=URL.createObjectURL(f);const dur=await getMediaDur(url);await storeBlob(id,f);vids.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorVideos(p=>[...p,...vids]);};
   const handleEdMusicUpload=async(files)=>{const songs=[];for(const f of files){const id=uid("mus");const url=URL.createObjectURL(f);const dur=await getAudioDur(url);await storeBlob(id,f);songs.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorMusic(p=>[...p,...songs]);};
 
@@ -2805,16 +2847,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const tt=tagOverride||tagTrackRef.current;
     setTracks(prev=>{
       const mt=prev[0];if(!mt||mt.clips.length===0)return prev;
-      const sorted=[...mt.clips].sort((a,b)=>brandRank(a)-brandRank(b)||a.trackStart-b.trackStart);
-      let pos=0;let changed=false;
-      const compacted=sorted.map(c=>{
-        const effectiveD=(c.clipEnd-c.clipStart)+clipFreezeDur(c,tt.clips);
-        if(Math.abs(c.trackStart-pos)>0.001)changed=true;
-        const nc={...c,trackStart:pos};
-        pos+=effectiveD;
-        return nc;
-      });
-      if(!changed)return prev;
+      const compacted=layoutV1(mt.clips,tt.clips);
+      const was={};mt.clips.forEach(c=>{was[c.id]=c.trackStart;});
+      if(!compacted.some(c=>Math.abs(was[c.id]-c.trackStart)>0.001))return prev;
       const n=prev.map((t,i)=>i===0?{...t,clips:compacted}:t);
       recalcAll(n,tt,audioTracks);return n;
     });
@@ -3727,12 +3762,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       {showEditorSection&&<div style={{padding:"0 14px 12px",display:"flex",flexDirection:"column",gap:6}}>
         <input ref={edVidRef} type="file" accept="video/*" multiple onChange={e=>{if(e.target.files.length)handleEdVidUpload(Array.from(e.target.files));}} style={{display:"none"}}/>
         <input ref={edMusicRef} type="file" accept="audio/*" multiple onChange={e=>{if(e.target.files.length)handleEdMusicUpload(Array.from(e.target.files));}} style={{display:"none"}}/>
+        <input ref={edImgRef} type="file" accept="image/*" multiple style={{display:"none"}}
+          onChange={async e=>{const files=Array.from(e.target.files||[]);e.target.value="";if(!files.length)return;
+            const imgs=await addEditorImages(files);
+            /* the first photo fills an empty intro straight away */
+            const intro=tracksRef.current[0]&&tracksRef.current[0].clips.find(c=>c.brand==="intro");
+            if(imgs[0]&&intro&&!intro.url)putThumbnail(imgs[0]);}}/>
         <div style={{display:"flex",gap:4}}>
           <button onClick={()=>edVidRef.current?.click()} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:C.s0,border:`1px solid ${C.s1}`,borderRadius:6,padding:"6px 8px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600}}>
             <UploadIcon size={10}/> Video
           </button>
           <button onClick={()=>edMusicRef.current?.click()} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:C.s0,border:`1px solid ${C.s1}`,borderRadius:6,padding:"6px 8px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600}}>
             <MusicIcon size={10}/> Music
+          </button>
+          <button onClick={()=>edImgRef.current?.click()} title="Upload photos, e.g. the athlete thumbnail for the intro" style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:C.s0,border:`1px solid ${C.s1}`,borderRadius:6,padding:"6px 8px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600}}>
+            <ImageIcon size={10}/> Photo
           </button>
         </div>
         {editorVideos.map(v=>(
@@ -3753,6 +3797,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             <span style={{color:C.overlay,fontSize:8}}>{fmtTime(m.duration)}</span>
           </div>
         ))}
+        {editorImages.map(im=>{const inIntro=tracks[0]&&tracks[0].clips.some(c=>c.brand==="intro"&&c.videoId===im.id);return(
+          <div key={im.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({id:im.id,name:im.name,url:im.url,type:"image"}));e.dataTransfer.effectAllowed="copy";}}
+            onDoubleClick={()=>putThumbnail(im)} title="Double-click, or drag onto the preview or timeline, to use as the intro thumbnail"
+            style={{display:"flex",alignItems:"center",gap:6,padding:"3px 4px",cursor:"grab",borderRadius:4,fontSize:10}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <img src={im.url} alt="" style={{width:32,height:18,objectFit:"cover",borderRadius:2,flexShrink:0,border:`1px solid ${inIntro?C.coral:C.s1}`}}/>
+            <span style={{color:C.sub,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{im.name}</span>
+            {inIntro?<span style={{fontSize:7,fontWeight:800,letterSpacing:0.5,color:"#fff",background:C.coral,padding:"1px 5px",borderRadius:3}}>INTRO</span>
+              :<span style={{color:C.overlay,fontSize:8}}>photo</span>}
+          </div>);})}
       </div>}
     </div>
   </div>);
@@ -3762,8 +3816,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     <audio ref={audioRef} preload="auto"/>
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",minHeight:0,padding:8}}>
       <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);if(pendingFreezeRef.current){attachSpotlight(pendingFreezeRef.current,spotlightMode,+x,+y);pendingFreezeRef.current=null;}else addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}}
-        onDragOver={e=>{if(e.dataTransfer.types&&[...e.dataTransfer.types].includes("Files"))e.preventDefault();}}
-        onDrop={e=>{const f=e.dataTransfer.files&&e.dataTransfer.files[0];if(!f||!f.type.startsWith("image/"))return;e.preventDefault();const intro=tracks[0].clips.find(c=>c.brand==="intro");if(intro)setIntroImage(intro.id,f);}}
+        onDragOver={e=>{const ty=e.dataTransfer.types?[...e.dataTransfer.types]:[];if(ty.includes("Files")||ty.includes("application/json"))e.preventDefault();}}
+        onDrop={e=>{
+          const j=e.dataTransfer.getData("application/json");
+          if(j){try{const d=JSON.parse(j);if(d.type==="image"){e.preventDefault();putThumbnail(d);}}catch(err){}return;}
+          const f=e.dataTransfer.files&&e.dataTransfer.files[0];if(!f||!f.type.startsWith("image/"))return;e.preventDefault();setIntroImage(null,f);}}
         onMouseDown={e=>{if(spotlightMode)return;if(!actProps||actProps.scale<=1)return;e.preventDefault();const startX=e.clientX,startY=e.clientY;const startPanX=actProps.panX||0,startPanY=actProps.panY||0;const rect=e.currentTarget.getBoundingClientRect();const cid=activeClip?.id;if(!cid)return;
           const onMove=ev=>{const dx=(ev.clientX-startX)/rect.width*200;const dy=(ev.clientY-startY)/rect.height*200;const nx=Math.max(-100,Math.min(100,startPanX+dx));const ny=Math.max(-100,Math.min(100,startPanY+dy));setClipProps(p=>({...p,[cid]:{...p[cid],panX:nx,panY:ny}}));};
           const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
@@ -3871,6 +3928,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         onMouseEnter={e=>{e.currentTarget.style.background="#3b82f644";}} onMouseLeave={e=>{e.currentTarget.style.background="#3b82f622";}}>
         &#10074;&#10074; Freeze + Tag
       </button>
+      {(()=>{const v1=(tracks[0]&&tracks[0].clips)||[];const miss=!v1.some(c=>c.brand==="intro")||!v1.some(c=>c.brand==="outro");
+        /* normally never shown — every project has both; this brings them back if deleted */
+        return miss?<button onClick={()=>addBrandToProject()} title="Put the AUSA intro slot and outro back into this project"
+          style={{...tb,background:C.coral,color:"#fff",border:`1px solid ${C.coral}`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}>+ Intro / Outro</button>:null;})()}
       <div style={{flex:1}}/>
       <button onClick={()=>setZoom(z=>Math.max(2,z<=15?z-2:z-15))} style={{...ib,color:C.sub}}><ZoomOutIcon size={13}/></button>
       <input type="range" min={2} max={200} step={1} value={zoom} onChange={e=>setZoom(+e.target.value)} style={{width:100,accentColor:C.blue}}/>
@@ -4009,32 +4070,35 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* Put the athlete's thumbnail into the intro slot. The image is kept in
      IndexedDB under its own id (like uploaded editor media) so the project can
      re-resolve it after a reload. */
-  const setIntroImage=useCallback(async(clipId,file)=>{
-    if(!file||!file.type||!file.type.startsWith("image/"))return;
+  /* Use a photo as the intro thumbnail. If the intro was deleted it comes back
+     first, so a thumbnail always has somewhere to go. */
+  const putThumbnail=useCallback(img=>{
+    if(!img||!img.url)return;
     pushHist();
-    const id=uid("img");
-    try{await storeBlob(id,file);}catch(e){}
-    const url=URL.createObjectURL(file);
-    setTracks(p=>p.map(t=>({...t,clips:t.clips.map(c=>c.id===clipId?{...c,videoId:id,url,name:"INTRO — "+file.name.replace(/\.[^.]+$/,"")}:c)})));
+    let vt=tracksRef.current;
+    const r=withBrand(vt,audioTracksRef.current,loadedProjectRef.current,tagTrackRef.current.clips);
+    if(r){vt=r.vt;setAudioTracks(r.at);}
+    setTracks(vt.map(t=>({...t,clips:t.clips.map(c=>c.brand==="intro"?{...c,videoId:img.id,url:img.url,name:"INTRO — "+img.name}:c)})));
   },[pushHist]);
+  /* A file dropped or picked for the intro also lands in Editor Media for reuse. */
+  const setIntroImage=useCallback(async(clipId,file)=>{
+    const imgs=await addEditorImages([file]);
+    if(imgs[0])putThumbnail(imgs[0]);
+  },[putThumbnail]);
   const pickIntroImage=clipId=>{introTargetRef.current=clipId;if(introImgRef.current){introImgRef.current.value="";introImgRef.current.click();}};
 
   /* Existing projects predate the template: add whichever pieces are missing. */
   const addBrandToProject=useCallback(()=>{
-    pushHist();
-    const bt=brandTemplate(loadedProjectRef.current);
-    setTracks(p=>p.map((t,i)=>{if(i!==0)return t;let clips=[...t.clips];
-      if(!clips.some(c=>c.brand==="intro"))clips=[{...bt.intro,trackStart:-1},...clips];
-      if(!clips.some(c=>c.brand==="outro"))clips=[...clips,{...bt.outro,trackStart:1e9}];
-      return{...t,clips};}));
-    setAudioTracks(p=>p.map((t,i)=>i!==0||t.clips.some(c=>c.brand==="intro-audio")?t:{...t,clips:[bt.audio,...t.clips]}));
-    compactV1();
-  },[pushHist,compactV1]);
+    const r=withBrand(tracksRef.current,audioTracksRef.current,loadedProjectRef.current,tagTrackRef.current.clips);
+    if(!r)return;
+    pushHist();setTracks(r.vt);setAudioTracks(r.at);
+  },[pushHist]);
 
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
     const dropped=e.dataTransfer.files&&e.dataTransfer.files[0];
     if(dropped&&dropped.type.startsWith("image/")){const intro=tracks[0].clips.find(c=>c.brand==="intro");if(intro)setIntroImage(intro.id,dropped);return;}
-    try{const d=JSON.parse(e.dataTransfer.getData("application/json"));const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
+    try{const d=JSON.parse(e.dataTransfer.getData("application/json"));
+      if(d.type==="image"){putThumbnail(d);return;}const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
       let dropT=Math.max(0,x/zoom);dropT=snapToEdges(dropT,null,d.duration||0);
       const dropIsAudio=isAudio||d.type==="audio";
       /* Video always joins the end of the main storyline, however sloppy the drop.
@@ -4219,9 +4283,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         {projectSavedAt?`Saved ${new Date(projectSavedAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`:"Not saved"}
       </span>
       <button onClick={clearProject} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}} title="Clear the timeline and start a new edit">New</button>
-      {(()=>{const v1=(tracks[0]&&tracks[0].clips)||[];const miss=!v1.some(c=>c.brand==="intro")||!v1.some(c=>c.brand==="outro");
-        return miss?<button onClick={addBrandToProject} title="Add the AUSA intro slot and outro to this project"
-          style={{display:"flex",alignItems:"center",gap:5,background:C.coral+"18",border:`1px solid ${C.coral}66`,borderRadius:6,padding:"4px 10px",color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:8}}>+ Intro / Outro</button>:null;})()}
+
       <button onClick={exportVideo} disabled={exporting} style={{display:"flex",alignItems:"center",gap:5,background:exporting?"transparent":"linear-gradient(135deg,#22c55e,#16a34a)",border:exporting?`1px solid ${C.s1}`:"1px solid #22c55e55",borderRadius:6,padding:"4px 12px",color:exporting?C.s1:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:10,fontWeight:700,marginLeft:8,letterSpacing:0.5}} title="Export video"><DownloadIcon size={12}/> Export</button>
       <button onClick={()=>setShowFeedbackAdmin(true)} style={{display:"flex",alignItems:"center",gap:5,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:6,padding:"4px 10px",color:C.blue,cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:8}}><MessageSquareIcon size={12}/> Feedback</button>
       <button onClick={onLogout} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}}><LogOutIcon size={12}/> Exit</button>
@@ -4266,6 +4328,7 @@ const STORAGE_KEY_PLAYERS="aua_players";
 const STORAGE_KEY_SESSION="aua_studio_session";
 const STORAGE_KEY_EDVIDS="aua_editor_vids";
 const STORAGE_KEY_EDMUSIC="aua_editor_music";
+const STORAGE_KEY_EDIMGS="aua_editor_imgs";
 /* The Studio timeline itself — tracks, tags and per-clip settings — so an edit
    session survives a reload instead of starting from zero every time. */
 const STORAGE_KEY_PROJECT="aua_studio_project";
@@ -4276,6 +4339,13 @@ const STORAGE_KEY_PROJECT="aua_studio_project";
 const BRAND={outro:"brand/outro.mp4",introAudio:"brand/intro-audio.m4a",dur:6};
 /* V1 ordering: intro first, outro last, everything else by position between. */
 const brandRank=c=>c.brand==="intro"?0:c.brand==="outro"?2:1;
+/* Magnetic V1 layout: brand order, then gapless, each clip taking its trimmed
+   length plus the freezes anchored inside it. Shared by compaction and by the
+   template being added to an existing project. */
+const layoutV1=(clips,tagClips)=>{let pos=0;
+  return[...clips].sort((a,b)=>brandRank(a)-brandRank(b)||a.trackStart-b.trackStart).map(c=>{
+    let fz=0;for(const tg of tagClips||[]){if(tg.clipId===c.id&&tg.sourceTime>=c.clipStart&&tg.sourceTime<c.clipEnd)fz+=tg.duration;}
+    const nc={...c,trackStart:pos};pos+=(c.clipEnd-c.clipStart)+fz;return nc;});};
 const SESSION_DURATION_MS=30*60*1000;
 
 const loadPlayers=()=>{try{const d=localStorage.getItem(STORAGE_KEY_PLAYERS);if(d){const parsed=JSON.parse(d);return parsed.map(p=>({...p,categories:p.categories.map(c=>({...c,videos:c.videos.map(v=>({...v,url:v.cloudUrl||v.url||""}))}))}));}return[];}catch(e){return[];}};
