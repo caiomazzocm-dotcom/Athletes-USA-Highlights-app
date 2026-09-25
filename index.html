@@ -2583,6 +2583,39 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
        selected while that load was still in flight. */
   },[activePlayerId,saveArmed,loadProject,writeProject]);
 
+  /* Opening a project is now a deliberate action (the Edit button), never a side
+     effect of browsing a folder or tagging someone. Setting loadedProjectRef before
+     activePlayerId makes the switch effect above a no-op for this path, so the
+     caller can await the load. */
+  const renderTickRef=useRef(0);renderTickRef.current++;
+  const openProject=useCallback(async pid=>{
+    const target=pid||null;
+    if(!projectRestoredRef.current){setActivePlayerId(target);return;}
+    if(loadedProjectRef.current===target)return;
+    writeProject(loadedProjectRef.current);
+    loadedProjectRef.current=target;
+    setActivePlayerId(target);
+    setSpotlightMode(null);setShowTagMenu(false);
+    await loadProject(target);
+  },[writeProject,loadProject]);
+
+  /* Per-player project status for the sidebar: live for the open one, from
+     storage for the rest. Recomputed on edits, not on every playback frame. */
+  const projectSummary=React.useMemo(()=>{
+    const out={};
+    players.forEach(pl=>{
+      if(pl.id===activePlayerId){
+        out[pl.id]={clips:tracks.reduce((a,t)=>a+t.clips.length,0),tags:tagTrack.clips.length,savedAt:projectSavedAt};
+        return;
+      }
+      try{
+        const sv=JSON.parse(localStorage.getItem(projectKey(pl.id))||"null");
+        if(sv&&Array.isArray(sv.tracks))out[pl.id]={clips:sv.tracks.reduce((a,t)=>a+(t.clips||[]).length,0),tags:((sv.tagTrack&&sv.tagTrack.clips)||[]).length,savedAt:sv.savedAt||null};
+      }catch(e){}
+    });
+    return out;
+  },[players,activePlayerId,tracks,tagTrack,projectSavedAt]);
+
   /* Autosave, debounced. Disarmed until the initial load finishes so an empty
      starting timeline can never overwrite a saved project. */
   useEffect(()=>{
@@ -2711,8 +2744,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
      TAG_MAX_DUR is only a runaway guard on the resize handle, not the working length. */
   /* Defaults applied when a tag is created. Both stay freely resizable after —
      duration via the clip's right edge, size via the Spotlight Scale slider. */
-  const FREEZE_DUR=1.3;
-  const TAG_OVERLAY_DUR=1.3;
+  const FREEZE_DUR=1.5;
+  const TAG_OVERLAY_DUR=1.5;
   const TAG_MAX_DUR=10;
   const SPOT_SCALE_DEFAULT=0.5;
   /* Spotlight tag colour — AUSA blue, matching the athlete portal and the Freeze
@@ -2815,7 +2848,39 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* Pass the new tag track — compactV1's own copy is a render behind */
     compactV1(nextTags);
     setSelectedClipId(tag.id);
+    return{id:tag.id,clip};
   },[pushHist,findActiveClip,freezeOffset,recalcAll,tracks,tagTrack,audioTracks,compactV1]);
+
+  /* Tags belong to whoever owns the clip under the playhead — every clip already
+     records the player it came from, so there is nothing to pick. Falls back to the
+     open project's player for editor-media clips, and only returns null (→ list)
+     when neither exists and there are several players. */
+  const tagOwnerAt=useCallback(ph=>{
+    const clip=findActiveClip(ph);
+    const own=clip&&players.find(p=>p.id===clip.playerId);
+    if(own)return own;
+    return(activePlayerId&&players.find(p=>p.id===activePlayerId))||(players.length===1?players[0]:null);
+  },[findActiveClip,players,activePlayerId]);
+
+  /* Freeze + Tag in one action: freeze the frame, then the next click on the
+     preview places that player's spotlight on this exact freeze. Esc leaves a
+     plain freeze. The freeze is targeted by id, not by re-finding it under the
+     playhead, so a float rounding at its start edge can't send the spotlight to a
+     new standalone tag instead. */
+  const pendingFreezeRef=useRef(null);
+  const attachSpotlight=useCallback((freezeId,playerId,spotX,spotY)=>{
+    const player=players.find(p=>p.id===playerId);if(!player)return;
+    pushHist();
+    setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===freezeId?{...c,playerId,playerName:player.name,playerColor:playerColor(players.indexOf(player)),spotX,spotY,hasSpotlight:true}:c)}));
+    setSelectedClipId(freezeId);
+  },[players,pushHist]);
+  const freezeAndTag=useCallback(()=>{
+    const res=addFreeze(playhead);if(!res)return;
+    const own=players.find(p=>p.id===res.clip.playerId)||tagOwnerAt(playhead);
+    pendingFreezeRef.current=res.id;
+    if(own){setSpotlightMode(own.id);setShowTagMenu(false);}
+    else setShowTagMenu(true);
+  },[addFreeze,players,tagOwnerAt,playhead]);
 
   const updateTagPos=useCallback((tagId,newX,newY)=>{
     setTagTrack(p=>({...p,clips:p.clips.map(c=>c.id===tagId?{...c,spotX:Math.max(5,Math.min(95,newX)),spotY:Math.max(5,Math.min(95,newY))}:c)}));
@@ -3521,12 +3586,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     else if(e.key==="n"||e.key==="N")setSnapOn(p=>!p);
     else if(e.key==="m"||e.key==="M")setMagnetOn(p=>!p);
     else if(e.key==="s"||e.key==="S"){
-      const ap=activePlayerId&&players.find(p=>p.id===activePlayerId);
-      const target=ap||players.length===1&&players[0];
-      if(target){e.preventDefault();addTag(target.id,playhead);}
+      const own=tagOwnerAt(playhead);
+      if(own){e.preventDefault();addTag(own.id,playhead);}
     }
-    else if(e.key==="Escape"){setSpotlightMode(null);setShowTagMenu(false);}};
-    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,contentEnd,tracks,resolvedTags,audioTracks,playhead,exporting,activePlayerId,players,addTag]);
+    else if(e.key==="f"||e.key==="F"){e.preventDefault();freezeAndTag();}
+    else if(e.key==="Escape"){setSpotlightMode(null);setShowTagMenu(false);pendingFreezeRef.current=null;}};
+    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,contentEnd,tracks,resolvedTags,audioTracks,playhead,exporting,players,addTag,tagOwnerAt,freezeAndTag]);
 
   useEffect(()=>{if(!isPlaying||!tlScrollRef.current)return;const el=tlScrollRef.current;const px=playhead*zoom;if(px>el.scrollLeft+el.clientWidth-80)el.scrollLeft=px-el.clientWidth/2;},[playhead,isPlaying,zoom]);
 
@@ -3556,21 +3621,28 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         const totalVids=pl.categories.reduce((a,c)=>a+c.videos.length,0);
         return(
         <div key={pl.id}>
-          <div onClick={()=>{setExpandedPlayers(p=>({...p,[pl.id]:!pExp}));if(!pExp)setActivePlayerId(pl.id);}}
-            style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",cursor:"pointer",userSelect:"none"}}
-            onMouseEnter={e=>e.currentTarget.style.background=C.s0+"66"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+          <div onClick={()=>setExpandedPlayers(p=>({...p,[pl.id]:!pExp}))}
+            style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",cursor:"pointer",userSelect:"none",background:pl.id===activePlayerId?SPOT_COLOR+"18":"transparent",borderLeft:`3px solid ${pl.id===activePlayerId?SPOT_COLOR:"transparent"}`}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.s0+"66"} onMouseLeave={e=>e.currentTarget.style.background=pl.id===activePlayerId?SPOT_COLOR+"18":"transparent"}>
             {pExp?<ChevronDownIcon size={12} color={C.sub}/>:<ChevronRightIcon size={12} color={C.sub}/>}
             {pl.profilePicUrl?<img src={pl.profilePicUrl} style={{width:18,height:18,borderRadius:"50%",objectFit:"cover",border:`1px solid ${pColor}`,flexShrink:0}}/>
             :pExp?<FolderOpenIcon size={14} color={pColor}/>:<FolderIcon size={14} color={pColor}/>}
             <span style={{color:C.text,fontSize:12,fontWeight:700,flex:1}}>{pl.name}</span>
             {pl.shirtNumber&&<span style={{color:pColor,fontSize:8,fontWeight:700,marginRight:2}}>#{pl.shirtNumber}</span>}
             <span style={{color:C.overlay,fontSize:9,background:C.s0,padding:"2px 6px",borderRadius:4}}>{totalVids}</span>
+            {pl.id===activePlayerId
+              ?<span style={{fontSize:8,fontWeight:800,letterSpacing:0.8,color:"#fff",background:SPOT_COLOR,padding:"2px 6px",borderRadius:4}}>EDITING</span>
+              :<button onClick={e=>{e.stopPropagation();openProject(pl.id);}} title={`Open ${pl.name}'s project — your current edit is saved first`}
+                style={{fontSize:9,fontWeight:700,color:SPOT_COLOR,background:"transparent",border:`1px solid ${SPOT_COLOR}88`,borderRadius:4,padding:"1px 7px",cursor:"pointer"}}>Edit</button>}
             <button onClick={e=>{e.stopPropagation();downloadPlayerZip(pl,prog=>{}).then(r=>{createBatchFromDownload(pl,"Editor").catch(()=>{});if(r&&r.missing>0)alert(r.downloaded+"/"+r.total+" clips downloaded. "+r.missing+" missing — see MISSING_FILES.txt");}).catch(err=>alert("Zip failed: "+err.message));}}
               style={{...ib,color:C.green,padding:2,marginLeft:2,opacity:0.7}} title="Download all clips as ZIP"
               onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.7"}>
               <DownloadIcon size={12}/>
             </button>
           </div>
+          {(()=>{const ps=projectSummary[pl.id];return<div style={{padding:"0 14px 4px 36px",fontSize:9,color:ps&&ps.clips>0?C.sub:C.overlay}}>
+            {ps&&ps.clips>0?`${ps.clips} clip${ps.clips===1?"":"s"} · ${ps.tags} tag${ps.tags===1?"":"s"}${ps.savedAt?" · saved "+new Date(ps.savedAt).toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}):""}`:"No edit yet"}
+          </div>;})()}
           {pExp&&<div style={{paddingBottom:4}}>
             <div style={{padding:"2px 14px 4px 36px",color:C.overlay,fontSize:9}}>Class {pl.recruitingClass}{pl.shirtNumber?" · #"+pl.shirtNumber:""}{pl.size?" · "+pl.size:""}{pl.positions&&pl.positions.length>0?" · "+pl.positions.join(", "):""}</div>
             <div style={{display:"flex",gap:4,padding:"3px 14px 4px 36px",flexWrap:"wrap",alignItems:"center"}}>
@@ -3593,7 +3665,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   <span style={{color:C.overlay,fontSize:9}}>{cat.videos.length}</span>
                 </div>
                 {cExp&&cat.videos.map(v=>(
-                  <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>{const start=v1EndPos();addClip(tracks[0].id,{...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration},start,false);}}
+                  <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>addClipForPlayer({...v,categoryId:cat.id,playerId:pl.id,playerName:pl.name,duration:v.duration})}
                     style={{display:"flex",alignItems:"center",gap:5,padding:"3px 14px 3px 52px",cursor:"grab",borderRadius:4,margin:"0 4px",fontSize:10}}
                     onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <FilmIcon size={10} color={cColor}/>
@@ -3627,7 +3699,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           </button>
         </div>
         {editorVideos.map(v=>(
-          <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,playerId:"editor",playerName:"Editor",duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>{const start=v1EndPos();addClip(tracks[0].id,{...v,playerId:"editor",playerName:"Editor",duration:v.duration},start,false);}}
+          <div key={v.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({...v,playerId:"editor",playerName:"Editor",duration:v.duration,type:"video"}));e.dataTransfer.effectAllowed="copy";}} onDoubleClick={()=>addClipForPlayer({...v,playerId:"editor",playerName:"Editor",duration:v.duration})}
             style={{display:"flex",alignItems:"center",gap:5,padding:"3px 4px",cursor:"grab",borderRadius:4,fontSize:10}}
             onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
             <FilmIcon size={10} color={C.peach}/>
@@ -3652,7 +3724,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   <div style={{flex:1,display:"flex",flexDirection:"column",background:C.crust,overflow:"hidden"}}>
     <audio ref={audioRef} preload="auto"/>
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",minHeight:0,padding:8}}>
-      <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}}
+      <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);if(pendingFreezeRef.current){attachSpotlight(pendingFreezeRef.current,spotlightMode,+x,+y);pendingFreezeRef.current=null;}else addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}}
         onMouseDown={e=>{if(spotlightMode)return;if(!actProps||actProps.scale<=1)return;e.preventDefault();const startX=e.clientX,startY=e.clientY;const startPanX=actProps.panX||0,startPanY=actProps.panY||0;const rect=e.currentTarget.getBoundingClientRect();const cid=activeClip?.id;if(!cid)return;
           const onMove=ev=>{const dx=(ev.clientX-startX)/rect.width*200;const dy=(ev.clientY-startY)/rect.height*200;const nx=Math.max(-100,Math.min(100,startPanX+dx));const ny=Math.max(-100,Math.min(100,startPanY+dy));setClipProps(p=>({...p,[cid]:{...p[cid],panX:nx,panY:ny}}));};
           const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
@@ -3698,7 +3770,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         </div>}
         {spotlightMode&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.3)",cursor:"crosshair",pointerEvents:"none"}}>
           <div style={{background:SPOT_COLOR,padding:"8px 20px",borderRadius:8}}>
-            <span style={{color:"#000",fontSize:13,fontWeight:700}}>Click to place spotlight</span>
+            <span style={{color:"#fff",fontSize:13,fontWeight:700}}>Click on {(players.find(p=>p.id===spotlightMode)||{}).name||"the player"} to tag</span>
+            <div style={{color:"#ffffffcc",fontSize:10,fontWeight:600,marginTop:2,textAlign:"center"}}>Esc — {pendingFreezeRef.current?"keep the freeze without a tag":"cancel"}</div>
           </div>
         </div>}
         <div style={{position:"absolute",bottom:6,right:8,background:"rgba(0,0,0,0.6)",padding:"2px 6px",borderRadius:3,fontSize:8,color:C.overlay}}>1920×1080</div>
@@ -3727,16 +3800,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <div style={{width:1,height:18,background:C.s0}}/>
       <div style={{position:"relative"}}>
         <button onClick={()=>{
-          const ap=activePlayerId&&players.find(p=>p.id===activePlayerId);
-          if(ap){setSpotlightMode(ap.id);setShowTagMenu(false);}
-          else if(players.length===1){setSpotlightMode(players[0].id);setShowTagMenu(false);}
+          pendingFreezeRef.current=null;
+          const own=tagOwnerAt(playhead);
+          if(own){setSpotlightMode(own.id);setShowTagMenu(false);}
           else{setShowTagMenu(p=>!p);}
-        }} style={{...tb,background:showTagMenu||spotlightMode?SPOT_COLOR:SPOT_COLOR+"22",color:showTagMenu||spotlightMode?"#fff":SPOT_COLOR,border:`1px solid ${SPOT_COLOR}`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}>
-          &#9673; {activePlayerId&&players.find(p=>p.id===activePlayerId)?`Tag ${players.find(p=>p.id===activePlayerId).name}`:"Add Spotlight"}
+        }} title="Spotlight a player without freezing — the video keeps playing" style={{...tb,background:showTagMenu||spotlightMode?SPOT_COLOR:SPOT_COLOR+"22",color:showTagMenu||spotlightMode?"#fff":SPOT_COLOR,border:`1px solid ${SPOT_COLOR}`,borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}>
+          &#9673; Spotlight only
         </button>
         {showTagMenu&&<div style={{position:"absolute",bottom:"100%",left:0,marginBottom:4,background:C.mantle,border:`1px solid ${C.s0}`,borderRadius:8,padding:6,minWidth:160,zIndex:50,boxShadow:"0 -4px 20px rgba(0,0,0,0.4)"}}>
           {players.length===0?<div style={{padding:"8px 12px",color:C.overlay,fontSize:11}}>No players available</div>:players.map((pl,i)=>(
-            <button key={pl.id} onClick={()=>{setSpotlightMode(pl.id);setShowTagMenu(false);setActivePlayerId(pl.id);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",background:"transparent",border:"none",padding:"8px 12px",color:C.text,cursor:"pointer",fontSize:11,borderRadius:4}}
+            <button key={pl.id} onClick={()=>{setSpotlightMode(pl.id);setShowTagMenu(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",background:"transparent",border:"none",padding:"8px 12px",color:C.text,cursor:"pointer",fontSize:11,borderRadius:4}}
               onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <div style={{width:8,height:8,borderRadius:"50%",background:playerColor(i)}}/>
               {pl.name}
@@ -3744,10 +3817,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           ))}
         </div>}
       </div>
-      <button onClick={()=>addFreeze(playhead)}
+      <button onClick={freezeAndTag} title={(()=>{const o=tagOwnerAt(playhead);return`Freeze the frame, then click ${o?o.name:"the player"} to tag them (F). Esc = freeze only.`;})()}
         style={{...tb,background:"#3b82f622",color:"#60a5fa",border:"1px solid #3b82f6",borderRadius:20,padding:"4px 12px",fontSize:11,fontWeight:700,letterSpacing:0.5}}
         onMouseEnter={e=>{e.currentTarget.style.background="#3b82f644";}} onMouseLeave={e=>{e.currentTarget.style.background="#3b82f622";}}>
-        &#10074;&#10074; Freeze
+        &#10074;&#10074; Freeze + Tag
       </button>
       <div style={{flex:1}}/>
       <button onClick={()=>setZoom(z=>Math.max(2,z<=15?z-2:z-15))} style={{...ib,color:C.sub}}><ZoomOutIcon size={13}/></button>
@@ -3861,6 +3934,25 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     return end;
   },[tracks]);
 
+  /* With no player project open, adding one of a player's clips opens that
+     player's project first, so the work lands in their project rather than the
+     unassigned slot. Otherwise identical to a plain add. */
+  const addClipRef=useRef(null);addClipRef.current=addClip;
+  const v1EndPosRef=useRef(null);v1EndPosRef.current=v1EndPos;
+  const addClipForPlayer=useCallback(async(data,trackId,start,isAudio)=>{
+    const pid=data.playerId;
+    if(activePlayerIdRef.current==null&&pid&&players.some(p=>p.id===pid)){
+      await openProject(pid);
+      /* let the opened project render so the append lands after its clips */
+      const tick=renderTickRef.current;
+      for(let i=0;i<30&&renderTickRef.current===tick;i++)await new Promise(r=>requestAnimationFrame(r));
+      addClipRef.current(tracksRef.current[0].id,data,v1EndPosRef.current(),false);
+      return;
+    }
+    if(trackId==null)addClip(tracks[0].id,data,v1EndPos(),false);
+    else addClip(trackId,data,start,isAudio);
+  },[players,openProject,addClip,tracks,v1EndPos]);
+
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
     try{const d=JSON.parse(e.dataTransfer.getData("application/json"));const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
       let dropT=Math.max(0,x/zoom);dropT=snapToEdges(dropT,null,d.duration||0);
@@ -3868,8 +3960,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       /* Video always joins the end of the main storyline, however sloppy the drop.
          Otherwise a reel of 60 clips needs 60 stacked tracks. Hold Alt/Option to
          drop on the exact track and position you aimed at, for deliberate layering. */
-      if(!dropIsAudio&&!e.altKey){addClip(tracks[0].id,d,v1EndPos(),false);return;}
-      addClip(trkId,d,dropT,dropIsAudio);
+      if(!dropIsAudio&&!e.altKey){addClipForPlayer(d);return;}
+      addClipForPlayer(d,trkId,dropT,dropIsAudio);
     }catch(err){}};
 
   const totalW=tlDur*zoom;const tickI=zoom>=80?1:zoom>=40?5:10;const ticks=[];for(let i=0;i<=tlDur;i+=tickI)ticks.push(i);const subI=tickI/5;
@@ -4020,12 +4112,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         <span style={{fontSize:9,fontWeight:700,color:C.coral,letterSpacing:2}}>STUDIO</span>
       </div>
       <span style={{color:C.overlay,fontSize:9,marginLeft:8,letterSpacing:1}}>1920×1080 YouTube</span>
+      {(()=>{const op=players.find(p=>p.id===activePlayerId);return<span style={{marginLeft:12,padding:"3px 10px",borderRadius:12,fontSize:10,fontWeight:700,background:op?SPOT_COLOR+"22":C.s0,border:`1px solid ${op?SPOT_COLOR+"77":C.s1}`,color:op?C.text:C.overlay,whiteSpace:"nowrap"}}>
+        {op?<>Editing: <span style={{color:"#fff"}}>{op.name}</span></>:"No player open — click Edit next to a player"}
+      </span>;})()}
       <div style={{flex:1}}/>
       <div style={{display:"flex",alignItems:"center",gap:10,color:C.overlay,fontSize:9}}>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>&#8984;B Split</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>&#8984;Z Undo</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>Del Delete</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>Space Play</span>
+        <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>F Freeze+Tag</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>N Snap</span>
         <span style={{background:C.s0,padding:"2px 6px",borderRadius:3}}>M Magnet</span>
       </div>

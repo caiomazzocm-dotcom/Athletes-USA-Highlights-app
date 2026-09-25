@@ -210,13 +210,31 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
     - **Spotlight Scale fix.** The properties panel switched on `selClip.type!=="tag"`, but freeze tags are type `"freeze"`, so selecting a freeze showed the video-clip sliders and Scale wrote a property nothing reads. Panel now decides by tag-track membership (`selIsTag`).
     - **Clips render on their own track row.** The video clip style object declared `position` twice — `"absolute"` then `"relative"` — and the last key wins, so clips fell into normal document flow and the second clip on a track wrapped onto a line *below* the first. It looked exactly like the clip had landed on V2. `left` still applied as a relative offset, which is why horizontal placement looked right. **This was the real cause** of "my second video goes to V2".
     - **Clips land on V1.** Dropping a video anywhere in the video area appends to the end of the main storyline via `v1EndPos()`; hold **Alt/Option** while dropping to place it on the exact track and position for deliberate layering.
-    - **Tag defaults:** `FREEZE_DUR` / `TAG_OVERLAY_DUR` = **1.3s**, `SPOT_SCALE_DEFAULT` = **0.5** (50% on the Spotlight Scale slider). Both remain freely resizable; `TAG_MAX_DUR` (10s) is only a runaway guard. The render fallback for tags with no stored `spotScale` stays at `1.0` so pre-existing tags don't retroactively shrink.
+    - **Tag defaults:** `FREEZE_DUR` / `TAG_OVERLAY_DUR` = **1.5s** (standard since Sept 25), `SPOT_SCALE_DEFAULT` = **0.5** (50% on the Spotlight Scale slider). Both remain freely resizable; `TAG_MAX_DUR` (10s) is only a runaway guard. The render fallback for tags with no stored `spotScale` stays at `1.0` so pre-existing tags don't retroactively shrink.
     - **One project per player.** Storage key is `aua_studio_project:<playerId>` (`:editor` when no player is selected). Selecting a player in the sidebar saves the outgoing project and opens theirs; a player with no saved project gets an empty timeline rather than inheriting the previous athlete's clips. A pre-per-player save under the bare `aua_studio_project` key is adopted once by the first project opened, then removed.
     - **Timeline persistence.** The Studio autosaves the edit to `localStorage`, debounced 600ms, and restores it on entry. Header shows a "Saved HH:MM" indicator plus a **New** button; a banner after restore offers "Start fresh".
       - **Clip URLs are never saved** — a `blob:` URL is dead after reload. Each clip carries `videoId`, so on restore the URL is re-resolved from the player's media, then editor media, then IndexedDB, then a persisted `srcUrl` (https only). Clips whose media can't be found are dropped and reported in the banner rather than left broken.
       - The restore effect runs **once** on mount with `[]` deps and reads players/editor media through refs; earlier it depended on those values and a dep change mid-restore abandoned it. Autosave is armed by `saveArmed` so an empty initial timeline can never overwrite a saved project.
       - Payload is small (a 3-clip timeline is ~650 bytes) since only positions, trims, tags and settings are stored.
     - **Spotlight tags are AUSA blue** (`SPOT_COLOR` = `C.blue`, `SPOT_RGB` for canvas rgba), matching the athlete portal and Freeze control. Freeze clips carrying a spotlight use the lighter `#60a5fa` so they stay distinguishable on the timeline. The standalone Overlay tool has its own colour picker and was left alone.
+32. Multi-player workflow (Sept 25 2026):
+    - **Opening a project is deliberate.** Each player row has an **Edit** button (`openProject`); the open one shows an **EDITING** badge and the top bar reads "Editing: <name>". Clicking a folder only expands/collapses it — previously expanding a folder silently switched the whole timeline.
+    - **Project status per player** in the sidebar: "N clips · N tags · saved <time>" or "No edit yet" (`projectSummary`).
+    - **Adding a player's clip with no project open** opens that player's project first (`addClipForPlayer`), so work never lands in the unassigned slot.
+    - **Tags follow the clip, not a list.** `tagOwnerAt(playhead)` returns the owner of the clip under the playhead (every clip stores `playerId`), so a teammate's clip in someone's reel tags the teammate. The player list only appears for editor-media clips with no project open.
+    - **Freeze + Tag is one action** (button or **F**): creates the freeze, then the next click on the preview places that player's spotlight on it. **Esc** keeps a plain freeze. The spotlight targets the pending freeze by id (`pendingFreezeRef`), not by re-finding it under the playhead.
+    - **Bug fixed:** choosing a player from the tag menu used to call `setActivePlayerId`, which switched projects mid-edit and swapped out the reel being worked on.
+    - Verified in a running Studio: auto-open on first clip, Freeze + Tag producing a single 1.5s freeze with Joris's spotlight at 50%, switching to Leon and back with the edit restored, and a Leon clip inside Joris's reel tagging Leon.
+
+---
+
+## Roadmap agreed with Caio (Sept 25 2026)
+
+- **Storage:** this app uses **Firebase** (project `athletes-usa`), not Supabase. Caio's boss's platform (which Caio does not have full access to) will provide storage, logins and player profiles — confirm which backend it is before building integrations.
+- **Logins & profiles come from the platform.** Athletes see only their portal; editors see everything. Drop this app's own studio password and athlete profile form once connected.
+- **Delivery with review.** Export → editor reviews internally → explicit **"Job done / Send to athlete"** step → reel saved onto the player's profile on the platform. Nothing reaches the athlete before that approval.
+- **Brand library:** Caio will supply the outro. The intro is a designed thumbnail image + the outro's sound. Shared across editors, one-click intro + outro.
+- **Future:** a short promo snippet generated from each finished reel for AUSA social media; vertical 9:16 export; notifications; separate coach/social cuts.
 
 ---
 
