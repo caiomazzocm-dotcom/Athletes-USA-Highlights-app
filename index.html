@@ -2412,6 +2412,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const[showFeedbackPanel,setShowFeedbackPanel]=useState(false);
   const[expandedPlayers,setExpandedPlayers]=useState({});const[expandedCats,setExpandedCats]=useState({});
   const[activePlayerId,setActivePlayerId]=useState(null);
+  /* Export for social */
+  const[socialOpen,setSocialOpen]=useState(false);const[socialFmt,setSocialFmt]=useState("vertical");
+  const[socialRange,setSocialRange]=useState(null);const[socialOutro,setSocialOutro]=useState(true);
+  const[socialMeta,setSocialMeta]=useState({club:"",league:"",highlight:false,lang:"en",mention:true,platform:"instagram"});
+  const[captionVariant,setCaptionVariant]=useState(0);const[captionText,setCaptionText]=useState("");const[captionEdited,setCaptionEdited]=useState(false);const[captionCopied,setCaptionCopied]=useState(false);
+  /* club/league are remembered per athlete until the platform provides them */
+  useEffect(()=>{let sv=null;try{sv=JSON.parse(localStorage.getItem("aua_social_meta:"+(activePlayerId||"editor"))||"null");}catch(e){}
+    setSocialMeta(m=>({club:"",league:"",highlight:false,mention:true,lang:m.lang,platform:m.platform,...(sv||{})}));setCaptionEdited(false);},[activePlayerId]);
   const activePlayerIdRef=useRef(activePlayerId);activePlayerIdRef.current=activePlayerId;
   const[editorVideos,setEditorVideos]=useState([]);const[editorMusic,setEditorMusic]=useState([]);const[editorImages,setEditorImages]=useState([]);const edMediaHydRef=useRef(false);
   const[exporting,setExporting]=useState(false);const[exportProgress,setExportProgress]=useState(0);const[exportFmt,setExportFmt]=useState("");const exportCancelRef=useRef(false);
@@ -3077,7 +3085,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
      - audioEls{} = per-clip <audio> connected to AudioContext for sound capture
      - Both load from same blob URLs (downloaded from Firebase Storage)
      - Frame-by-frame stepping with seek+wait for guaranteed frame accuracy */
-  const exportVideo=useCallback(async()=>{
+  const exportVideo=useCallback(async(opts={})=>{
     setIsPlaying(false);if(animRef.current)cancelAnimationFrame(animRef.current);
     setExporting(true);setExportProgress(0);exportCancelRef.current=false;
 
@@ -3136,7 +3144,20 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     segments.forEach(s=>{if(s.tlEnd>cEnd)cEnd=s.tlEnd;});
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>cEnd)cEnd=e;}));
     if(cEnd<=0){setExporting(false);return;}
-    if(allClips.some(c=>c.brand==="intro"&&!c.url)&&!confirm("The intro has no athlete thumbnail yet — it will export as black with the intro sound.\n\nOK = export anyway\nCancel = go back and add the thumbnail")){setExporting(false);return;}
+    /* Output time u maps onto the timeline: the chosen range, then (for social
+       clips) the outro appended after it. The whole reel is the default range. */
+    const from=opts.range?Math.max(0,opts.range.from):0;
+    const to=opts.range?Math.min(cEnd,opts.range.to):cEnd;
+    const mainLen=Math.max(0,to-from);
+    const outroC=opts.appendOutro?allClips.find(c=>c.brand==="outro"):null;
+    const outroSegs=outroC?segments.filter(sg=>sg.clipId===outroC.id):[];
+    const oStart=outroSegs.length?Math.min(...outroSegs.map(sg=>sg.tlStart)):null;
+    const oEnd=outroSegs.length?Math.max(...outroSegs.map(sg=>sg.tlEnd)):null;
+    const addOutro=oStart!=null&&to<=oStart+0.01;
+    const outLen=mainLen+(addOutro?oEnd-oStart:0);
+    const mapT=u=>u<mainLen?from+u:oStart+(u-mainLen);
+    if(outLen<=0){setExporting(false);return;}
+    if(allClips.some(c=>c.brand==="intro"&&!c.url&&c.trackStart<to&&c.trackStart+(c.clipEnd-c.clipStart)>from)&&!confirm("The intro has no athlete thumbnail yet — it will export as black with the intro sound.\n\nOK = export anyway\nCancel = go back and add the thumbnail")){setExporting(false);return;}
 
     const fps=30;const totalFrames=Math.ceil(cEnd*fps);
     const hideCss="position:fixed;left:0;bottom:0;width:1px;height:1px;pointer-events:none;z-index:-1;";
@@ -3230,7 +3251,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     try{eASrc=actx.createMediaElementSource(eA);eAGain=actx.createGain();eASrc.connect(eAGain).connect(aDst);}catch(e){}
 
     /* ── Step 5: Canvas + MediaRecorder ── */
-    const W=1920,H=1080;
+    const W=opts.W||1920,H=opts.H||1080;
     const cvs=document.createElement("canvas");cvs.width=W;cvs.height=H;
     const cx=cvs.getContext("2d");cx.imageSmoothingEnabled=true;cx.imageSmoothingQuality="high";
     const cStream=cvs.captureStream(fps);
@@ -3241,7 +3262,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     let mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||"video/webm";
     const isMP4=mime.startsWith("video/mp4");const ext=isMP4?"mp4":"webm";
     setExportFmt(ext.toUpperCase()+" 0%");
-    const rec=new MediaRecorder(mStream,{mimeType:mime,videoBitsPerSecond:20000000,audioBitsPerSecond:320000});
+    const rec=new MediaRecorder(mStream,{mimeType:mime,videoBitsPerSecond:opts.bitrate||20000000,audioBitsPerSecond:320000});
     const chunks=[];rec.ondataavailable=e=>{if(e.data.size>0)chunks.push(e.data);};
 
     const cleanup=()=>{
@@ -3288,14 +3309,32 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
     /* drawVideoFit: draws video onto canvas using the canonical transform.
        Returns false when the element has no frame ready, so the caller can hold. */
-    const drawVideoFit=(vel,scale,panX,panY)=>{
+    /* Where the 16:9 frame (the preview box) sits on this canvas. Landscape:
+       the whole canvas, exactly as before. Narrower social shapes: per clip,
+       either a full-height crop window or the whole picture over a backdrop. */
+    const FULLBOX={x:0,y:0,w:W,h:H};
+    const narrow=W/H<16/9-0.01;
+    const frameOf={};allClips.forEach(c=>{frameOf[c.id]=socialFrame(c,clipProps,tagTrack.clips);});
+    const boxFor=clipId=>{
+      if(!narrow||!clipId||!frameOf[clipId])return FULLBOX;
+      const f=frameOf[clipId];
+      if(f.fit==="full"){const h=W*9/16;return{x:0,y:(H-h)/2,w:W,h,full:true};}
+      const w=H*16/9;return{x:Math.min(0,Math.max(W-w,W/2-f.cx*w)),y:0,w,h:H};
+    };
+    const drawBackdrop=(el,vw,vh)=>{const k=Math.max(W/vw,H/vh);cx.save();cx.filter="blur(40px) brightness(0.45)";
+      try{cx.drawImage(el,(W-vw*k)/2,(H-vh*k)/2,vw*k,vh*k);}catch(e){}cx.restore();};
+
+    const drawVideoFit=(vel,scale,panX,panY,box=FULLBOX)=>{
       if(!vel)return false;
       const isImg=vel.tagName==="IMG";
       if(isImg?!(vel.complete&&vel.naturalWidth):vel.readyState<2)return false;
       const vw=isImg?vel.naturalWidth:vel.videoWidth,vh=isImg?vel.naturalHeight:vel.videoHeight;
       if(!vw||!vh)return false;
-      const t=computeVideoTransform(vw,vh,W,H,scale,panX,panY);
-      try{cx.drawImage(vel,t.dx,t.dy,t.dw,t.dh);return true;}catch(e){return false;}
+      const t=computeVideoTransform(vw,vh,box.w,box.h,scale,panX,panY);
+      if(box.full)drawBackdrop(vel,vw,vh);
+      cx.save();cx.beginPath();cx.rect(box.x,box.y,box.w,box.h);cx.clip();
+      try{cx.drawImage(vel,box.x+t.dx,box.y+t.dy,t.dw,t.dh);}catch(e){cx.restore();return false;}
+      cx.restore();return true;
     };
 
     /* drawSpotlight: overlay rendering that matches preview EXACTLY.
@@ -3310,14 +3349,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
        The preview spotlight circle radius is 80px * spotScale at a ~720px wide
        preview container. We scale this to 1920px export width proportionally. */
-    const drawSpotlight=(tag,opacity)=>{
+    const drawSpotlight=(tag,opacity,box=FULLBOX)=>{
       const op=opacity!=null?opacity:1;
       if(op<=0)return;
       const tp=clipProps[tag.id]||{};
       const ss=tp.spotScale||tag.spotScale||1;
-      const sx=(tag.spotX||50)/100*W;
-      const sy=(tag.spotY||50)/100*H;
-      const previewToExport=W/720;
+      const sx=box.x+(tag.spotX||50)/100*box.w;
+      const sy=box.y+(tag.spotY||50)/100*box.h;
+      const previewToExport=box.w/720;
       const r=Math.round(80*ss*previewToExport);
       cx.save();
       cx.globalAlpha=op;
@@ -3330,17 +3369,19 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       cx.shadowColor=`rgba(${SPOT_RGB},0.4)`;cx.shadowBlur=Math.round(20*previewToExport);
       cx.stroke();cx.shadowBlur=0;
       /* Player name label */
-      const fontSize=Math.round(13*previewToExport);
+      const fontSize=Math.round(Math.min(13*previewToExport,0.05*W));
       cx.font=`bold ${fontSize}px Inter,sans-serif`;cx.textAlign="center";
       const txt=tag.playerName.toUpperCase();
       const tw=cx.measureText(txt).width;
-      const labelY=Math.min(sy+r+Math.round(12*previewToExport)+fontSize,H-20);
-      const padX=Math.round(16*previewToExport),padY=Math.round(4*previewToExport);
+      const labelY=Math.min(sy+r+Math.round(fontSize*12/13)+fontSize,H-20);
+      const padX=Math.round(fontSize*16/13),padY=Math.round(fontSize*4/13);
       cx.fillStyle="rgba(0,0,0,0.8)";
-      cx.fillRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
+      /* keep the name label on the canvas when the player is near an edge */
+      const lx=Math.max(tw/2+padX+8,Math.min(W-tw/2-padX-8,sx));
+      cx.fillRect(lx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
       cx.strokeStyle=`rgba(${SPOT_RGB},0.33)`;cx.lineWidth=Math.round(1*previewToExport);
-      cx.strokeRect(sx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
-      cx.fillStyle="#fff";cx.fillText(txt,sx,labelY);
+      cx.strokeRect(lx-tw/2-padX,labelY-fontSize-padY,tw+padX*2,fontSize+padY*2);
+      cx.fillStyle="#fff";cx.fillText(txt,lx,labelY);
       /* SPOTLIGHT badge removed from export */
       cx.globalAlpha=1;
       cx.restore();
@@ -3349,12 +3390,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* ── Step 6: Real-time export loop ──
        Uses pre-computed segment list for frame-accurate timing.
        No findActiveClip/freezeOffset during rendering = no timing bugs at cuts. */
+    if(from>0){const s0=findSeg(mapT(0));const v0=s0&&!s0.isTag&&videoEls[s0.clipId];
+      if(v0){const t0=s0.srcStart+(mapT(0)-s0.tlStart);v0.currentTime=Math.max(0,t0);
+        await new Promise(r=>{v0.addEventListener("seeked",r,{once:true});setTimeout(r,3000);});}}
     await new Promise(resolve=>{
       rec.onstop=()=>{
         const blob=new Blob(chunks,{type:mime.split(";")[0]});
         if(!exportCancelRef.current){
           const u=URL.createObjectURL(blob);const a=document.createElement("a");
-          a.href=u;a.download=`AthletesUSA_Highlight_${new Date().toISOString().slice(0,10)}.${ext}`;
+          a.href=u;a.download=`${opts.fileName||("AthletesUSA_Highlight_"+new Date().toISOString().slice(0,10))}.${ext}`;
           document.body.appendChild(a);a.click();document.body.removeChild(a);
           setTimeout(()=>URL.revokeObjectURL(u),2000);
         }
@@ -3362,21 +3406,25 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       };
       rec.start(1000);
 
-      let ph=0,lt=performance.now();
+      let ph=0,lt=performance.now(),prevTl=null;
       let curSegIdx=-1,curVidEl=null,curAudEl=null;
       let pAudioClipId=null;
 
       const step=(now)=>{
         if(exportCancelRef.current){rec.stop();return;}
         const dt=Math.min((now-lt)/1000,0.1);lt=now;ph+=dt;
-        if(ph>=cEnd){rec.stop();return;}
-        setExportProgress(ph/cEnd);
-        if(Math.round(ph*fps)%fps===0)setExportFmt(`${ext.toUpperCase()} ${Math.round(ph/cEnd*100)}%`);
+        if(ph>=outLen){rec.stop();return;}
+        setExportProgress(ph/outLen);
+        if(Math.round(ph*fps)%fps===0)setExportFmt(`${ext.toUpperCase()} ${Math.round(ph/outLen*100)}%`);
 
         cx.fillStyle="#000";cx.fillRect(0,0,W,H);
 
         /* Find current segment from pre-computed list */
-        const seg=findSeg(ph);
+        const tl=mapT(ph);
+        /* jumping from the end of the range to the outro: make music re-seek */
+        if(prevTl!=null&&tl-prevTl>0.5)pAudioClipId=null;
+        prevTl=tl;
+        const seg=findSeg(tl);const box=seg?boxFor(seg.clipId):FULLBOX;
 
         if(seg&&seg.isTag){
           /* TAG SEGMENT: frozen frame + spotlight overlay with fade in/out */
@@ -3384,7 +3432,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           let drew=false;
           if(imageEls[seg.clipId]){
             const ip=clipProps[seg.clipId]||{scale:1,panX:0,panY:0};
-            drew=drawVideoFit(imageEls[seg.clipId],ip.scale||1,ip.panX||0,ip.panY||0);
+            drew=drawVideoFit(imageEls[seg.clipId],ip.scale||1,ip.panX||0,ip.panY||0,box);
           }else if(vel){
             const targetT=Math.max(0,seg.srcStart);
             if(!vel.paused)vel.pause();
@@ -3394,16 +3442,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             /* Use clip's actual scale — NOT hardcoded 1 — so vertical videos
                stay zoomed/fitted the same way as during normal playback */
             const tagPr=clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0};
-            drew=drawVideoFit(vel,tagPr.scale||1,tagPr.panX||0,tagPr.panY||0);
+            drew=drawVideoFit(vel,tagPr.scale||1,tagPr.panX||0,tagPr.panY||0,box);
           }
           /* Hold the clean video frame, before overlays, so a held frame never
              carries a stale spotlight into the next clip. */
           if(drew)saveHold();else paintHold();
           /* No fade — spotlight appears/disappears instantly */
-          if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,1);
+          if(seg.tag&&seg.tag.type!=="freeze")drawSpotlight(seg.tag,1,box);
           /* Freeze with attached spotlight — draw the spotlight overlay */
           if(seg.tag&&seg.tag.type==="freeze"&&seg.tag.hasSpotlight){
-            drawSpotlight(seg.tag,1);
+            drawSpotlight(seg.tag,1,box);
           }
           /* Mute audio during freeze */
           Object.values(audioGains).forEach(g=>g.gain.value=0);
@@ -3412,7 +3460,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         }else if(seg){
           /* VIDEO SEGMENT: play video from srcStart→srcEnd mapped to tlStart→tlEnd */
           const pr=clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0};
-          const progress=(ph-seg.tlStart)/(seg.tlEnd-seg.tlStart);
+          const progress=(tl-seg.tlStart)/(seg.tlEnd-seg.tlStart);
           const srcTime=seg.srcStart+progress*(seg.srcEnd-seg.srcStart);
           const vel=videoEls[seg.clipId];
 
@@ -3427,9 +3475,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             const img=imageEls[seg.clipId];
             if(img){
               let sc=pr.scale||1,px=pr.panX||0,blur=0;
-              if(introEnd!=null&&seg.clipId===introClip.id){const fx=introFx(ph-introClip.trackStart,introEnd-introClip.trackStart);sc*=fx.scale;px=fx.panX;blur=fx.blur;}
+              if(introEnd!=null&&seg.clipId===introClip.id){const fx=introFx(tl-introClip.trackStart,introEnd-introClip.trackStart);sc*=fx.scale;px=fx.panX;blur=fx.blur;}
               if(blur>0)cx.filter=`blur(${(blur*W).toFixed(1)}px)`;
-              const ok=drawVideoFit(img,sc,px,pr.panY||0);
+              const ok=drawVideoFit(img,sc,px,pr.panY||0,box);
               cx.filter="none";
               /* hold even a blurred frame: if the first clip is slow to decode at the
                  cut, holding the last intro frame keeps the transition continuous */
@@ -3457,10 +3505,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               if(vel.paused)vel.play().catch(()=>{});
               if(Math.abs(vel.currentTime-srcTime)>0.3)vel.currentTime=Math.max(0,srcTime);
             }
-            const tin=introEnd!=null&&seg.clipId!==introClip.id?introInFx(ph-introEnd):null;
+            const tin=introEnd!=null&&seg.clipId!==introClip.id?introInFx(tl-introEnd):null;
             if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100*(tin?1-tin.mix:1);
             if(tin)cx.filter=`blur(${(tin.blur*W).toFixed(1)}px)`;
-            const drewV=drawVideoFit(vel,(pr.scale||1)*(tin?tin.scale:1),pr.panX||0,pr.panY||0);
+            const drewV=drawVideoFit(vel,(pr.scale||1)*(tin?tin.scale:1),pr.panX||0,pr.panY||0,box);
             cx.filter="none";
             if(drewV)saveHold();else paintHold();
 
@@ -3468,17 +3516,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             if(seg.overlayTags&&seg.overlayTags.length>0){
               for(const otag of seg.overlayTags){
                 if(srcTime>=otag.sourceTime&&srcTime<otag.sourceTime+TAG_OVERLAY_DUR){
-                  drawSpotlight(otag,1);
+                  drawSpotlight(otag,1,box);
                 }
               }
             }
           }else{paintHold();}
 
           /* Audio track (A1/A2 music) */
-          const au=findActiveAudio(ph);
+          const au=findActiveAudio(tl);
           if(au){const ap=clipProps[au.id]||{volume:100};
             if(pAudioClipId!==au.id){pAudioClipId=au.id;eA.src=blobUrlMap[au.url]||au.url;
-              const afo=freezeOffset(au.trackStart,ph);const at2=au.clipStart+(ph-au.trackStart-afo);
+              const afo=freezeOffset(au.trackStart,tl);const at2=au.clipStart+(tl-au.trackStart-afo);
               eA.currentTime=Math.max(0,at2);eA.play().catch(()=>{});}
             if(eAGain)eAGain.gain.value=ap.volume/100;}
           else{if(pAudioClipId){eA.pause();pAudioClipId=null;}if(eAGain)eAGain.gain.value=0;}
@@ -3836,10 +3884,118 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     </div>
   </div>);
 
+  /* ═══ EXPORT FOR SOCIAL ═══ */
+  const socialFmtObj=SOCIAL_FORMATS.find(f=>f.id===socialFmt)||SOCIAL_FORMATS[0];
+  const openPlayer=players.find(p=>p.id===activePlayerId)||null;
+  const updateMeta=patch=>{setSocialMeta(m=>{const n={...m,...patch};try{localStorage.setItem("aua_social_meta:"+(activePlayerId||"editor"),JSON.stringify(n));}catch(e){}return n;});setCaptionEdited(false);};
+  const generatedCaption=React.useMemo(()=>makeCaption({player:openPlayer,club:socialMeta.club,league:socialMeta.league,highlight:socialMeta.highlight,lang:socialMeta.lang,platform:socialMeta.platform,mention:socialMeta.mention,variant:captionVariant}),[openPlayer,socialMeta,captionVariant]);
+  const caption=captionEdited?captionText:generatedCaption;
+  /* default part: from the end of the intro, 30s, never into the outro */
+  const openSocial=()=>{
+    const v1=(tracks[0]&&tracks[0].clips)||[];const intro=v1.find(c=>c.brand==="intro");const outro=v1.find(c=>c.brand==="outro");
+    const start=intro?intro.trackStart+(intro.clipEnd-intro.clipStart)+clipFreezeDur(intro,tagTrack.clips):0;
+    const stop=outro?outro.trackStart:contentEnd;
+    if(!socialRange||socialRange.to<=socialRange.from||socialRange.to>contentEnd+0.01)setSocialRange({from:start,to:Math.max(start+1,Math.min(stop,start+30))});
+    setSocialOpen(true);
+  };
+  const runSocialExport=()=>{
+    const r=socialRange||{from:0,to:contentEnd};
+    const who=(openPlayer&&openPlayer.name)||"Reel";
+    exportVideo({W:socialFmtObj.W,H:socialFmtObj.H,range:r,appendOutro:socialOutro,bitrate:12000000,
+      fileName:`AthletesUSA_${who.replace(/[^A-Za-z0-9]+/g,"_")}_${socialFmtObj.id}_${new Date().toISOString().slice(0,10)}`});
+  };
+  const copyCaption=async()=>{try{await navigator.clipboard.writeText(caption);setCaptionCopied(true);setTimeout(()=>setCaptionCopied(false),1600);}catch(e){alert("Could not copy — select the text and copy it manually.");}};
+  const socialLen=socialRange?Math.max(0,socialRange.to-socialRange.from):0;
+  const sLbl={color:C.overlay,fontSize:9,fontWeight:700,letterSpacing:1,textTransform:"uppercase",margin:"12px 0 6px"};
+  const sBtn=on=>({flex:1,background:on?SPOT_COLOR+"26":"transparent",border:`1px solid ${on?SPOT_COLOR:C.s1}`,borderRadius:6,padding:"6px 8px",color:on?"#fff":C.sub,cursor:"pointer",fontSize:10,fontWeight:700});
+  const sInput={width:"100%",boxSizing:"border-box",background:C.base,border:`1px solid ${C.s1}`,borderRadius:6,padding:"6px 8px",color:C.text,fontSize:11,outline:"none"};
+  const socialPanel=(
+    <div style={{width:300,flexShrink:0,borderLeft:`1px solid ${C.s0}`,background:C.mantle,overflowY:"auto",padding:"12px 14px 16px",boxSizing:"border-box"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:12,fontWeight:800,color:"#fff",letterSpacing:0.5}}>Export for social</span>
+        <button onClick={()=>setSocialOpen(false)} title="Close" style={{marginLeft:"auto",background:"transparent",border:"none",color:C.sub,cursor:"pointer",fontSize:16,lineHeight:1}}>&times;</button>
+      </div>
+      <div style={{color:C.overlay,fontSize:10,marginTop:2}}>{openPlayer?openPlayer.name:"No player open"}</div>
+
+      <div style={sLbl}>Format</div>
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {SOCIAL_FORMATS.map(f=>{const on=f.id===socialFmt;const ar=f.W/f.H;return(
+          <button key={f.id} onClick={()=>{setSocialFmt(f.id);updateMeta({platform:f.platform});}}
+            style={{display:"flex",alignItems:"center",gap:10,textAlign:"left",background:on?SPOT_COLOR+"1f":"transparent",border:`1px solid ${on?SPOT_COLOR:C.s1}`,borderRadius:8,padding:"7px 10px",cursor:"pointer"}}>
+            <div style={{width:22,height:22,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <div style={{width:ar<1?22*ar:22,height:ar<1?22:22/ar,border:`2px solid ${on?SPOT_COLOR:C.overlay}`,borderRadius:3,boxSizing:"border-box"}}/>
+            </div>
+            <div><div style={{color:on?"#fff":C.text,fontSize:11,fontWeight:700}}>{f.label}</div><div style={{color:C.overlay,fontSize:9}}>{f.sub}</div></div>
+          </button>);})}
+      </div>
+
+      <div style={sLbl}>Which part</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+        <button onClick={()=>setSocialRange(r=>({from:playhead,to:Math.max(playhead+1,(r&&r.to)||playhead+1)}))} style={sBtn(false)}>Start here<div style={{color:C.overlay,fontSize:9,fontWeight:600}}>{socialRange?fmtTime(socialRange.from):"–"}</div></button>
+        <button onClick={()=>setSocialRange(r=>({from:Math.min((r&&r.from)||0,Math.max(0,playhead-1)),to:playhead}))} style={sBtn(false)}>End here<div style={{color:C.overlay,fontSize:9,fontWeight:600}}>{socialRange?fmtTime(socialRange.to):"–"}</div></button>
+      </div>
+      <div style={{color:socialLen>60?C.peach:C.overlay,fontSize:10,marginTop:6}}>
+        Length {socialLen.toFixed(1)}s{socialOutro?" + outro":""} · move the playhead, then press Start here / End here. {socialLen>60?"Over 60s — shorter clips work better on social.":"15–45s works best."}
+      </div>
+      <label style={{display:"flex",alignItems:"center",gap:6,marginTop:8,color:C.sub,fontSize:11,cursor:"pointer"}}>
+        <input type="checkbox" checked={socialOutro} onChange={e=>setSocialOutro(e.target.checked)}/> Add the AUSA outro at the end
+      </label>
+      <div style={{color:C.overlay,fontSize:10,marginTop:8,lineHeight:1.5}}>The preview shows what will be visible. Player clips follow the tagged player; select a clip to move the frame or show the full picture.</div>
+
+      <button onClick={runSocialExport} disabled={exporting||socialLen<=0}
+        style={{width:"100%",marginTop:12,background:exporting?"transparent":`linear-gradient(135deg,${SPOT_COLOR},#2563eb)`,border:`1px solid ${SPOT_COLOR}`,borderRadius:8,padding:"9px 10px",color:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:12,fontWeight:800}}>
+        Export {socialFmtObj.W}×{socialFmtObj.H}
+      </button>
+
+      <div style={sLbl}>Caption</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+        <input list="aua-leagues" value={socialMeta.league} placeholder="League" onChange={e=>updateMeta({league:e.target.value,highlight:isHighLeague(e.target.value)})} style={sInput}/>
+        <input value={socialMeta.club} placeholder="Club" onChange={e=>updateMeta({club:e.target.value})} style={sInput}/>
+      </div>
+      <datalist id="aua-leagues">{LEAGUE_SUGGESTIONS.map(l=><option key={l} value={l}/>)}</datalist>
+      <label style={{display:"flex",alignItems:"center",gap:6,marginTop:6,color:C.sub,fontSize:11,cursor:"pointer"}}>
+        <input type="checkbox" checked={socialMeta.highlight} onChange={e=>updateMeta({highlight:e.target.checked})}/> Highlight the league {isHighLeague(socialMeta.league)?"(Oberliga or higher)":""}
+      </label>
+      <label style={{display:"flex",alignItems:"center",gap:6,marginTop:4,color:C.sub,fontSize:11,cursor:"pointer"}}>
+        <input type="checkbox" checked={socialMeta.mention} onChange={e=>updateMeta({mention:e.target.checked})}/> Mention Athletes USA
+      </label>
+      <div style={{display:"flex",gap:6,marginTop:8}}>
+        <button onClick={()=>updateMeta({lang:"en"})} style={sBtn(socialMeta.lang!=="de")}>English</button>
+        <button onClick={()=>updateMeta({lang:"de"})} style={sBtn(socialMeta.lang==="de")}>Deutsch</button>
+      </div>
+      <div style={{display:"flex",gap:6,marginTop:6}}>
+        <button onClick={()=>updateMeta({platform:"linkedin"})} style={sBtn(socialMeta.platform==="linkedin")}>LinkedIn</button>
+        <button onClick={()=>updateMeta({platform:"instagram"})} style={sBtn(socialMeta.platform!=="linkedin")}>Instagram · TikTok</button>
+      </div>
+      <textarea value={caption} onChange={e=>{setCaptionText(e.target.value);setCaptionEdited(true);}} rows={8}
+        style={{...sInput,marginTop:8,resize:"vertical",fontFamily:"inherit",lineHeight:1.5}}/>
+      <div style={{display:"flex",gap:6,marginTop:6}}>
+        <button onClick={copyCaption} style={{...sBtn(true),background:captionCopied?C.green+"33":SPOT_COLOR+"26",borderColor:captionCopied?C.green:SPOT_COLOR}}>{captionCopied?"Copied ✓":"Copy caption"}</button>
+        <button onClick={()=>{setCaptionEdited(false);setCaptionVariant(v=>v+1);}} style={sBtn(false)}>Another version</button>
+      </div>
+    </div>
+  );
+  /* what the social shape will show of the frame under the playhead */
+  const socialGuide=(()=>{
+    if(!socialOpen||!activeClip)return null;
+    const fr=socialFrame(activeClip,clipProps,tagTrack.clips);
+    const narrowR=(socialFmtObj.W/socialFmtObj.H)/(16/9);
+    const tagLine=<div style={{position:"absolute",top:6,left:"50%",transform:"translateX(-50%)",background:SPOT_COLOR,color:"#fff",fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:10,whiteSpace:"nowrap"}}>{socialFmtObj.sub.split(" ·")[0]} · {fr.fit==="full"?"full picture":"crop"}</div>;
+    if(fr.fit==="full")return<div style={{position:"absolute",inset:0,zIndex:6,pointerEvents:"none",border:`2px solid ${SPOT_COLOR}`,boxSizing:"border-box"}}>{tagLine}</div>;
+    const w=narrowR*100;const left=Math.min(100-w,Math.max(0,fr.cx*100-w/2));
+    return<div style={{position:"absolute",inset:0,zIndex:6,pointerEvents:"none"}}>
+      <div style={{position:"absolute",top:0,bottom:0,left:0,width:left+"%",background:"rgba(0,0,0,0.62)"}}/>
+      <div style={{position:"absolute",top:0,bottom:0,left:(left+w)+"%",right:0,background:"rgba(0,0,0,0.62)"}}/>
+      <div style={{position:"absolute",top:0,bottom:0,left:left+"%",width:w+"%",border:`2px solid ${SPOT_COLOR}`,boxSizing:"border-box"}}/>
+      {tagLine}
+    </div>;
+  })();
+
   const preview=(
   <div style={{flex:1,display:"flex",flexDirection:"column",background:C.crust,overflow:"hidden"}}>
     <audio ref={audioRef} preload="auto"/>
-    <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",minHeight:0,padding:8}}>
+    <div style={{flex:1,display:"flex",minHeight:0}}>
+    <div style={{flex:1,minWidth:0,display:"flex",alignItems:"center",justifyContent:"center",padding:8}}>
       <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);if(pendingFreezeRef.current){attachSpotlight(pendingFreezeRef.current,spotlightMode,+x,+y);pendingFreezeRef.current=null;}else addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}}
         onDragOver={e=>{const ty=e.dataTransfer.types?[...e.dataTransfer.types]:[];if(ty.includes("Files")||ty.includes("application/json"))e.preventDefault();}}
         onDrop={e=>{
@@ -3905,8 +4061,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             <div style={{color:"#ffffffcc",fontSize:10,fontWeight:600,marginTop:2,textAlign:"center"}}>Esc — {pendingFreezeRef.current?"keep the freeze without a tag":"cancel"}</div>
           </div>
         </div>}
-        <div style={{position:"absolute",bottom:6,right:8,background:"rgba(0,0,0,0.6)",padding:"2px 6px",borderRadius:3,fontSize:8,color:C.overlay}}>1920×1080</div>
+        {socialGuide}
+        <div style={{position:"absolute",bottom:6,right:8,background:"rgba(0,0,0,0.6)",padding:"2px 6px",borderRadius:3,fontSize:8,color:C.overlay,zIndex:7}}>{socialOpen?`${socialFmtObj.W}×${socialFmtObj.H}`:"1920×1080"}</div>
       </div>
+    </div>
+    {socialOpen&&socialPanel}
     </div>
     <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",borderTop:`1px solid ${C.s0}`,background:C.mantle,flexWrap:"wrap"}}>
       <button onClick={()=>setPlayhead(0)} style={{...ib,color:C.sub}}><SkipBackIcon size={15}/></button>
@@ -3990,6 +4149,21 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   <span style={{color:C.overlay,cursor:"pointer",fontSize:9}} onClick={()=>setClipProps(p=>({...p,[selClip.id]:{...selProps,panX:0,panY:0}}))}>Reset</span>
                 </>}
               </>}
+              {socialOpen&&!selClip.isAudio&&(()=>{const fr=socialFrame(selClip,clipProps,tagTrack.clips);
+                const setF=patch=>setClipProps(p=>({...p,[selClip.id]:{...(p[selClip.id]||{volume:100,scale:1,panX:0,panY:0}),...patch}}));
+                const pill=on=>({background:on?SPOT_COLOR+"33":"transparent",border:`1px solid ${on?SPOT_COLOR:C.s1}`,borderRadius:5,padding:"2px 8px",color:on?"#fff":C.sub,cursor:"pointer",fontSize:10,fontWeight:700});
+                return<>
+                  <div style={{width:1,height:14,background:C.s0}}/>
+                  <span style={{color:SPOT_COLOR,fontSize:10,fontWeight:700}}>Social frame</span>
+                  <button onClick={()=>setF({socialFit:"crop"})} style={pill(fr.fit==="crop")}>Crop</button>
+                  <button onClick={()=>setF({socialFit:"full"})} style={pill(fr.fit==="full")}>Full picture</button>
+                  {fr.fit==="crop"&&<>
+                    <span style={{color:C.overlay,fontSize:9}}>Left</span>
+                    <input type="range" min={0} max={100} step={1} value={Math.round(fr.cx*100)} onChange={e=>setF({socialX:+e.target.value/100})} style={{width:80,accentColor:SPOT_COLOR}}/>
+                    <span style={{color:C.overlay,fontSize:9}}>Right</span>
+                    <button onClick={()=>setF({socialX:undefined})} title="Follow the tagged player again" style={pill(false)}>Auto</button>
+                  </>}
+                </>;})()}
             </>
           ):(<>
             <EyeIcon size={12} color={SPOT_COLOR}/>
@@ -4153,6 +4327,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <div ref={tlScrollRef} style={{flex:1,overflowX:"auto",overflowY:"auto",position:"relative"}}>
         <div data-tl-area="1" style={{width:totalW,minWidth:"100%",position:"relative"}}>
           <div onClick={handleTlClick} style={{height:RULER_H,position:"relative",borderBottom:`1px solid ${C.s1}`,cursor:"pointer",background:C.mantle,userSelect:"none"}}>
+            {socialOpen&&socialRange&&<div title="Social clip" style={{position:"absolute",top:0,bottom:0,left:socialRange.from*zoom,width:Math.max(2,(socialRange.to-socialRange.from)*zoom),background:SPOT_COLOR+"38",borderLeft:`2px solid ${SPOT_COLOR}`,borderRight:`2px solid ${SPOT_COLOR}`,pointerEvents:"none",boxSizing:"border-box"}}/>}
             {ticks.map(t=><div key={`t${t}`} style={{position:"absolute",left:t*zoom,top:0}}><div style={{position:"absolute",left:0,top:RULER_H-14,width:1,height:14,background:C.s2}}/><span style={{position:"absolute",left:4,top:2,color:C.sub,fontSize:9,fontFamily:"monospace",whiteSpace:"nowrap"}}>{fmtTime(t)}</span></div>)}
             {subI>=.5&&ticks.map(t=>{const s=[];for(let x=t+subI;x<t+tickI&&x<=tlDur;x+=subI)s.push(x);return s.map(x=><div key={`s${x}`} style={{position:"absolute",left:x*zoom,bottom:0,width:1,height:6,background:C.s1}}/>);})}
           </div>
@@ -4309,7 +4484,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       </span>
       <button onClick={clearProject} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}} title="Clear the timeline and start a new edit">New</button>
 
-      <button onClick={exportVideo} disabled={exporting} style={{display:"flex",alignItems:"center",gap:5,background:exporting?"transparent":"linear-gradient(135deg,#22c55e,#16a34a)",border:exporting?`1px solid ${C.s1}`:"1px solid #22c55e55",borderRadius:6,padding:"4px 12px",color:exporting?C.s1:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:10,fontWeight:700,marginLeft:8,letterSpacing:0.5}} title="Export video"><DownloadIcon size={12}/> Export</button>
+      <button onClick={()=>socialOpen?setSocialOpen(false):openSocial()} disabled={exporting} title="Export a short clip for Instagram, TikTok or LinkedIn, with a caption"
+        style={{display:"flex",alignItems:"center",gap:5,background:socialOpen?SPOT_COLOR:SPOT_COLOR+"22",border:`1px solid ${SPOT_COLOR}`,borderRadius:6,padding:"4px 12px",color:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:10,fontWeight:700,marginLeft:8,letterSpacing:0.5}}>Social</button>
+      <button onClick={()=>exportVideo()} disabled={exporting} style={{display:"flex",alignItems:"center",gap:5,background:exporting?"transparent":"linear-gradient(135deg,#22c55e,#16a34a)",border:exporting?`1px solid ${C.s1}`:"1px solid #22c55e55",borderRadius:6,padding:"4px 12px",color:exporting?C.s1:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:10,fontWeight:700,marginLeft:8,letterSpacing:0.5}} title="Export video"><DownloadIcon size={12}/> Export</button>
       <button onClick={()=>setShowFeedbackAdmin(true)} style={{display:"flex",alignItems:"center",gap:5,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:6,padding:"4px 10px",color:C.blue,cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:8}}><MessageSquareIcon size={12}/> Feedback</button>
       <button onClick={onLogout} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}}><LogOutIcon size={12}/> Exit</button>
     </div>
@@ -4382,6 +4559,75 @@ const introInFx=t=>{
   if(!(t>=0&&t<INTRO_FX.inDur))return null;
   const mix=Math.pow(1-t/INTRO_FX.inDur,2);
   return{scale:1+INTRO_FX.inZoom*mix,blur:INTRO_FX.blur*mix,mix};
+};
+/* Social export shapes. LinkedIn's main feed shows 4:5 best; 9:16 fits Reels,
+   TikTok, Shorts and LinkedIn's vertical feed. */
+const SOCIAL_FORMATS=[
+  {id:"vertical",label:"Reels · TikTok · Shorts",sub:"9:16 · also LinkedIn vertical",W:1080,H:1920,platform:"instagram"},
+  {id:"portrait",label:"LinkedIn · Instagram feed",sub:"4:5 · best for LinkedIn",W:1080,H:1350,platform:"linkedin"},
+  {id:"square",label:"Square",sub:"1:1",W:1080,H:1080,platform:"instagram"},
+];
+/* How a clip sits in a frame narrower than 16:9. "crop" keeps full height and
+   shows a window of the width, centred on cx (0–1 across the 16:9 frame);
+   "full" shows the whole picture over a blurred copy of itself. The window
+   defaults to the players tagged in the clip, so the spotlit player stays in
+   shot; brand clips default to full so the logo is never cut. */
+const socialFrame=(c,props,tagClips)=>{
+  const p=(props&&props[c.id])||{};
+  let cx=p.socialX;
+  if(cx==null){const tg=(tagClips||[]).filter(t=>t.clipId===c.id&&(t.hasSpotlight||t.type==="tag")&&t.spotX!=null);
+    cx=tg.length?tg.reduce((a,t)=>a+t.spotX,0)/tg.length/100:0.5;}
+  return{fit:p.socialFit||(c.brand?"full":"crop"),cx:Math.max(0,Math.min(1,cx))};
+};
+/* Caption building blocks. German positions name the role, not the person, so
+   they read correctly for any athlete. */
+const POS_NAMES={
+  en:{GK:"Goalkeeper",LCB:"Center Back",CB:"Center Back",RCB:"Center Back",LB:"Left Back",LWB:"Left Wing-Back",RB:"Right Back",RWB:"Right Wing-Back",CDM:"Defensive Midfielder",CM:"Central Midfielder",CAM:"Attacking Midfielder",LM:"Left Midfielder",RM:"Right Midfielder",LW:"Left Winger",RW:"Right Winger",ST:"Striker",CF:"Center Forward",SS:"Second Striker"},
+  de:{GK:"Tor",LCB:"Innenverteidigung",CB:"Innenverteidigung",RCB:"Innenverteidigung",LB:"Linksverteidigung",LWB:"Linke Schiene",RB:"Rechtsverteidigung",RWB:"Rechte Schiene",CDM:"Defensives Mittelfeld",CM:"Zentrales Mittelfeld",CAM:"Offensives Mittelfeld",LM:"Linkes Mittelfeld",RM:"Rechtes Mittelfeld",LW:"Linker Flügel",RW:"Rechter Flügel",ST:"Sturm",CF:"Sturmzentrum",SS:"Hängende Spitze"},
+};
+const LEAGUE_SUGGESTIONS=["Bundesliga","2. Bundesliga","3. Liga","Regionalliga","Oberliga","Verbandsliga","Landesliga","Bezirksliga","U19 DFB-Nachwuchsliga","U17 DFB-Nachwuchsliga","U19 Regionalliga","U17 Regionalliga","Frauen-Bundesliga","2. Frauen-Bundesliga"];
+/* Oberliga and above get the stronger league line by default; the editor can
+   untick it for a weaker Oberliga. */
+const isHighLeague=l=>/bundesliga|3\.\s*liga|regionalliga|oberliga|nachwuchsliga/i.test(l||"");
+/* Plain, factual caption: who, where they play (said a little more strongly for
+   higher leagues), what the clip is, and optionally Athletes USA. "variant"
+   rotates the wording so posts don't all read the same. */
+const makeCaption=o=>{
+  const L=o.lang==="de"?"de":"en",v=Math.abs(o.variant||0);
+  const pick=(arr,k)=>arr[(v+k)%arr.length];
+  const p=o.player||{},name=(p.name||"").trim();
+  const pos=[...new Set((p.positions||[]).map(c=>POS_NAMES[L][c]).filter(Boolean))].slice(0,2).join(" / ");
+  const year=p.recruitingClass?String(p.recruitingClass).trim():"";
+  const club=(o.club||"").trim(),league=(o.league||"").trim();
+  const lines=[];
+  if(L==="en"){
+    const bits=[pos,year?`Class of ${year}`:""].filter(Boolean).join(" · ");
+    lines.push(pick([`${name}${bits?" | "+bits:""}`,`${name}${bits?" — "+bits:""}`,`${name}${pos?", "+pos:""}${year?` (Class of ${year})`:""}`],0));
+  }else{
+    const bits=[pos?`Position: ${pos}`:"",year?`Class of ${year}`:""].filter(Boolean).join(" · ");
+    lines.push(pick([`${name}${bits?" | "+bits:""}`,`${name}${bits?" — "+bits:""}`],0));
+  }
+  if(o.highlight&&league){
+    lines.push(L==="en"
+      ?pick([club?`Currently playing for ${club} in the ${league}.`:`Currently playing in the ${league}.`,
+             club?`In the ${league} with ${club} this season.`:`In the ${league} this season.`,
+             club?`Competing in the ${league} with ${club}.`:`Competing in the ${league}.`],1)
+      :pick([club?`Aktuell für ${club} in der ${league} am Ball.`:`Aktuell in der ${league} am Ball.`,
+             club?`Diese Saison in der ${league} für ${club}.`:`Diese Saison in der ${league}.`,
+             club?`Spielt in der ${league} für ${club}.`:`Spielt in der ${league}.`],1));
+  }else if(club){
+    lines.push(L==="en"?pick([`Plays for ${club}.`,`Currently with ${club}.`,`Club: ${club}.`],1)
+      :pick([`Spielt für ${club}.`,`Aktuell bei ${club}.`,`Verein: ${club}.`],1));
+  }
+  lines.push(L==="en"?pick(["A few moments from this season.","Some recent moments from match play.","Highlights from the current season."],2)
+    :pick(["Ein paar Szenen aus dieser Saison.","Aktuelle Szenen aus dem Spielbetrieb.","Highlights aus der laufenden Saison."],2));
+  if(o.mention)lines.push(L==="en"
+    ?pick(["Working toward the next step at a US college with Athletes USA.","Exploring US college options with Athletes USA.","On the path to US college soccer with Athletes USA."],3)
+    :pick(["Mit Athletes USA auf dem Weg ans US-College.","Nächster Schritt: US-College – gemeinsam mit Athletes USA.","Mit Athletes USA auf dem Weg zum College-Fußball in den USA."],3));
+  const tags=o.platform==="linkedin"
+    ?(L==="en"?"#CollegeSoccer #AthletesUSA":"#Fußball #CollegeSoccer #AthletesUSA")
+    :(L==="en"?"#collegesoccer #soccerrecruiting #athletesusa":"#fußball #collegesoccer #athletesusa");
+  return lines.join("\n")+"\n\n"+tags;
 };
 /* Projects built with the first template have a 6s intro, but the intro sound is
    now 5s. Shorten the intro to match and pull overlays and music that sat after
