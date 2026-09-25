@@ -2480,7 +2480,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       })}));
       const stamp=Date.now();
       localStorage.setItem(projectKey(pid),JSON.stringify({
-        v:1,brand:1,savedAt:stamp,playerId:pid||null,
+        v:1,brand:2,savedAt:stamp,playerId:pid||null,
         tracks:slim(tracksRef.current),audioTracks:slim(audioTracksRef.current),
         tagTrack:tagTrackRef.current,clipProps:clipPropsRef.current,
         zoom:zoomRef.current,playhead:playheadRef.current}));
@@ -2489,10 +2489,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[]);
 
   const brandTemplate=pid=>{
-    const pl=playersRef.current.find(p=>p.id===pid);const d=BRAND.dur;
+    const pl=playersRef.current.find(p=>p.id===pid);const d=BRAND.introDur,od=BRAND.outroDur;
     return{
       intro:{id:uid("clip"),kind:"image",brand:"intro",videoId:"",name:pl?`INTRO — ${pl.name} thumbnail`:"INTRO — athlete thumbnail",url:"",trackStart:0,clipStart:0,clipEnd:d,playerId:pid||"brand",playerName:"Intro",isAudio:false},
-      outro:{id:uid("clip"),brand:"outro",videoId:"brand-outro",name:"AUSA Outro",url:BRAND.outro,trackStart:d,clipStart:0,clipEnd:d,playerId:"brand",playerName:"Athletes USA",isAudio:false},
+      outro:{id:uid("clip"),brand:"outro",videoId:"brand-outro",name:"AUSA Outro",url:BRAND.outro,trackStart:d,clipStart:0,clipEnd:od,playerId:"brand",playerName:"Athletes USA",isAudio:false},
       audio:{id:uid("clip"),brand:"intro-audio",videoId:"brand-intro-audio",name:"AUSA intro sound",url:BRAND.introAudio,trackStart:0,clipStart:0,clipEnd:d,playerId:"brand",playerName:"Athletes USA",isAudio:true},
     };
   };
@@ -2501,7 +2501,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
      stay in sync with V1. Returns null when nothing is missing. */
   const withBrand=(vt,at,pid,tagClips)=>{
     if(!vt.length)return null;
-    const d=BRAND.dur;const bt=brandTemplate(pid);
+    const d=BRAND.introDur;const bt=brandTemplate(pid);
     const v1=vt[0].clips||[];
     const needIntro=!v1.some(c=>c.brand==="intro"),needOutro=!v1.some(c=>c.brand==="outro");
     const needAudio=!(at[0]&&at[0].clips.some(c=>c.brand==="intro-audio"));
@@ -2572,6 +2572,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* Projects saved before the template existed get it on first open. From then
        on the save carries brand:1, so an outro removed on purpose stays removed. */
     if(!saved.brand){const r=withBrand(vt,at,pid,(saved.tagTrack&&saved.tagTrack.clips)||[]);if(r){vt=r.vt;at=r.at;}}
+    if((saved.brand||0)<2){const r=shortenIntro(vt,at,(saved.tagTrack&&saved.tagTrack.clips)||[]);if(r){vt=r.vt;at=r.at;}}
     setTracks(p=>vt.length?vt:p.map(t=>({...t,clips:[]})));
     setAudioTracks(p=>at.length?at:p.map(t=>({...t,clips:[]})));
     setTagTrack(saved.tagTrack&&saved.tagTrack.clips?saved.tagTrack:{id:uid("ttag"),name:"TAGS",clips:[]});
@@ -3126,6 +3127,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       segments.push({clipId:parentClip?.id,url:parentClip?.url,tlStart:tg._tlStart,tlEnd:tg._tlStart+tg.duration,srcStart:tg.sourceTime||0,srcEnd:tg.sourceTime||0,isTag:true,tag:tg});
     });
     segments.sort((a,b)=>a.tlStart-b.tlStart);
+    const introClip=allClips.find(c=>c.brand==="intro"&&c.url);
+    const introSegEnds=introClip?segments.filter(sg=>sg.clipId===introClip.id).map(sg=>sg.tlEnd):[];
+    const introEnd=introSegEnds.length?Math.max(...introSegEnds):null;
 
     /* Compute content end */
     let cEnd=0;
@@ -3421,7 +3425,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               Object.values(audioGains).forEach(g=>g.gain.value=0);
               if(curAudEl){curAudEl.pause();curAudEl=null;}}
             const img=imageEls[seg.clipId];
-            if(img&&drawVideoFit(img,pr.scale||1,pr.panX||0,pr.panY||0))saveHold();
+            if(img){
+              let sc=pr.scale||1,px=pr.panX||0,blur=0;
+              if(introEnd!=null&&seg.clipId===introClip.id){const fx=introFx(ph-introClip.trackStart,introEnd-introClip.trackStart);sc*=fx.scale;px=fx.panX;blur=fx.blur;}
+              if(blur>0)cx.filter=`blur(${(blur*W).toFixed(1)}px)`;
+              const ok=drawVideoFit(img,sc,px,pr.panY||0);
+              cx.filter="none";
+              /* hold even a blurred frame: if the first clip is slow to decode at the
+                 cut, holding the last intro frame keeps the transition continuous */
+              if(ok)saveHold();
+            }
           }else if(vel){
             /* On segment switch: seek to exact source position and start playing */
             const segIdx=segments.indexOf(seg);
@@ -3444,8 +3457,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               if(vel.paused)vel.play().catch(()=>{});
               if(Math.abs(vel.currentTime-srcTime)>0.3)vel.currentTime=Math.max(0,srcTime);
             }
-            if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100;
-            if(drawVideoFit(vel,pr.scale||1,pr.panX||0,pr.panY||0))saveHold();else paintHold();
+            const tin=introEnd!=null&&seg.clipId!==introClip.id?introInFx(ph-introEnd):null;
+            if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100*(tin?1-tin.mix:1);
+            if(tin)cx.filter=`blur(${(tin.blur*W).toFixed(1)}px)`;
+            const drewV=drawVideoFit(vel,(pr.scale||1)*(tin?tin.scale:1),pr.panX||0,pr.panY||0);
+            cx.filter="none";
+            if(drewV)saveHold();else paintHold();
 
             /* Draw overlay tags (zero-duration) that fall within TAG_OVERLAY_DUR of srcTime */
             if(seg.overlayTags&&seg.overlayTags.length>0){
@@ -3672,6 +3689,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const activeSpotTag=findOverlayTag(activeClip,playhead); /* overlay spotlight (duration===0) */
   const activeTag=activeFreezeTag||activeSpotTag; /* backward compat — used by video pool sync etc */
   const actProps=activeClip?(clipProps[activeClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
+  /* intro look in the preview — the same curves the export uses */
+  const introC=tracks[0]&&tracks[0].clips.find(c=>c.brand==="intro"&&c.url);
+  const introEndT=introC?introC.trackStart+(introC.clipEnd-introC.clipStart)+clipFreezeDur(introC,tagTrack.clips):null;
+  const introOut=introC&&activeClip&&activeClip.id===introC.id?introFx(playhead-introC.trackStart,introEndT-introC.trackStart):null;
+  const introIn=introEndT!=null&&activeClip&&activeClip.id!==introC.id?introInFx(playhead-introEndT):null;
+  const pvW=(previewRef.current&&previewRef.current.clientWidth)||720;
+  const vS=actProps?actProps.scale*(introIn?introIn.scale:1):1;
+  const iS=(actProps?actProps.scale:1)*(introOut?introOut.scale:1),iPx=introOut?introOut.panX:((actProps&&actProps.panX)||0),iPy=(actProps&&actProps.panY)||0;
   const selClip=(()=>{for(const t of [...tracks,...audioTracks]){const c=t.clips.find(x=>x.id===selectedClipId);if(c)return c;}for(const c of tagTrack.clips){if(c.id===selectedClipId)return c;}return null;})();
   const selProps=selClip?(clipProps[selClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
   /* Decided by membership in the tag track, not by type string: freeze tags carry
@@ -3827,9 +3852,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);}}
         style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":(actProps&&actProps.scale>1?"grab":"default")}}>
         {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
-        <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`translate(${(actProps.panX||0)*(actProps.scale-1)/2}%, ${(actProps.panY||0)*(actProps.scale-1)/2}%) scale(${actProps.scale})`:undefined}}/>
+        <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`translate(${(actProps.panX||0)*(vS-1)/2}%, ${(actProps.panY||0)*(vS-1)/2}%) scale(${vS})`:undefined,filter:introIn&&introIn.blur>0?`blur(${(introIn.blur*pvW).toFixed(1)}px)`:undefined}}/>
         {activeClip&&activeClip.kind==="image"&&(activeClip.url
-          ?<img src={activeClip.url} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",zIndex:3,pointerEvents:"none",transform:actProps?`translate(${(actProps.panX||0)*(actProps.scale-1)/2}%, ${(actProps.panY||0)*(actProps.scale-1)/2}%) scale(${actProps.scale})`:undefined}}/>
+          ?<img src={activeClip.url} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",zIndex:3,pointerEvents:"none",transform:`translate(${iPx*(iS-1)/2}%, ${iPy*(iS-1)/2}%) scale(${iS})`,filter:introOut&&introOut.blur>0?`blur(${(introOut.blur*pvW).toFixed(1)}px)`:undefined}}/>
           :<div onClick={e=>{e.stopPropagation();pickIntroImage(activeClip.id);}}
             style={{position:"absolute",inset:0,zIndex:3,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer",textAlign:"center",padding:20,
               background:"repeating-linear-gradient(45deg,#0f0f1a,#0f0f1a 14px,#15152a 14px,#15152a 28px)",border:`2px dashed ${C.coral}aa`}}>
@@ -4336,7 +4361,45 @@ const STORAGE_KEY_PROJECT="aua_studio_project";
    thumbnail over the AUSA sound) and closes with the AUSA outro; clips always go
    between them. Files live in brand/ beside index.html — same origin, so the
    export can draw them without CORS setup. Both are 0:07–0:13 of the AUSA video. */
-const BRAND={outro:"brand/outro.mp4",introAudio:"brand/intro-audio.m4a",dur:6};
+const BRAND={outro:"brand/outro.mp4",introAudio:"brand/intro-audio.m4a",introDur:5,outroDur:6};
+/* The intro's look, shared by preview and export so what you scrub is what you
+   export: a slow Ken Burns push and drift across the thumbnail, then a zoom-blur
+   that carries through the cut and clears over the first half-second of the clip.
+   blur is a fraction of frame width; each renderer scales it to its own size. */
+const INTRO_FX={push:0.08,pan:40,outDur:0.7,outZoom:0.22,inDur:0.5,inZoom:0.14,blur:0.012};
+const smoothStep=x=>x*x*(3-2*x);
+const introFx=(t,dur)=>{
+  const p=Math.max(0,Math.min(1,dur>0?t/dur:0));
+  let scale=1+INTRO_FX.push*smoothStep(p),blur=0;
+  const panX=-INTRO_FX.pan+2*INTRO_FX.pan*smoothStep(p);
+  const o=t-(dur-INTRO_FX.outDur);
+  if(o>0){const e=Math.pow(Math.min(1,o/INTRO_FX.outDur),2);scale*=1+INTRO_FX.outZoom*e;blur=INTRO_FX.blur*e;}
+  return{scale,panX,blur};
+};
+/* t = seconds since the intro ended; null outside the settle window. mix is 1
+   at the cut and 0 once the clip is sharp — it also fades the clip's sound in. */
+const introInFx=t=>{
+  if(!(t>=0&&t<INTRO_FX.inDur))return null;
+  const mix=Math.pow(1-t/INTRO_FX.inDur,2);
+  return{scale:1+INTRO_FX.inZoom*mix,blur:INTRO_FX.blur*mix,mix};
+};
+/* Projects built with the first template have a 6s intro, but the intro sound is
+   now 5s. Shorten the intro to match and pull overlays and music that sat after
+   it forward by the difference. An intro the editor resized is left alone. */
+const shortenIntro=(vt,at,tagClips)=>{
+  const intro=((vt[0]&&vt[0].clips)||[]).find(c=>c.brand==="intro");
+  if(!intro)return null;
+  const len=intro.clipEnd-intro.clipStart;
+  if(Math.abs(len-6)>0.01)return null;
+  const delta=len-BRAND.introDur,end=intro.trackStart+len;
+  const nv=vt.map((t,i)=>i===0
+    ?{...t,clips:layoutV1(t.clips.map(c=>c.id===intro.id?{...c,clipEnd:c.clipStart+BRAND.introDur}:c),tagClips)}
+    :{...t,clips:t.clips.map(c=>c.trackStart>=end-0.001?{...c,trackStart:c.trackStart-delta}:c)});
+  const na=at.map(t=>({...t,clips:t.clips.map(c=>c.brand==="intro-audio"
+    ?(Math.abs((c.clipEnd-c.clipStart)-6)<0.01?{...c,clipEnd:c.clipStart+BRAND.introDur}:c)
+    :(c.trackStart>=end-0.001?{...c,trackStart:c.trackStart-delta}:c))}));
+  return{vt:nv,at:na};
+};
 /* V1 ordering: intro first, outro last, everything else by position between. */
 const brandRank=c=>c.brand==="intro"?0:c.brand==="outro"?2:1;
 /* Magnetic V1 layout: brand order, then gapless, each clip taking its trimmed
