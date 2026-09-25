@@ -2428,6 +2428,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const videoContainerRef=useRef(null);
   const activeVideoRef=useRef(null);/* currently-visible video element */
   const edVidRef=useRef(null);const edMusicRef=useRef(null);
+  const introImgRef=useRef(null);const introTargetRef=useRef(null);
 
   const playerColor=i=>PLAYER_COLORS[i%PLAYER_COLORS.length];
 
@@ -2484,9 +2485,19 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     }catch(e){return null;/* quota or private mode — editing still works, just unsaved */}
   },[]);
 
-  const emptyTimeline=useCallback(()=>{
-    setTracks(p=>p.map(t=>({...t,clips:[]})));
-    setAudioTracks(p=>p.map(t=>({...t,clips:[]})));
+  const brandTemplate=pid=>{
+    const pl=playersRef.current.find(p=>p.id===pid);const d=BRAND.dur;
+    return{
+      intro:{id:uid("clip"),kind:"image",brand:"intro",videoId:"",name:pl?`INTRO — ${pl.name} thumbnail`:"INTRO — athlete thumbnail",url:"",trackStart:0,clipStart:0,clipEnd:d,playerId:pid||"brand",playerName:"Intro",isAudio:false},
+      outro:{id:uid("clip"),brand:"outro",videoId:"brand-outro",name:"AUSA Outro",url:BRAND.outro,trackStart:d,clipStart:0,clipEnd:d,playerId:"brand",playerName:"Athletes USA",isAudio:false},
+      audio:{id:uid("clip"),brand:"intro-audio",videoId:"brand-intro-audio",name:"AUSA intro sound",url:BRAND.introAudio,trackStart:0,clipStart:0,clipEnd:d,playerId:"brand",playerName:"Athletes USA",isAudio:true},
+    };
+  };
+  /* A fresh project is never blank: it is the brand template, ready for clips. */
+  const emptyTimeline=useCallback((pid)=>{
+    const bt=brandTemplate(pid);
+    setTracks(p=>p.map((t,i)=>({...t,clips:i===0?[bt.intro,bt.outro]:[]})));
+    setAudioTracks(p=>p.map((t,i)=>({...t,clips:i===0?[bt.audio]:[]})));
     setTagTrack(p=>({...p,clips:[]}));
     setClipProps({});setSelectedClipId(null);setPlayhead(0);setHistory([]);
     setProjectSavedAt(null);
@@ -2506,7 +2517,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         if(legacy&&Array.isArray(legacy.tracks)){saved=legacy;localStorage.removeItem(STORAGE_KEY_PROJECT);}
       }catch(e){}
     }
-    if(!saved||!Array.isArray(saved.tracks)){emptyTimeline();setRestoreNote(null);return;}
+    if(!saved||!Array.isArray(saved.tracks)){emptyTimeline(pid);setRestoreNote(null);return;}
     const byId={};
     playersRef.current.forEach(pl=>(pl.categories||[]).forEach(cat=>(cat.videos||[]).forEach(v=>{if(v.url||v.cloudUrl)byId[v.id]=v.url||v.cloudUrl;})));
     edVidsRef.current.forEach(v=>{if(v.url)byId[v.id]=v.url;});
@@ -2517,10 +2528,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       for(const t of trks){
         const clips=[];
         for(const c of t.clips){
-          let url=byId[c.videoId]||"";
-          if(!url){try{const b=await getBlob(c.videoId);if(b)url=URL.createObjectURL(b);}catch(e){}}
+          let url=c.brand==="outro"?BRAND.outro:c.brand==="intro-audio"?BRAND.introAudio:(byId[c.videoId]||"");
+          if(!url&&c.videoId){try{const b=await getBlob(c.videoId);if(b)url=URL.createObjectURL(b);}catch(e){}}
           if(!url&&c.srcUrl&&!c.srcUrl.startsWith("blob:"))url=c.srcUrl;
-          if(url)clips.push({...c,url});else dropped++;
+          /* an intro slot is valid before its thumbnail is chosen */
+            if(url||c.brand==="intro")clips.push({...c,url});else dropped++;
         }
         out.push({...t,clips});
       }
@@ -2632,7 +2644,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const label=who?`${who.name}'s timeline`:"this timeline";
     if(!confirm(`Start a new edit? ${label.charAt(0).toUpperCase()+label.slice(1)} will be cleared.\n\nThis only clears the timeline — videos and profiles are not touched.`))return;
     try{localStorage.removeItem(projectKey(loadedProjectRef.current));}catch(e){}
-    emptyTimeline();setRestoreNote(null);
+    emptyTimeline(loadedProjectRef.current);setRestoreNote(null);
   },[emptyTimeline]);
 
 
@@ -2709,10 +2721,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     });
     /* Create/update video elements for every timeline clip */
     allClips.forEach(c=>{
+      if(c.kind==="image")return;
       if(!c.url){console.warn("Clip missing URL:",c.id,c.name);return;}
       if(!pool[c.id]){
         const vel=document.createElement("video");
-        vel.preload="auto";vel.playsInline=true;vel.muted=true;vel.crossOrigin="anonymous";
+        vel.preload="auto";vel.playsInline=true;vel.muted=true;
+        /* only cross-origin sources need CORS mode; a relative brand/ file opened
+           from disk would fail to load with it set */
+        if(/^https?:\/\//i.test(c.url))vel.crossOrigin="anonymous";
         /* CRITICAL: Use opacity:0 NOT display:none — browser must buffer this element */
         vel.style.cssText="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;opacity:0;z-index:0;pointer-events:none;";
         vel.addEventListener("error",()=>{console.warn("Video load error for clip:",c.id,c.name,c.url?.slice(0,60));});
@@ -2789,7 +2805,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const tt=tagOverride||tagTrackRef.current;
     setTracks(prev=>{
       const mt=prev[0];if(!mt||mt.clips.length===0)return prev;
-      const sorted=[...mt.clips].sort((a,b)=>a.trackStart-b.trackStart);
+      const sorted=[...mt.clips].sort((a,b)=>brandRank(a)-brandRank(b)||a.trackStart-b.trackStart);
       let pos=0;let changed=false;
       const compacted=sorted.map(c=>{
         const effectiveD=(c.clipEnd-c.clipStart)+clipFreezeDur(c,tt.clips);
@@ -2965,7 +2981,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[selectedClipId,pushHist,recalcAll,tracks,tagTrack,audioTracks,compactV1]);
 
   const closeGaps=useCallback(()=>{pushHist();
-    const closeTrackGaps=(clips,includeTags)=>{const sorted=[...clips].sort((a,b)=>a.trackStart-b.trackStart);let pos=0;return sorted.map(c=>{
+    const closeTrackGaps=(clips,includeTags)=>{const sorted=[...clips].sort((a,b)=>brandRank(a)-brandRank(b)||a.trackStart-b.trackStart);let pos=0;return sorted.map(c=>{
       const rawD=c.clipEnd-c.clipStart;
       let fz=0;
       if(includeTags)tagTrack.clips.forEach(tg=>{if(tg.clipId===c.id&&tg.sourceTime>=c.clipStart&&tg.sourceTime<c.clipEnd)fz+=tg.duration;});
@@ -3039,6 +3055,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
        frame. This eliminates pauses/freezes at cuts. */
     const allClips=[];tracks.forEach(t=>t.clips.forEach(c=>allClips.push(c)));
 
+    const imageClipIds=new Set(allClips.filter(c=>c.kind==="image").map(c=>c.id));
     /* Build a flat segment list: [{clipId, tlStart, tlEnd, srcStart, srcEnd, isTag, tag}] */
     const segments=[];
     allClips.forEach(cl=>{
@@ -3080,6 +3097,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     segments.forEach(s=>{if(s.tlEnd>cEnd)cEnd=s.tlEnd;});
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>cEnd)cEnd=e;}));
     if(cEnd<=0){setExporting(false);return;}
+    if(allClips.some(c=>c.brand==="intro"&&!c.url)&&!confirm("The intro has no athlete thumbnail yet — it will export as black with the intro sound.\n\nOK = export anyway\nCancel = go back and add the thumbnail")){setExporting(false);return;}
 
     const fps=30;const totalFrames=Math.ceil(cEnd*fps);
     const hideCss="position:fixed;left:0;bottom:0;width:1px;height:1px;pointer-events:none;z-index:-1;";
@@ -3120,9 +3138,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     exportContainer=document.createElement("div");
     exportContainer.style.cssText="position:fixed;bottom:0;left:0;width:320px;height:180px;z-index:-1;overflow:hidden;pointer-events:none;opacity:0.01;";
     document.body.appendChild(exportContainer);
-    const videoEls={};
+    const videoEls={};const imageEls={};
     for(let i=0;i<allClips.length;i++){
       const c=allClips[i];setExportFmt(`Loading video ${i+1}/${allClips.length}...`);
+      if(c.kind==="image"){
+        if(c.url){const img=new Image();img.src=blobUrlMap[c.url]||c.url;try{await img.decode();}catch(e){}imageEls[c.id]=img;}
+        continue;
+      }
       const vel=document.createElement("video");
       vel.playsInline=true;vel.preload="auto";vel.muted=true;
       vel.style.cssText="width:320px;height:180px;position:absolute;top:0;left:0;";
@@ -3141,7 +3163,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
        drawImage didn't work (CORS/tainted). If pixels changed at all, it's working
        — even if the video frame is very dark (nighttime footage). */
     const testCvs=document.createElement("canvas");testCvs.width=16;testCvs.height=16;const testCx=testCvs.getContext("2d");
-    const firstVel=videoEls[allClips[0]?.id];let drawWorks=false;
+    const firstVidClip=allClips.find(c=>videoEls[c.id]);const firstVel=firstVidClip&&videoEls[firstVidClip.id];let drawWorks=false;
     if(firstVel&&firstVel.readyState>=2){
       testCx.fillStyle="#ff0000";testCx.fillRect(0,0,16,16);
       try{
@@ -3162,7 +3184,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const actx=new(window.AudioContext||window.webkitAudioContext)();await actx.resume();
     const aDst=actx.createMediaStreamDestination();
     const audioEls={};const audioGains={};
-    allClips.forEach(c=>{try{const ael=document.createElement("audio");ael.preload="auto";ael.style.cssText=hideCss;ael.src=blobUrlMap[c.url]||c.url;document.body.appendChild(ael);ael.load();
+    allClips.forEach(c=>{if(c.kind==="image")return;try{const ael=document.createElement("audio");ael.preload="auto";ael.style.cssText=hideCss;ael.src=blobUrlMap[c.url]||c.url;document.body.appendChild(ael);ael.load();
       const src=actx.createMediaElementSource(ael);const gain=actx.createGain();gain.gain.value=0;src.connect(gain).connect(aDst);audioEls[c.id]=ael;audioGains[c.id]=gain;}catch(e){}});
     const eA=document.createElement("audio");eA.volume=1;eA.style.cssText=hideCss;document.body.appendChild(eA);
     let eASrc=null,eAGain=null;
@@ -3228,8 +3250,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* drawVideoFit: draws video onto canvas using the canonical transform.
        Returns false when the element has no frame ready, so the caller can hold. */
     const drawVideoFit=(vel,scale,panX,panY)=>{
-      if(!vel||vel.readyState<2)return false;
-      const vw=vel.videoWidth,vh=vel.videoHeight;
+      if(!vel)return false;
+      const isImg=vel.tagName==="IMG";
+      if(isImg?!(vel.complete&&vel.naturalWidth):vel.readyState<2)return false;
+      const vw=isImg?vel.naturalWidth:vel.videoWidth,vh=isImg?vel.naturalHeight:vel.videoHeight;
       if(!vw||!vh)return false;
       const t=computeVideoTransform(vw,vh,W,H,scale,panX,panY);
       try{cx.drawImage(vel,t.dx,t.dy,t.dw,t.dh);return true;}catch(e){return false;}
@@ -3319,7 +3343,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           /* TAG SEGMENT: frozen frame + spotlight overlay with fade in/out */
           const vel=videoEls[seg.clipId];
           let drew=false;
-          if(vel){
+          if(imageEls[seg.clipId]){
+            const ip=clipProps[seg.clipId]||{scale:1,panX:0,panY:0};
+            drew=drawVideoFit(imageEls[seg.clipId],ip.scale||1,ip.panX||0,ip.panY||0);
+          }else if(vel){
             const targetT=Math.max(0,seg.srcStart);
             if(!vel.paused)vel.pause();
             /* Seek once on entry, not every frame — re-seeking a paused element
@@ -3350,7 +3377,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           const srcTime=seg.srcStart+progress*(seg.srcEnd-seg.srcStart);
           const vel=videoEls[seg.clipId];
 
-          if(vel){
+          if(imageClipIds.has(seg.clipId)){
+            /* still image (intro thumbnail): no seeking, no clip audio — the
+               intro sound comes from A1 below */
+            const segIdx=segments.indexOf(seg);
+            if(segIdx!==curSegIdx){curSegIdx=segIdx;
+              Object.values(videoEls).forEach(v=>{if(!v.paused)v.pause();});
+              Object.values(audioGains).forEach(g=>g.gain.value=0);
+              if(curAudEl){curAudEl.pause();curAudEl=null;}}
+            const img=imageEls[seg.clipId];
+            if(img&&drawVideoFit(img,pr.scale||1,pr.panX||0,pr.panY||0))saveHold();
+          }else if(vel){
             /* On segment switch: seek to exact source position and start playing */
             const segIdx=segments.indexOf(seg);
             if(segIdx!==curSegIdx){
@@ -3725,6 +3762,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     <audio ref={audioRef} preload="auto"/>
     <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",minHeight:0,padding:8}}>
       <div ref={previewRef} onClick={e=>{if(spotlightMode){const r=e.currentTarget.getBoundingClientRect();const x=((e.clientX-r.left)/r.width*100).toFixed(1);const y=((e.clientY-r.top)/r.height*100).toFixed(1);if(pendingFreezeRef.current){attachSpotlight(pendingFreezeRef.current,spotlightMode,+x,+y);pendingFreezeRef.current=null;}else addTag(spotlightMode,playhead,+x,+y);setSpotlightMode(null);}}}
+        onDragOver={e=>{if(e.dataTransfer.types&&[...e.dataTransfer.types].includes("Files"))e.preventDefault();}}
+        onDrop={e=>{const f=e.dataTransfer.files&&e.dataTransfer.files[0];if(!f||!f.type.startsWith("image/"))return;e.preventDefault();const intro=tracks[0].clips.find(c=>c.brand==="intro");if(intro)setIntroImage(intro.id,f);}}
         onMouseDown={e=>{if(spotlightMode)return;if(!actProps||actProps.scale<=1)return;e.preventDefault();const startX=e.clientX,startY=e.clientY;const startPanX=actProps.panX||0,startPanY=actProps.panY||0;const rect=e.currentTarget.getBoundingClientRect();const cid=activeClip?.id;if(!cid)return;
           const onMove=ev=>{const dx=(ev.clientX-startX)/rect.width*200;const dy=(ev.clientY-startY)/rect.height*200;const nx=Math.max(-100,Math.min(100,startPanX+dx));const ny=Math.max(-100,Math.min(100,startPanY+dy));setClipProps(p=>({...p,[cid]:{...p[cid],panX:nx,panY:ny}}));};
           const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
@@ -3732,6 +3771,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":(actProps&&actProps.scale>1?"grab":"default")}}>
         {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
         <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`translate(${(actProps.panX||0)*(actProps.scale-1)/2}%, ${(actProps.panY||0)*(actProps.scale-1)/2}%) scale(${actProps.scale})`:undefined}}/>
+        {activeClip&&activeClip.kind==="image"&&(activeClip.url
+          ?<img src={activeClip.url} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",zIndex:3,pointerEvents:"none",transform:actProps?`translate(${(actProps.panX||0)*(actProps.scale-1)/2}%, ${(actProps.panY||0)*(actProps.scale-1)/2}%) scale(${actProps.scale})`:undefined}}/>
+          :<div onClick={e=>{e.stopPropagation();pickIntroImage(activeClip.id);}}
+            style={{position:"absolute",inset:0,zIndex:3,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,cursor:"pointer",textAlign:"center",padding:20,
+              background:"repeating-linear-gradient(45deg,#0f0f1a,#0f0f1a 14px,#15152a 14px,#15152a 28px)",border:`2px dashed ${C.coral}aa`}}>
+            <div style={{fontSize:15,fontWeight:800,letterSpacing:1,color:"#fff"}}>INTRO — ADD THE ATHLETE THUMBNAIL</div>
+            <div style={{fontSize:11,color:C.sub,maxWidth:380,lineHeight:1.5}}>Click to choose an image, or drag it here from Finder.<br/>The AUSA intro sound is already underneath.</div>
+          </div>)}
+        <input ref={introImgRef} type="file" accept="image/*" style={{display:"none"}}
+          onChange={e=>{const f=e.target.files&&e.target.files[0];const cid=introTargetRef.current||(tracks[0].clips.find(c=>c.brand==="intro")||{}).id;if(f&&cid)setIntroImage(cid,f);}}/>
         {/* FREEZE — no badge on video */}
         {/* SPOTLIGHT overlay — shows on freeze tags with hasSpotlight, OR standalone overlay tags */}
         {(()=>{
@@ -3835,6 +3884,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           <div style={{width:1,height:14,background:C.s0}}/>
           {!selIsTag?(
             <>
+              {selClip.kind==="image"&&<button onClick={()=>pickIntroImage(selClip.id)} style={{background:C.coral+"22",border:`1px solid ${C.coral}88`,borderRadius:5,padding:"3px 10px",color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,marginRight:6}}>{selClip.url?"Change thumbnail":"Choose thumbnail"}</button>}
               <Volume2Icon size={12} color={C.sub}/>
               <input type="range" min={0} max={100} step={1} value={selProps.volume} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,volume:+e.target.value}}))} style={{width:70,accentColor:C.blue}}/>
               <span style={{color:C.overlay,minWidth:28}}>{selProps.volume}%</span>
@@ -3929,6 +3979,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* End of the V1 storyline, freeze time included — where the next clip appends. */
   const v1EndPos=useCallback(()=>{
     const mt=tracks[0];if(!mt||mt.clips.length===0)return 0;
+    /* just before the outro — compaction then moves the outro back to the end */
+    const outro=mt.clips.find(c=>c.brand==="outro");
+    if(outro)return Math.max(0,outro.trackStart-0.001);
     let end=0;
     mt.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart)+clipFreezeDur(c,tagTrackRef.current.clips);if(e>end)end=e;});
     return end;
@@ -3953,7 +4006,34 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     else addClip(trackId,data,start,isAudio);
   },[players,openProject,addClip,tracks,v1EndPos]);
 
+  /* Put the athlete's thumbnail into the intro slot. The image is kept in
+     IndexedDB under its own id (like uploaded editor media) so the project can
+     re-resolve it after a reload. */
+  const setIntroImage=useCallback(async(clipId,file)=>{
+    if(!file||!file.type||!file.type.startsWith("image/"))return;
+    pushHist();
+    const id=uid("img");
+    try{await storeBlob(id,file);}catch(e){}
+    const url=URL.createObjectURL(file);
+    setTracks(p=>p.map(t=>({...t,clips:t.clips.map(c=>c.id===clipId?{...c,videoId:id,url,name:"INTRO — "+file.name.replace(/\.[^.]+$/,"")}:c)})));
+  },[pushHist]);
+  const pickIntroImage=clipId=>{introTargetRef.current=clipId;if(introImgRef.current){introImgRef.current.value="";introImgRef.current.click();}};
+
+  /* Existing projects predate the template: add whichever pieces are missing. */
+  const addBrandToProject=useCallback(()=>{
+    pushHist();
+    const bt=brandTemplate(loadedProjectRef.current);
+    setTracks(p=>p.map((t,i)=>{if(i!==0)return t;let clips=[...t.clips];
+      if(!clips.some(c=>c.brand==="intro"))clips=[{...bt.intro,trackStart:-1},...clips];
+      if(!clips.some(c=>c.brand==="outro"))clips=[...clips,{...bt.outro,trackStart:1e9}];
+      return{...t,clips};}));
+    setAudioTracks(p=>p.map((t,i)=>i!==0||t.clips.some(c=>c.brand==="intro-audio")?t:{...t,clips:[bt.audio,...t.clips]}));
+    compactV1();
+  },[pushHist,compactV1]);
+
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
+    const dropped=e.dataTransfer.files&&e.dataTransfer.files[0];
+    if(dropped&&dropped.type.startsWith("image/")){const intro=tracks[0].clips.find(c=>c.brand==="intro");if(intro)setIntroImage(intro.id,dropped);return;}
     try{const d=JSON.parse(e.dataTransfer.getData("application/json"));const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
       let dropT=Math.max(0,x/zoom);dropT=snapToEdges(dropT,null,d.duration||0);
       const dropIsAudio=isAudio||d.type==="audio";
@@ -3998,14 +4078,18 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 clipFreezes.sort((a,b)=>a.sourceTime-b.sourceTime);
                 const effectiveD=rawD+clipFreezeTime;
                 const w=Math.max(MIN_CLIP_W,effectiveD*zoom);
-                const pi=players.findIndex(p=>p.id===clip.playerId);const pCol=pi>=0?playerColor(pi):C.peach;
+                const pi=players.findIndex(p=>p.id===clip.playerId);const pCol=clip.brand?C.coral:(pi>=0?playerColor(pi):C.peach);
+                const emptyIntro=clip.brand==="intro"&&!clip.url;
                 const isSel=clip.id===selectedClipId;
                 const x=clip.trackStart*zoom;
                 return(
                 <div key={clip.id} onMouseDown={e=>handleClipMD(e,trk.id,clip,allVideoTrkIds)} onClick={e=>e.stopPropagation()}
+                  onDoubleClick={e=>{if(clip.kind==="image"){e.stopPropagation();pickIntroImage(clip.id);}}}
+                  title={emptyIntro?"Double-click to choose the athlete thumbnail":clip.brand==="outro"?"AUSA outro — stays at the end automatically":undefined}
                   style={{position:"absolute",left:x,width:w,top:3,bottom:3,
                     background:`linear-gradient(180deg,${pCol}cc 60%,${pCol}44 60%)`,borderRadius:5,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
-                    border:isSel?`2px solid ${C.text}`:`1px solid ${pCol}44`,boxShadow:isSel?`0 0 8px ${C.blue}55`:"none",
+                    border:isSel?`2px solid ${C.text}`:emptyIntro?`2px dashed ${C.coral}`:`1px solid ${pCol}44`,boxShadow:isSel?`0 0 8px ${C.blue}55`:"none",
+                    ...(emptyIntro?{background:C.coral+"14"}:{}),
                     display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1}}>
                   <div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
@@ -4013,7 +4097,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                     {w>80&&<span style={{color:"#00000088",fontSize:8,marginLeft:"auto",flexShrink:0,fontFamily:"monospace"}}>{clip.playerName}</span>}
                   </div>
                   <div style={{height:22,padding:"0 2px",opacity:0.7,flexShrink:0}}>
-                    <Waveform w={Math.max(4,w-4)} h={20} color={pCol} seed={clip.id.charCodeAt(4)||1}/>
+                    {clip.kind==="image"
+                      ?(clip.url?<div style={{height:20,borderRadius:3,backgroundImage:`url(${clip.url})`,backgroundSize:"auto 100%",backgroundRepeat:"repeat-x"}}/>
+                        :<div style={{height:20,display:"flex",alignItems:"center",color:C.coral,fontSize:8,fontWeight:700,paddingLeft:4}}>+ drop thumbnail</div>)
+                      :<Waveform w={Math.max(4,w-4)} h={20} color={pCol} seed={clip.id.charCodeAt(4)||1}/>}
                   </div>
                   {/* Render freeze segments inline within the clip */}
                   {(()=>{let fzAccum=0;return clipFreezes.map(fz=>{
@@ -4132,6 +4219,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         {projectSavedAt?`Saved ${new Date(projectSavedAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}`:"Not saved"}
       </span>
       <button onClick={clearProject} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}} title="Clear the timeline and start a new edit">New</button>
+      {(()=>{const v1=(tracks[0]&&tracks[0].clips)||[];const miss=!v1.some(c=>c.brand==="intro")||!v1.some(c=>c.brand==="outro");
+        return miss?<button onClick={addBrandToProject} title="Add the AUSA intro slot and outro to this project"
+          style={{display:"flex",alignItems:"center",gap:5,background:C.coral+"18",border:`1px solid ${C.coral}66`,borderRadius:6,padding:"4px 10px",color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:8}}>+ Intro / Outro</button>:null;})()}
       <button onClick={exportVideo} disabled={exporting} style={{display:"flex",alignItems:"center",gap:5,background:exporting?"transparent":"linear-gradient(135deg,#22c55e,#16a34a)",border:exporting?`1px solid ${C.s1}`:"1px solid #22c55e55",borderRadius:6,padding:"4px 12px",color:exporting?C.s1:"#fff",cursor:exporting?"not-allowed":"pointer",fontSize:10,fontWeight:700,marginLeft:8,letterSpacing:0.5}} title="Export video"><DownloadIcon size={12}/> Export</button>
       <button onClick={()=>setShowFeedbackAdmin(true)} style={{display:"flex",alignItems:"center",gap:5,background:C.blue+"18",border:`1px solid ${C.blue}44`,borderRadius:6,padding:"4px 10px",color:C.blue,cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:8}}><MessageSquareIcon size={12}/> Feedback</button>
       <button onClick={onLogout} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}}><LogOutIcon size={12}/> Exit</button>
@@ -4179,6 +4269,13 @@ const STORAGE_KEY_EDMUSIC="aua_editor_music";
 /* The Studio timeline itself — tracks, tags and per-clip settings — so an edit
    session survives a reload instead of starting from zero every time. */
 const STORAGE_KEY_PROJECT="aua_studio_project";
+/* AUSA brand template. Every project opens with an intro slot (the athlete's
+   thumbnail over the AUSA sound) and closes with the AUSA outro; clips always go
+   between them. Files live in brand/ beside index.html — same origin, so the
+   export can draw them without CORS setup. Both are 0:07–0:13 of the AUSA video. */
+const BRAND={outro:"brand/outro.mp4",introAudio:"brand/intro-audio.m4a",dur:6};
+/* V1 ordering: intro first, outro last, everything else by position between. */
+const brandRank=c=>c.brand==="intro"?0:c.brand==="outro"?2:1;
 const SESSION_DURATION_MS=30*60*1000;
 
 const loadPlayers=()=>{try{const d=localStorage.getItem(STORAGE_KEY_PLAYERS);if(d){const parsed=JSON.parse(d);return parsed.map(p=>({...p,categories:p.categories.map(c=>({...c,videos:c.videos.map(v=>({...v,url:v.cloudUrl||v.url||""}))}))}));}return[];}catch(e){return[];}};

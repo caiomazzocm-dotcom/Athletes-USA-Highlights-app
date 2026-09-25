@@ -225,6 +225,16 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
     - **Freeze + Tag is one action** (button or **F**): creates the freeze, then the next click on the preview places that player's spotlight on it. **Esc** keeps a plain freeze. The spotlight targets the pending freeze by id (`pendingFreezeRef`), not by re-finding it under the playhead.
     - **Bug fixed:** choosing a player from the tag menu used to call `setActivePlayerId`, which switched projects mid-edit and swapped out the reel being worked on.
     - Verified in a running Studio: auto-open on first clip, Freeze + Tag producing a single 1.5s freeze with Joris's spotlight at 50%, switching to Leon and back with the edit restored, and a Leon clip inside Joris's reel tagging Leon.
+33. AUSA brand template (Sept 25 2026):
+    - **Source:** `Athletes USA Intro Video.mp4` (Caio's LaCie drive), 1280×720 25fps H.264/AAC, 14.96s. Only **0:07–0:13** is used: the photo mosaic → logo forming → "ATHLETES USA · Sport Scholarship Agency" card. Audio is naturally silent by 13.0s, so no fade-out; a 40ms fade-in at 7.0s only prevents a click.
+    - **Files:** `brand/outro.mp4` (6.000s, 150 frames, re-encoded CRF 18 for a frame-accurate cut) and `brand/intro-audio.m4a` (the same 6s of sound). Served from the site itself — same origin, so the export can draw them with no CORS setup. Regenerate with `ffmpeg -ss 7 -i <src> -t 6 …` (see git log for exact flags).
+    - **Every new/cleared project is the template** (`brandTemplate`, `emptyTimeline(pid)`): V1 = [intro slot 6s][outro 6s], A1 = intro sound 0–6s. Clips always land between them: `v1EndPos` returns just before the outro, and `brandRank` makes `compactV1`/`closeGaps` keep intro first and outro last even after drags.
+    - **Intro slot** is an image clip (`kind:"image"`, `brand:"intro"`). Fill it by clicking the preview placeholder, dropping an image on the preview or timeline, double-clicking the clip, or "Choose thumbnail" in the properties panel. The image is stored in IndexedDB under its own id, so it survives reloads.
+    - Image clips are skipped by the video pool, drawn as `<img>` in preview, and as an `Image` in export (`drawVideoFit` handles both). Export warns if the intro has no thumbnail.
+    - Older projects show a **"+ Intro / Outro"** button that adds whichever pieces are missing.
+    - Pool `<video>` elements only use `crossOrigin` for absolute http(s) URLs; with it set, a relative `brand/` file opened from disk failed to load.
+    - **Verified end to end** on a running Studio with a real export, inspected with ffprobe/ffmpeg: file 29.19s for a 29.2s edit, no black frames, cuts at exactly 6.0s (thumbnail→clip) and 23.2s (clip→outro), and the intro sound in 0–6s matching the reference within ~1 dB.
+    - **Measurement note:** Chrome's `<video>` misreports duration and seeks inaccurately on MediaRecorder MP4s (reported 30.16s and a ~1s offset that didn't exist). Verify exports with ffprobe/ffmpeg, not by seeking in the browser.
 
 ---
 
