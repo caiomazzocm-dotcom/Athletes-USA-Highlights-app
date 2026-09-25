@@ -3314,10 +3314,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
        either a full-height crop window or the whole picture over a backdrop. */
     const FULLBOX={x:0,y:0,w:W,h:H};
     const narrow=W/H<16/9-0.01;
-    const frameOf={};allClips.forEach(c=>{frameOf[c.id]=socialFrame(c,clipProps,tagTrack.clips);});
-    const boxFor=clipId=>{
-      if(!narrow||!clipId||!frameOf[clipId])return FULLBOX;
-      const f=frameOf[clipId];
+    const clipById={};allClips.forEach(c=>{clipById[c.id]=c;});
+    const boxFor=(clipId,t)=>{
+      if(!narrow||!clipId||!clipById[clipId])return FULLBOX;
+      const f=socialFrame(clipById[clipId],clipProps,tagTrack.clips,t);
       if(f.fit==="full"){const h=W*9/16;return{x:0,y:(H-h)/2,w:W,h,full:true};}
       const w=H*16/9;return{x:Math.min(0,Math.max(W-w,W/2-f.cx*w)),y:0,w,h:H};
     };
@@ -3424,14 +3424,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         /* jumping from the end of the range to the outro: make music re-seek */
         if(prevTl!=null&&tl-prevTl>0.5)pAudioClipId=null;
         prevTl=tl;
-        const seg=findSeg(tl);const box=seg?boxFor(seg.clipId):FULLBOX;
+        const seg=findSeg(tl);
+        /* the moment of footage on screen — what keyframes are evaluated at */
+        const segSrcT=seg?(seg.isTag?seg.srcStart:seg.srcStart+((tl-seg.tlStart)/Math.max(1e-6,seg.tlEnd-seg.tlStart))*(seg.srcEnd-seg.srcStart)):0;
+        const box=seg?boxFor(seg.clipId,segSrcT):FULLBOX;
 
         if(seg&&seg.isTag){
           /* TAG SEGMENT: frozen frame + spotlight overlay with fade in/out */
           const vel=videoEls[seg.clipId];
           let drew=false;
           if(imageEls[seg.clipId]){
-            const ip=clipProps[seg.clipId]||{scale:1,panX:0,panY:0};
+            const ip=propsAt(clipProps[seg.clipId]||{scale:1,panX:0,panY:0},segSrcT);
             drew=drawVideoFit(imageEls[seg.clipId],ip.scale||1,ip.panX||0,ip.panY||0,box);
           }else if(vel){
             const targetT=Math.max(0,seg.srcStart);
@@ -3441,7 +3444,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             if(Math.abs(vel.currentTime-targetT)>0.15&&!vel.seeking)vel.currentTime=targetT;
             /* Use clip's actual scale — NOT hardcoded 1 — so vertical videos
                stay zoomed/fitted the same way as during normal playback */
-            const tagPr=clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0};
+            const tagPr=propsAt(clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0},segSrcT);
             drew=drawVideoFit(vel,tagPr.scale||1,tagPr.panX||0,tagPr.panY||0,box);
           }
           /* Hold the clean video frame, before overlays, so a held frame never
@@ -3459,7 +3462,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
         }else if(seg){
           /* VIDEO SEGMENT: play video from srcStart→srcEnd mapped to tlStart→tlEnd */
-          const pr=clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0};
+          const pr=propsAt(clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0},segSrcT);
           const progress=(tl-seg.tlStart)/(seg.tlEnd-seg.tlStart);
           const srcTime=seg.srcStart+progress*(seg.srcEnd-seg.srcStart);
           const vel=videoEls[seg.clipId];
@@ -3736,7 +3739,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const activeFreezeTag=findActiveTag(playhead); /* freeze tags only (duration>0) */
   const activeSpotTag=findOverlayTag(activeClip,playhead); /* overlay spotlight (duration===0) */
   const activeTag=activeFreezeTag||activeSpotTag; /* backward compat — used by video pool sync etc */
-  const actProps=activeClip?(clipProps[activeClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
+  /* source time of a clip under a timeline position (it stands still in a freeze) */
+  const srcTimeAt=(c,ph)=>c&&c.clipEnd!=null?Math.max(c.clipStart,Math.min(c.clipEnd,c.clipStart+(ph-c.trackStart-(c.kind==="image"?0:freezeOffset(c.trackStart,ph))))):0;
+  const activeSrcT=srcTimeAt(activeClip,playhead);
+  const actProps=activeClip?propsAt(clipProps[activeClip.id]||{volume:100,scale:1,panX:0,panY:0},activeSrcT):null;
   /* intro look in the preview — the same curves the export uses */
   const introC=tracks[0]&&tracks[0].clips.find(c=>c.brand==="intro"&&c.url);
   const introEndT=introC?introC.trackStart+(introC.clipEnd-introC.clipStart)+clipFreezeDur(introC,tagTrack.clips):null;
@@ -3751,6 +3757,34 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
      type "freeze" and a `type!=="tag"` test sent them to the video-clip controls,
      so the Scale slider edited a clip property nothing on a tag ever reads. */
   const selIsTag=!!selClip&&tagTrack.clips.some(c=>c.id===selClip.id);
+  /* keyframes are added at the playhead, so it has to be over the selected clip */
+  const selOnPlayhead=!!selClip&&!selIsTag&&!selClip.isAudio&&playhead>=selClip.trackStart&&playhead<selClip.trackStart+(selClip.clipEnd-selClip.clipStart)+clipFreezeDur(selClip,tagTrack.clips);
+  const selSrcT=selClip&&!selIsTag&&!selClip.isAudio?srcTimeAt(selClip,selOnPlayhead?playhead:selClip.trackStart):0;
+  const selAnim=selProps&&!selIsTag?propsAt(selProps,selSrcT):selProps;
+  /* A keyframed property takes edits into the keyframe at the playhead (adding one
+     if needed); an un-keyframed one is a plain value, exactly as before. */
+  const setClipParam=(clipId,key,v,t)=>setClipProps(p=>{const cur=p[clipId]||{volume:100,scale:1,panX:0,panY:0};const kf=cur.kf||{};
+    if(kf[key]&&kf[key].length)return{...p,[clipId]:{...cur,kf:{...kf,[key]:upsertKf(kf[key],t,v)}}};
+    return{...p,[clipId]:{...cur,[key]:v}};});
+  const toggleKf=(clipId,key,t,v)=>setClipProps(p=>{const cur=p[clipId]||{volume:100,scale:1,panX:0,panY:0};const kf=cur.kf||{};const list=kf[key]||[];
+    const at=list.find(k=>Math.abs(k.t-t)<=KF_EPS);
+    if(!at)return{...p,[clipId]:{...cur,kf:{...kf,[key]:upsertKf(list,t,v)}}};
+    const rest=list.filter(k=>k!==at);
+    /* removing the last keyframe leaves its value in place, no longer animated */
+    return{...p,[clipId]:{...cur,...(rest.length?{}:{[key]:at.v}),kf:{...kf,[key]:rest}}};});
+  const clearKf=(clipId,keys,patch)=>setClipProps(p=>{const cur=p[clipId]||{volume:100,scale:1,panX:0,panY:0};const kf={...(cur.kf||{})};keys.forEach(k=>{delete kf[k];});return{...p,[clipId]:{...cur,...patch,kf}};});
+  /* timeline position of a moment in a clip's footage, counting its freezes */
+  const kfTimelinePos=(c,t)=>{let fz=0;tagTrack.clips.forEach(tg=>{if(tg.clipId===c.id&&tg.duration>0&&tg.sourceTime>=c.clipStart&&tg.sourceTime<t)fz+=tg.duration;});return c.trackStart+(t-c.clipStart)+fz;};
+  const selKfTimes=selClip&&!selIsTag&&selProps&&selProps.kf?[...new Set(Object.values(selProps.kf).flat().map(k=>k.t))].sort((a,b)=>a-b):[];
+  const jumpKf=dir=>{if(!selClip||!selKfTimes.length)return;
+    const cur=selOnPlayhead?selSrcT:(dir>0?-Infinity:Infinity);
+    const t=dir>0?selKfTimes.find(x=>x>cur+KF_EPS):[...selKfTimes].reverse().find(x=>x<cur-KF_EPS);
+    if(t!=null)setPlayhead(kfTimelinePos(selClip,t)+0.0001);};
+  const kfBtn=(prop,value)=>{if(!selClip||selIsTag)return null;
+    const list=((selProps&&selProps.kf)||{})[prop]||[];const on=list.some(k=>Math.abs(k.t-selSrcT)<=KF_EPS);const has=list.length>0;
+    return<button onClick={()=>toggleKf(selClip.id,prop,selSrcT,value)} disabled={!selOnPlayhead}
+      title={!selOnPlayhead?"Move the playhead onto this clip to add keyframes":on?"Remove this keyframe":has?"Add a keyframe here":"Animate: add the first keyframe here, then move the playhead and change the value"}
+      style={{background:"transparent",border:"none",cursor:selOnPlayhead?"pointer":"not-allowed",padding:"0 2px",fontSize:12,lineHeight:1,color:on?SPOT_COLOR:has?SPOT_COLOR+"99":C.overlay,opacity:selOnPlayhead?1:0.4}}>{on?"◆":"◇"}</button>;};
 
   const sidebar=(
   <div style={{width:260,minWidth:260,background:C.mantle,borderRight:`1px solid ${C.s0}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -3978,7 +4012,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* what the social shape will show of the frame under the playhead */
   const socialGuide=(()=>{
     if(!socialOpen||!activeClip)return null;
-    const fr=socialFrame(activeClip,clipProps,tagTrack.clips);
+    const fr=socialFrame(activeClip,clipProps,tagTrack.clips,activeSrcT);
     const narrowR=(socialFmtObj.W/socialFmtObj.H)/(16/9);
     const tagLine=<div style={{position:"absolute",top:6,left:"50%",transform:"translateX(-50%)",background:SPOT_COLOR,color:"#fff",fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:10,whiteSpace:"nowrap"}}>{socialFmtObj.sub.split(" ·")[0]} · {fr.fit==="full"?"full picture":"crop"}</div>;
     if(fr.fit==="full")return<div style={{position:"absolute",inset:0,zIndex:6,pointerEvents:"none",border:`2px solid ${SPOT_COLOR}`,boxSizing:"border-box"}}>{tagLine}</div>;
@@ -4003,7 +4037,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           if(j){try{const d=JSON.parse(j);if(d.type==="image"){e.preventDefault();putThumbnail(d);}}catch(err){}return;}
           const f=e.dataTransfer.files&&e.dataTransfer.files[0];if(!f||!f.type.startsWith("image/"))return;e.preventDefault();setIntroImage(null,f);}}
         onMouseDown={e=>{if(spotlightMode)return;if(!actProps||actProps.scale<=1)return;e.preventDefault();const startX=e.clientX,startY=e.clientY;const startPanX=actProps.panX||0,startPanY=actProps.panY||0;const rect=e.currentTarget.getBoundingClientRect();const cid=activeClip?.id;if(!cid)return;
-          const onMove=ev=>{const dx=(ev.clientX-startX)/rect.width*200;const dy=(ev.clientY-startY)/rect.height*200;const nx=Math.max(-100,Math.min(100,startPanX+dx));const ny=Math.max(-100,Math.min(100,startPanY+dy));setClipProps(p=>({...p,[cid]:{...p[cid],panX:nx,panY:ny}}));};
+          const onMove=ev=>{const dx=(ev.clientX-startX)/rect.width*200;const dy=(ev.clientY-startY)/rect.height*200;const nx=Math.max(-100,Math.min(100,startPanX+dx));const ny=Math.max(-100,Math.min(100,startPanY+dy));setClipParam(cid,"panX",nx,activeSrcT);setClipParam(cid,"panY",ny,activeSrcT);};
           const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);};
           document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);}}
         style={{position:"relative",width:"100%",maxWidth:720,aspectRatio:"16/9",background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":(actProps&&actProps.scale>1?"grab":"default")}}>
@@ -4137,19 +4171,28 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 <div style={{width:1,height:14,background:C.s0}}/>
                 <MaximizeIcon size={12} color={C.sub}/>
                 <span style={{color:C.sub,fontSize:10}}>Scale</span>
-                <input type="range" min={50} max={300} step={5} value={Math.round(selProps.scale*100)} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,scale:+e.target.value/100}}))} style={{width:70,accentColor:C.lavender}}/>
-                <span style={{color:C.overlay,minWidth:28}}>{Math.round(selProps.scale*100)}%</span>
-                {selProps.scale>1&&<>
+                <input type="range" min={50} max={300} step={5} value={Math.round(selAnim.scale*100)} onChange={e=>setClipParam(selClip.id,"scale",+e.target.value/100,selSrcT)} style={{width:70,accentColor:C.lavender}}/>
+                <span style={{color:C.overlay,minWidth:28}}>{Math.round(selAnim.scale*100)}%</span>
+                {kfBtn("scale",selAnim.scale)}
+                {(selAnim.scale>1||(selProps.kf&&["scale","panX","panY"].some(k=>(selProps.kf[k]||[]).length)))&&<>
                   <div style={{width:1,height:14,background:C.s0}}/>
                   <MoveIcon size={12} color={C.sub}/>
                   <span style={{color:C.sub,fontSize:10}}>X</span>
-                  <input type="range" min={-100} max={100} step={1} value={selProps.panX||0} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,panX:+e.target.value}}))} style={{width:50,accentColor:C.peach}}/>
+                  <input type="range" min={-100} max={100} step={1} value={Math.round(selAnim.panX||0)} onChange={e=>setClipParam(selClip.id,"panX",+e.target.value,selSrcT)} style={{width:50,accentColor:C.peach}}/>
+                  {kfBtn("panX",selAnim.panX||0)}
                   <span style={{color:C.sub,fontSize:10}}>Y</span>
-                  <input type="range" min={-100} max={100} step={1} value={selProps.panY||0} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,panY:+e.target.value}}))} style={{width:50,accentColor:C.peach}}/>
-                  <span style={{color:C.overlay,cursor:"pointer",fontSize:9}} onClick={()=>setClipProps(p=>({...p,[selClip.id]:{...selProps,panX:0,panY:0}}))}>Reset</span>
+                  <input type="range" min={-100} max={100} step={1} value={Math.round(selAnim.panY||0)} onChange={e=>setClipParam(selClip.id,"panY",+e.target.value,selSrcT)} style={{width:50,accentColor:C.peach}}/>
+                  {kfBtn("panY",selAnim.panY||0)}
+                  <span style={{color:C.overlay,cursor:"pointer",fontSize:9}} onClick={()=>clearKf(selClip.id,["panX","panY"],{panX:0,panY:0})}>Reset</span>
                 </>}
               </>}
-              {socialOpen&&!selClip.isAudio&&(()=>{const fr=socialFrame(selClip,clipProps,tagTrack.clips);
+              {selKfTimes.length>0&&<>
+                <div style={{width:1,height:14,background:C.s0}}/>
+                <span style={{color:SPOT_COLOR,fontSize:10,fontWeight:700}}>Keyframes</span>
+                <button onClick={()=>jumpKf(-1)} title="Previous keyframe" style={{background:"transparent",border:`1px solid ${C.s1}`,borderRadius:4,color:C.sub,cursor:"pointer",fontSize:9,padding:"1px 6px"}}>◀</button>
+                <button onClick={()=>jumpKf(1)} title="Next keyframe" style={{background:"transparent",border:`1px solid ${C.s1}`,borderRadius:4,color:C.sub,cursor:"pointer",fontSize:9,padding:"1px 6px"}}>▶</button>
+              </>}
+              {socialOpen&&!selClip.isAudio&&(()=>{const fr=socialFrame(selClip,clipProps,tagTrack.clips,selSrcT);
                 const setF=patch=>setClipProps(p=>({...p,[selClip.id]:{...(p[selClip.id]||{volume:100,scale:1,panX:0,panY:0}),...patch}}));
                 const pill=on=>({background:on?SPOT_COLOR+"33":"transparent",border:`1px solid ${on?SPOT_COLOR:C.s1}`,borderRadius:5,padding:"2px 8px",color:on?"#fff":C.sub,cursor:"pointer",fontSize:10,fontWeight:700});
                 return<>
@@ -4159,9 +4202,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   <button onClick={()=>setF({socialFit:"full"})} style={pill(fr.fit==="full")}>Full picture</button>
                   {fr.fit==="crop"&&<>
                     <span style={{color:C.overlay,fontSize:9}}>Left</span>
-                    <input type="range" min={0} max={100} step={1} value={Math.round(fr.cx*100)} onChange={e=>setF({socialX:+e.target.value/100})} style={{width:80,accentColor:SPOT_COLOR}}/>
+                    <input type="range" min={0} max={100} step={1} value={Math.round(fr.cx*100)} onChange={e=>setClipParam(selClip.id,"socialX",+e.target.value/100,selSrcT)} style={{width:80,accentColor:SPOT_COLOR}}/>
                     <span style={{color:C.overlay,fontSize:9}}>Right</span>
-                    <button onClick={()=>setF({socialX:undefined})} title="Follow the tagged player again" style={pill(false)}>Auto</button>
+                    {kfBtn("socialX",fr.cx)}
+                    <button onClick={()=>clearKf(selClip.id,["socialX"],{socialX:undefined})} title="Follow the tagged player again (removes this clip's frame keyframes)" style={pill(false)}>Auto</button>
                   </>}
                 </>;})()}
             </>
@@ -4207,7 +4251,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     )}
   </div>);
 
-  const handleTlClick=e=>{const scrollEl=tlScrollRef.current;if(!scrollEl)return;const r=scrollEl.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;setPlayhead(Math.max(0,(e.clientX-r.left+scrollL)/zoom));setSelectedClipId(null);};
+  /* keepSel: the ruler only moves the playhead. Deselecting there made the clip's
+     controls vanish on every move — unusable for setting keyframes at new times. */
+  const handleTlClick=(e,keepSel)=>{const scrollEl=tlScrollRef.current;if(!scrollEl)return;const r=scrollEl.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;setPlayhead(Math.max(0,(e.clientX-r.left+scrollL)/zoom));if(!keepSel)setSelectedClipId(null);};
   const handlePlayheadDrag=e=>{e.stopPropagation();e.preventDefault();const scrollEl=tlScrollRef.current;if(!scrollEl)return;
     const parent=scrollEl.querySelector("[data-tl-area]")||scrollEl;
     const move=ev=>{const r=parent.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;const x=ev.clientX-r.left+scrollL;setPlayhead(Math.max(0,x/zoom));};
@@ -4326,7 +4372,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       </div>
       <div ref={tlScrollRef} style={{flex:1,overflowX:"auto",overflowY:"auto",position:"relative"}}>
         <div data-tl-area="1" style={{width:totalW,minWidth:"100%",position:"relative"}}>
-          <div onClick={handleTlClick} style={{height:RULER_H,position:"relative",borderBottom:`1px solid ${C.s1}`,cursor:"pointer",background:C.mantle,userSelect:"none"}}>
+          <div onClick={e=>handleTlClick(e,true)} style={{height:RULER_H,position:"relative",borderBottom:`1px solid ${C.s1}`,cursor:"pointer",background:C.mantle,userSelect:"none"}}>
             {socialOpen&&socialRange&&<div title="Social clip" style={{position:"absolute",top:0,bottom:0,left:socialRange.from*zoom,width:Math.max(2,(socialRange.to-socialRange.from)*zoom),background:SPOT_COLOR+"38",borderLeft:`2px solid ${SPOT_COLOR}`,borderRight:`2px solid ${SPOT_COLOR}`,pointerEvents:"none",boxSizing:"border-box"}}/>}
             {ticks.map(t=><div key={`t${t}`} style={{position:"absolute",left:t*zoom,top:0}}><div style={{position:"absolute",left:0,top:RULER_H-14,width:1,height:14,background:C.s2}}/><span style={{position:"absolute",left:4,top:2,color:C.sub,fontSize:9,fontFamily:"monospace",whiteSpace:"nowrap"}}>{fmtTime(t)}</span></div>)}
             {subI>=.5&&ticks.map(t=>{const s=[];for(let x=t+subI;x<t+tickI&&x<=tlDur;x+=subI)s.push(x);return s.map(x=><div key={`s${x}`} style={{position:"absolute",left:x*zoom,bottom:0,width:1,height:6,background:C.s1}}/>);})}
@@ -4366,6 +4412,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                         :<div style={{height:20,display:"flex",alignItems:"center",color:C.coral,fontSize:8,fontWeight:700,paddingLeft:4}}>+ drop thumbnail</div>)
                       :<Waveform w={Math.max(4,w-4)} h={20} color={pCol} seed={clip.id.charCodeAt(4)||1}/>}
                   </div>
+                  {(()=>{const kf=(clipProps[clip.id]||{}).kf||{};const ts=[...new Set(Object.values(kf).flat().map(k=>k.t))];if(!ts.length)return null;
+                    return ts.map(t=>{let fzb=0;clipFreezes.forEach(fz=>{if(fz.sourceTime<t)fzb+=fz.duration;});const off=(t-clip.clipStart)+fzb;if(off<0||off>effectiveD)return null;
+                      return<div key={"kf"+t} title="Keyframe — click to jump here" onMouseDown={e=>{e.stopPropagation();setSelectedClipId(clip.id);setPlayhead(clip.trackStart+off+0.0001);}}
+                        style={{position:"absolute",bottom:4,left:`calc(${off/effectiveD*100}% - 4px)`,width:8,height:8,background:SPOT_COLOR,border:"1px solid #fff",transform:"rotate(45deg)",cursor:"pointer",zIndex:6,boxSizing:"border-box"}}/>;});})()}
                   {/* Render freeze segments inline within the clip */}
                   {(()=>{let fzAccum=0;return clipFreezes.map(fz=>{
                     const offsetInClip=(fz.sourceTime-clip.clipStart)+fzAccum;
@@ -4572,8 +4622,27 @@ const SOCIAL_FORMATS=[
    "full" shows the whole picture over a blurred copy of itself. The window
    defaults to the players tagged in the clip, so the spotlit player stays in
    shot; brand clips default to full so the logo is never cut. */
-const socialFrame=(c,props,tagClips)=>{
-  const p=(props&&props[c.id])||{};
+/* ── Keyframes ──
+   A clip's scale, pan and social crop position can change over time. Keyframes
+   are stored per property in SOURCE seconds (like tags), so trimming, moving or
+   splitting a clip keeps each one on the same moment of footage, and during a
+   freeze the source time stands still so the value holds. Between keyframes the
+   value eases in and out; before the first and after the last it holds. */
+const KF_EPS=0.04;
+const kfEval=(list,t,fallback)=>{
+  if(!list||!list.length)return fallback;
+  if(t<=list[0].t)return list[0].v;
+  const last=list[list.length-1];if(t>=last.t)return last.v;
+  for(let i=0;i<list.length-1;i++){const a=list[i],b=list[i+1];
+    if(t>=a.t&&t<=b.t){const u=(t-a.t)/Math.max(1e-6,b.t-a.t);return a.v+(b.v-a.v)*u*u*(3-2*u);}}
+  return fallback;
+};
+const propsAt=(p,t)=>{const q=p||{},k=q.kf||{};
+  return{...q,scale:kfEval(k.scale,t,q.scale||1),panX:kfEval(k.panX,t,q.panX||0),panY:kfEval(k.panY,t,q.panY||0),
+    socialX:k.socialX&&k.socialX.length?kfEval(k.socialX,t,0.5):q.socialX};};
+const upsertKf=(list,t,v)=>[...(list||[]).filter(k=>Math.abs(k.t-t)>KF_EPS),{t,v}].sort((a,b)=>a.t-b.t);
+const socialFrame=(c,props,tagClips,t)=>{
+  const raw=(props&&props[c.id])||{};const p=t!=null?propsAt(raw,t):raw;
   let cx=p.socialX;
   if(cx==null){const tg=(tagClips||[]).filter(t=>t.clipId===c.id&&(t.hasSpotlight||t.type==="tag")&&t.spotX!=null);
     cx=tg.length?tg.reduce((a,t)=>a+t.spotX,0)/tg.length/100:0.5;}
