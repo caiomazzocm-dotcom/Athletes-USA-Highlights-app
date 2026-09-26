@@ -3160,6 +3160,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const addOutro=oStart!=null&&to<=oStart+0.01;
     const outLen=mainLen+(addOutro?oEnd-oStart:0);
     const mapT=u=>u<mainLen?from+u:oStart+(u-mainLen);
+    const outroAll=allClips.find(c=>c.brand==="outro");
+    const outroSegsAll=outroAll?segments.filter(sg=>sg.clipId===outroAll.id):[];
+    const outroTl=outroSegsAll.length?Math.min(...outroSegsAll.map(sg=>sg.tlStart)):null;
+    /* in output time, so it works for a social clip with the outro appended too */
+    const joinU=addOutro?mainLen:(outroTl!=null&&outroTl>=from&&outroTl<=to?outroTl-from:null);
     if(outLen<=0){setExporting(false);return;}
     if(allClips.some(c=>c.brand==="intro"&&!c.url&&c.trackStart<to&&c.trackStart+(c.clipEnd-c.clipStart)>from)&&!confirm("The intro has no athlete thumbnail yet — it will export as black with the intro sound.\n\nOK = export anyway\nCancel = go back and add the thumbnail")){setExporting(false);return;}
 
@@ -3247,12 +3252,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setExportFmt("Preparing audio...");
     const actx=new(window.AudioContext||window.webkitAudioContext)();await actx.resume();
     const aDst=actx.createMediaStreamDestination();
+    const master=actx.createGain();const comp=actx.createDynamicsCompressor();const masterOut=actx.createGain();
+    comp.threshold.value=LOUDNESS.threshold;comp.knee.value=LOUDNESS.knee;comp.ratio.value=LOUDNESS.ratio;comp.attack.value=LOUDNESS.attack;comp.release.value=LOUDNESS.release;
+    masterOut.gain.value=LOUDNESS.outGain;
+    master.connect(comp).connect(masterOut).connect(aDst);
     const audioEls={};const audioGains={};
     allClips.forEach(c=>{if(c.kind==="image")return;try{const ael=document.createElement("audio");ael.preload="auto";ael.style.cssText=hideCss;ael.src=blobUrlMap[c.url]||c.url;document.body.appendChild(ael);ael.load();
-      const src=actx.createMediaElementSource(ael);const gain=actx.createGain();gain.gain.value=0;src.connect(gain).connect(aDst);audioEls[c.id]=ael;audioGains[c.id]=gain;}catch(e){}});
+      const src=actx.createMediaElementSource(ael);const gain=actx.createGain();gain.gain.value=0;src.connect(gain).connect(master);audioEls[c.id]=ael;audioGains[c.id]=gain;}catch(e){}});
     const eA=document.createElement("audio");eA.volume=1;eA.style.cssText=hideCss;document.body.appendChild(eA);
     let eASrc=null,eAGain=null;
-    try{eASrc=actx.createMediaElementSource(eA);eAGain=actx.createGain();eASrc.connect(eAGain).connect(aDst);}catch(e){}
+    try{eASrc=actx.createMediaElementSource(eA);eAGain=actx.createGain();eASrc.connect(eAGain).connect(master);}catch(e){}
 
     /* ── Step 5: Canvas + MediaRecorder ── */
     const W=opts.W||1920,H=opts.H||1080;
@@ -3430,6 +3439,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         prevTl=tl;
         const seg=findSeg(tl);
         /* the moment of footage on screen — what keyframes are evaluated at */
+        const ofx=joinU!=null?outroFx(ph-joinU):null;
         const segSrcT=seg?(seg.isTag?seg.srcStart:seg.srcStart+((tl-seg.tlStart)/Math.max(1e-6,seg.tlEnd-seg.tlStart))*(seg.srcEnd-seg.srcStart)):0;
         const box=seg?boxFor(seg.clipId,segSrcT):FULLBOX;
 
@@ -3449,7 +3459,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             /* Use clip's actual scale — NOT hardcoded 1 — so vertical videos
                stay zoomed/fitted the same way as during normal playback */
             const tagPr=propsAt(clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0},segSrcT);
-            drew=drawVideoFit(vel,tagPr.scale||1,tagPr.panX||0,tagPr.panY||0,box);
+            if(ofx)cx.filter=`blur(${(ofx.blur*W).toFixed(1)}px)`;
+            drew=drawVideoFit(vel,(tagPr.scale||1)*(ofx?ofx.scale:1),tagPr.panX||0,tagPr.panY||0,box);
+            cx.filter="none";
           }
           /* Hold the clean video frame, before overlays, so a held frame never
              carries a stale spotlight into the next clip. */
@@ -3513,9 +3525,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               if(Math.abs(vel.currentTime-srcTime)>0.3)vel.currentTime=Math.max(0,srcTime);
             }
             const tin=introEnd!=null&&seg.clipId!==introClip.id?introInFx(tl-introEnd):null;
-            if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100*(tin?1-tin.mix:1);
-            if(tin)cx.filter=`blur(${(tin.blur*W).toFixed(1)}px)`;
-            const drewV=drawVideoFit(vel,(pr.scale||1)*(tin?tin.scale:1),pr.panX||0,pr.panY||0,box);
+            if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=pr.volume/100*(tin?1-tin.mix:1)*outroGain(ofx);
+            const fxBlur=Math.max(tin?tin.blur:0,ofx?ofx.blur:0);
+            if(fxBlur>0)cx.filter=`blur(${(fxBlur*W).toFixed(1)}px)`;
+            const drewV=drawVideoFit(vel,(pr.scale||1)*(tin?tin.scale:1)*(ofx?ofx.scale:1),pr.panX||0,pr.panY||0,box);
             cx.filter="none";
             if(drewV)saveHold();else paintHold();
 
@@ -3535,7 +3548,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             if(pAudioClipId!==au.id){pAudioClipId=au.id;eA.src=blobUrlMap[au.url]||au.url;
               const afo=freezeOffset(au.trackStart,tl);const at2=au.clipStart+(tl-au.trackStart-afo);
               eA.currentTime=Math.max(0,at2);eA.play().catch(()=>{});}
-            if(eAGain)eAGain.gain.value=ap.volume/100;}
+            const isMusic=au.brand!=="intro-audio";
+            if(eAGain)eAGain.gain.value=ap.volume/100*(isMusic&&joinU!=null?musicFadeAt(ph-joinU):1);}
           else{if(pAudioClipId){eA.pause();pAudioClipId=null;}if(eAGain)eAGain.gain.value=0;}
 
         }else{
@@ -3664,7 +3678,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const pr=clipProps[clip.id]||{volume:100,scale:1,panX:0,panY:0};
     const fo=freezeOffset(clip.trackStart,playhead);
     const vt=clip.clipStart+(playhead-clip.trackStart-fo);
-    const vol=pr.volume/100;
+    const oc=tracks[0]&&tracks[0].clips.find(c=>c.brand==="outro");
+    const vol=pr.volume/100*(oc?outroGain(outroFx(playhead-oc.trackStart)):1);
 
     if(prevClipRef.current!==clip.id){
       /* ══ CLIP SWITCH ══ Just swap z-index layers — video is pre-buffered! */
@@ -3696,7 +3711,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const wasAudioTag=prevAudioTagRef.current!==null;prevAudioTagRef.current=null;
     if(!clip){if(a){a.pause();a.removeAttribute("src");a.load();}prevAudioRef.current=null;return;}
     const pr=clipProps[clip.id]||{volume:100,scale:1,panX:0,panY:0};const fo=freezeOffset(clip.trackStart,playhead);const at=clip.clipStart+(playhead-clip.trackStart-fo);
-    if(a){a.volume=pr.volume/100;if(prevAudioRef.current!==clip.id){prevAudioRef.current=clip.id;a.src=clip.url;a.currentTime=Math.max(0,at);if(isPlaying)a.play().catch(()=>{});}
+    const ocA=tracks[0]&&tracks[0].clips.find(c=>c.brand==="outro");const ofA=ocA?outroFx(playhead-ocA.trackStart):null;
+    const musicF=clip.brand==="intro-audio"||!ocA?1:musicFadeAt(playhead-ocA.trackStart);
+    if(a){a.volume=Math.max(0,Math.min(1,pr.volume/100*musicF));if(prevAudioRef.current!==clip.id){prevAudioRef.current=clip.id;a.src=clip.url;a.currentTime=Math.max(0,at);if(isPlaying)a.play().catch(()=>{});}
     else if(wasAudioTag){a.currentTime=Math.max(0,at);if(isPlaying)a.play().catch(()=>{});}
     else if(!isPlaying){a.pause();if(Math.abs(a.currentTime-at)>.1)a.currentTime=Math.max(0,at);}
     else{if(a.paused)a.play().catch(()=>{});}}},[playhead,isPlaying,findActiveAudio,findActiveTag,freezeOffset,clipProps]);
@@ -3753,7 +3770,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const introOut=introC&&activeClip&&activeClip.id===introC.id?introFx(playhead-introC.trackStart,introEndT-introC.trackStart):null;
   const introIn=introEndT!=null&&activeClip&&activeClip.id!==introC.id?introInFx(playhead-introEndT):null;
   const pvW=(previewRef.current&&previewRef.current.clientWidth)||720;
-  const vS=actProps?actProps.scale*(introIn?introIn.scale:1):1;
+  const outroClipP=tracks[0]&&tracks[0].clips.find(c=>c.brand==="outro");
+  const outroP=outroClipP?outroFx(playhead-outroClipP.trackStart):null;
+  const vS=actProps?actProps.scale*(introIn?introIn.scale:1)*(outroP?outroP.scale:1):1;
+  const vBlur=Math.max(introIn?introIn.blur:0,outroP?outroP.blur:0);
   const iS=(actProps?actProps.scale:1)*(introOut?introOut.scale:1),iPx=introOut?introOut.panX:((actProps&&actProps.panX)||0),iPy=(actProps&&actProps.panY)||0;
   const selClip=(()=>{for(const t of [...tracks,...audioTracks]){const c=t.clips.find(x=>x.id===selectedClipId);if(c)return c;}for(const c of tagTrack.clips){if(c.id===selectedClipId)return c;}return null;})();
   const selProps=selClip?(clipProps[selClip.id]||{volume:100,scale:1,panX:0,panY:0}):null;
@@ -3880,6 +3900,18 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             /* the first photo fills an empty intro straight away */
             const intro=tracksRef.current[0]&&tracksRef.current[0].clips.find(c=>c.brand==="intro");
             if(imgs[0]&&intro&&!intro.url)putThumbnail(imgs[0]);}}/>
+        {BRAND_MUSIC.length>0&&<div style={{marginBottom:2}}>
+          <div style={{color:C.coral,fontSize:9,fontWeight:800,letterSpacing:1,textTransform:"uppercase",margin:"2px 0 4px"}}>AUSA Music</div>
+          {BRAND_MUSIC.map(m=>(
+            <div key={m.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({id:m.id,name:m.name,url:m.file,duration:m.dur,playerId:"editor",playerName:"AUSA Music",type:"audio"}));e.dataTransfer.effectAllowed="copy";}}
+              onDoubleClick={()=>addBrandSong(m)} title="Double-click to put it under the reel (from the intro to the outro), or drag it onto A1"
+              style={{display:"flex",alignItems:"center",gap:5,padding:"3px 4px",cursor:"grab",borderRadius:4,fontSize:10}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              <MusicIcon size={10} color={C.coral}/>
+              <span style={{color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{m.name}</span>
+              <span style={{color:C.overlay,fontSize:8}}>{fmtTime(m.dur)}</span>
+            </div>))}
+        </div>}
         <div style={{display:"flex",gap:4}}>
           <button onClick={()=>edVidRef.current?.click()} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:C.s0,border:`1px solid ${C.s1}`,borderRadius:6,padding:"6px 8px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600}}>
             <UploadIcon size={10}/> Video
@@ -4051,7 +4083,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
              and covered the editing toolbar below it. */
           width:"min(720px, 100cqw, calc(100cqh * 16 / 9))",aspectRatio:"16/9",flexShrink:0,background:"#000",borderRadius:4,overflow:"hidden",border:"1px solid #222",cursor:spotlightMode?"crosshair":(actProps&&actProps.scale>1?"grab":"default")}}>
         {/* Video pool container — one pre-loaded <video> per clip, managed via DOM */}
-        <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`translate(${(actProps.panX||0)*(vS-1)/2}%, ${(actProps.panY||0)*(vS-1)/2}%) scale(${vS})`:undefined,filter:introIn&&introIn.blur>0?`blur(${(introIn.blur*pvW).toFixed(1)}px)`:undefined}}/>
+        <div ref={videoContainerRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",transform:actProps?`translate(${(actProps.panX||0)*(vS-1)/2}%, ${(actProps.panY||0)*(vS-1)/2}%) scale(${vS})`:undefined,filter:vBlur>0?`blur(${(vBlur*pvW).toFixed(1)}px)`:undefined}}/>
         {activeClip&&activeClip.kind==="image"&&(activeClip.url
           ?<img src={activeClip.url} alt="" style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",zIndex:3,pointerEvents:"none",transform:`translate(${iPx*(iS-1)/2}%, ${iPy*(iS-1)/2}%) scale(${iS})`,filter:introOut&&introOut.blur>0?`blur(${(introOut.blur*pvW).toFixed(1)}px)`:undefined}}/>
           :<div onClick={e=>{e.stopPropagation();pickIntroImage(activeClip.id);}}
@@ -4349,6 +4381,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     pushHist();setTracks(r.vt);setAudioTracks(r.at);
   },[pushHist]);
 
+  /* An AUSA song goes under the reel: from the end of the intro to the start of
+     the outro, which has its own sound. */
+  const addBrandSong=m=>{
+    const v1=(tracks[0]&&tracks[0].clips)||[];const intro=v1.find(c=>c.brand==="intro");const outro=v1.find(c=>c.brand==="outro");
+    const start=intro?intro.trackStart+(intro.clipEnd-intro.clipStart)+clipFreezeDur(intro,tagTrack.clips):0;
+    const stop=outro?outro.trackStart:contentEnd;
+    const a1=audioTracks[0];if(!a1)return;
+    addClip(a1.id,{id:m.id,name:m.name,url:m.file,duration:Math.max(1,Math.min(m.dur,stop-start)),playerId:"editor",playerName:"AUSA Music"},start,true);
+  };
+
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
     const dropped=e.dataTransfer.files&&e.dataTransfer.files[0];
     if(dropped&&dropped.type.startsWith("image/")){const intro=tracks[0].clips.find(c=>c.brand==="intro");if(intro)setIntroImage(intro.id,dropped);return;}
@@ -4624,6 +4666,32 @@ const introInFx=t=>{
   const mix=Math.pow(1-t/INTRO_FX.inDur,2);
   return{scale:1+INTRO_FX.inZoom*mix,blur:INTRO_FX.blur*mix,mix};
 };
+/* The way into the outro mirrors the way out of the intro: the last scene zooms
+   and blurs into the cut, the outro arrives blurred and settles, the clip's own
+   sound fades out under it and background music stops before the outro's sound.
+   d = seconds relative to the outro's start (negative before it). */
+const OUTRO_FX={outDur:0.7,outZoom:0.22,inDur:0.6,inZoom:0.14,blur:0.012};
+const outroFx=d=>{
+  if(d<0&&d>-OUTRO_FX.outDur){const mix=Math.pow(1+d/OUTRO_FX.outDur,2);return{scale:1+OUTRO_FX.outZoom*mix,blur:OUTRO_FX.blur*mix,mix,side:"out"};}
+  if(d>=0&&d<OUTRO_FX.inDur){const mix=Math.pow(1-d/OUTRO_FX.inDur,2);return{scale:1+OUTRO_FX.inZoom*mix,blur:OUTRO_FX.blur*mix,mix,side:"in"};}
+  return null;
+};
+/* Background music gets a longer, eased fade than the picture — 0.7s sounded
+   like a cut — and is silent under the outro, which has its own sound.
+   d = seconds relative to the outro's start. */
+const MUSIC_FADE=1.5;
+const musicFadeAt=d=>{if(d>=0)return 0;if(d<=-MUSIC_FADE)return 1;const u=-d/MUSIC_FADE;return u*u*(3-2*u);};
+/* gain factor for a clip's own sound across the outro join */
+const outroGain=f=>!f?1:f.side==="out"?1-f.mix:1-f.mix*f.mix;
+/* Export loudness standard. Every source is summed into one bus and run through
+   a compressor, whose automatic make-up gain brings quiet phone clips up and
+   holds loud ones down, so reels land consistently instead of blasting the
+   viewer. Tuned by measuring real exports (see PROJECT.md). */
+/* outGain 0.5 (−6 dB) measured: peaks from full-scale sources land near −9 dB. */
+const LOUDNESS={threshold:-24,knee:6,ratio:12,attack:0.003,release:0.25,outGain:0.5};
+/* AUSA music library: songs every editor can put under a reel. Files live in
+   brand/music/ beside the page; each is loudness-matched when it's added. */
+const BRAND_MUSIC=[];
 /* Social export shapes. LinkedIn's main feed shows 4:5 best; 9:16 fits Reels,
    TikTok, Shorts and LinkedIn's vertical feed. */
 const SOCIAL_FORMATS=[
