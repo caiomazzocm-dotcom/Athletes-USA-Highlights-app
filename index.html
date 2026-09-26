@@ -3788,7 +3788,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const list=((selProps&&selProps.kf)||{})[prop]||[];const on=list.some(k=>Math.abs(k.t-selSrcT)<=KF_EPS);const has=list.length>0;
     return<button onClick={()=>toggleKf(selClip.id,prop,selSrcT,value)} disabled={!selOnPlayhead}
       title={!selOnPlayhead?"Move the playhead onto this clip to add keyframes":on?"Remove this keyframe":has?"Add a keyframe here":"Animate: add the first keyframe here, then move the playhead and change the value"}
-      style={{background:"transparent",border:"none",cursor:selOnPlayhead?"pointer":"not-allowed",padding:"0 2px",fontSize:12,lineHeight:1,color:on?SPOT_COLOR:has?SPOT_COLOR+"99":C.overlay,opacity:selOnPlayhead?1:0.4}}>{on?"◆":"◇"}</button>;};
+      style={{display:"inline-flex",alignItems:"center",gap:4,whiteSpace:"nowrap",background:on?SPOT_COLOR+"33":"transparent",border:`1px solid ${has?SPOT_COLOR:C.s2}`,borderRadius:5,padding:"2px 7px",cursor:selOnPlayhead?"pointer":"not-allowed",fontSize:10,fontWeight:700,color:on?"#fff":has?SPOT_COLOR:C.sub,opacity:selOnPlayhead?1:0.45}}>
+      <span style={{fontSize:11,lineHeight:1}}>{on?"◆":"◇"}</span>Keyframe</button>;};
 
   const sidebar=(
   <div style={{width:260,minWidth:260,background:C.mantle,borderRight:`1px solid ${C.s0}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -4166,7 +4167,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     </div>
     {selClip&&(
       <div style={{borderTop:`1px solid ${C.s0}`,background:C.mantle}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"5px 12px",fontSize:11}}>
+        <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:10,rowGap:6,padding:"5px 12px",fontSize:11}}>
           <span style={{color:C.sub,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:160}}>{selClip.playerName} — {selClip.name}</span>
           <div style={{width:1,height:14,background:C.s0}}/>
           {!selIsTag?(
@@ -4203,9 +4204,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               {socialOpen&&!selClip.isAudio&&(()=>{const fr=socialFrame(selClip,clipProps,tagTrack.clips,selSrcT);
                 const setF=patch=>setClipProps(p=>({...p,[selClip.id]:{...(p[selClip.id]||{volume:100,scale:1,panX:0,panY:0}),...patch}}));
                 const pill=on=>({background:on?SPOT_COLOR+"33":"transparent",border:`1px solid ${on?SPOT_COLOR:C.s1}`,borderRadius:5,padding:"2px 8px",color:on?"#fff":C.sub,cursor:"pointer",fontSize:10,fontWeight:700});
-                return<>
+                /* one group, so the frame controls and their Keyframe button wrap together */
+                return<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"nowrap"}}>
                   <div style={{width:1,height:14,background:C.s0}}/>
-                  <span style={{color:SPOT_COLOR,fontSize:10,fontWeight:700}}>Social frame</span>
+                  <span style={{color:SPOT_COLOR,fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>Social frame</span>
                   <button onClick={()=>setF({socialFit:"crop"})} style={pill(fr.fit==="crop")}>Crop</button>
                   <button onClick={()=>setF({socialFit:"full"})} style={pill(fr.fit==="full")}>Full picture</button>
                   {fr.fit==="crop"&&<>
@@ -4215,7 +4217,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                     {kfBtn("socialX",fr.cx)}
                     <button onClick={()=>clearKf(selClip.id,["socialX"],{socialX:undefined})} title="Follow the tagged player again (removes this clip's frame keyframes)" style={pill(false)}>Auto</button>
                   </>}
-                </>;})()}
+                </div>;})()}
             </>
           ):(<>
             <EyeIcon size={12} color={SPOT_COLOR}/>
