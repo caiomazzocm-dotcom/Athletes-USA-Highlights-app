@@ -3632,6 +3632,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* ⌘C / ⌘V / ⌘D — a copied clip brings its settings, keyframes and its
      freezes/tags. Paste lands at the playhead; duplicate right after the
      original. The intro and outro stay unique. */
+  const[sceneJob,setSceneJob]=useState(null);const sceneCancelRef=useRef(false);
+  const[notice,setNotice]=useState(null);
+  useEffect(()=>{if(!notice)return;const t=setTimeout(()=>setNotice(null),4500);return()=>clearTimeout(t);},[notice]);
   const clipHit=id=>{for(const t of tracks)for(const c of t.clips)if(c.id===id)return{t,c,isAudio:false};for(const t of audioTracks)for(const c of t.clips)if(c.id===id)return{t,c,isAudio:true};return null;};
   const copyClip=useCallback(()=>{const h=clipHit(selectedClipId);if(!h||h.c.brand)return false;
     const tags=tagTrack.clips.filter(tg=>tg.clipId===h.c.id);
@@ -3649,6 +3652,38 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     else{const n=tracks.map(t=>t.id!==tId?t:{...t,clips:[...t.clips,nc].sort((a,b)=>a.trackStart-b.trackStart)});setTracks(n);recalcAll(n,nextTags,audioTracks);if(tId===tracks[0].id)compactV1(nextTags);}
     setSelectedClipId(nid);
   },[tracks,audioTracks,tagTrack,pushHist,recalcAll,compactV1]);
+  /* Split scenes: analyse the selected clip, then cut it at every scene change.
+     The edit may have changed during the analysis, so the clip is looked up again
+     from the latest state, and the undo point is taken from that state too. */
+  const splitScenes=async()=>{
+    const h=clipHit(selectedClipId);
+    if(!h||h.isAudio||h.c.brand||h.c.kind==="image"||!h.c.url)return;
+    const c=h.c;sceneCancelRef.current=false;setSceneJob({name:c.name,progress:0});
+    let cuts;
+    try{cuts=await detectSceneCuts(c.url,c.clipStart,c.clipEnd,p=>setSceneJob(j=>j&&{...j,progress:p}),()=>sceneCancelRef.current);}
+    catch(err){setSceneJob(null);setNotice("Split scenes stopped: "+err.message);return;}
+    setSceneJob(null);
+    if(sceneCancelRef.current)return;
+    const tr=tracksRef.current.find(t=>t.clips.some(x=>x.id===c.id));
+    if(!tr){setNotice("The clip was removed before the analysis finished.");return;}
+    const cur=tr.clips.find(x=>x.id===c.id);
+    const inside=cuts.filter(t=>t>cur.clipStart+0.05&&t<cur.clipEnd-0.05);
+    if(!inside.length){setNotice("No scene changes found in this clip.");return;}
+    const clone=o=>JSON.parse(JSON.stringify(o));
+    setHistory(hh=>[...hh.slice(-40),{v:clone(tracksRef.current),t:clone(tagTrackRef.current),a:clone(audioTracksRef.current)}]);setFuture([]);
+    const tags=tagTrackRef.current.clips;
+    const fzBefore=t=>tags.filter(tg=>tg.clipId===cur.id&&tg.duration>0&&tg.sourceTime>=cur.clipStart&&tg.sourceTime<t).reduce((a,tg)=>a+tg.duration,0);
+    const bounds=[cur.clipStart,...inside,cur.clipEnd];
+    const pieces=bounds.slice(0,-1).map((st,i)=>({...cur,id:uid("clip"),clipStart:st,clipEnd:bounds[i+1],trackStart:cur.trackStart+(st-cur.clipStart)+fzBefore(st)}));
+    const pieceFor=st=>pieces.find(pc=>st>=pc.clipStart&&st<pc.clipEnd)||pieces[pieces.length-1];
+    const nextTags={...tagTrackRef.current,clips:tags.map(tg=>tg.clipId===cur.id?{...tg,clipId:pieceFor(tg.sourceTime).id}:tg)};
+    setClipProps(p=>{const n={...p};if(p[cur.id])pieces.forEach(pc=>{n[pc.id]=clone(p[cur.id]);});return n;});
+    const n=tracksRef.current.map(t=>t.id!==tr.id?t:{...t,clips:t.clips.filter(x=>x.id!==cur.id).concat(pieces).sort((a,b)=>a.trackStart-b.trackStart)});
+    setTagTrack(nextTags);setTracks(n);recalcAll(n,nextTags,audioTracksRef.current);
+    if(tr.id===n[0].id)compactV1(nextTags);
+    setSelectedClipId(null);
+    setNotice(`Split into ${pieces.length} scenes — ⌘Z to undo.`);
+  };
   const duplicateClip=useCallback(()=>{const h=clipHit(selectedClipId);if(!h||h.c.brand||!copyClip())return;
     const span=(h.c.clipEnd-h.c.clipStart)+(h.isAudio?0:clipFreezeDur(h.c,tagTrack.clips));
     /* on the magnetic main track "just after its start" sorts it straight after the original */
@@ -4308,6 +4343,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           <div style={{width:1,height:14,background:C.s0}}/>
           {!selIsTag?(
             <>
+              {!selClip.isAudio&&!selClip.brand&&selClip.kind!=="image"&&<button onClick={()=>splitScenes()} disabled={!!sceneJob}
+                title="Find every scene change in this clip and cut it there (like CapCut's Split scenes)"
+                style={{display:"inline-flex",alignItems:"center",gap:4,background:SPOT_COLOR+"22",border:`1px solid ${SPOT_COLOR}`,borderRadius:5,padding:"3px 10px",color:"#fff",cursor:sceneJob?"wait":"pointer",fontSize:10,fontWeight:700,marginRight:6,whiteSpace:"nowrap"}}>
+                <ScissorsIcon size={11}/> Split scenes</button>}
               {selClip.kind==="image"&&<button onClick={()=>pickIntroImage(selClip.id)} style={{background:C.coral+"22",border:`1px solid ${C.coral}88`,borderRadius:5,padding:"3px 10px",color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,marginRight:6}}>{selClip.url?"Change thumbnail":"Choose thumbnail"}</button>}
               <Volume2Icon size={12} color={C.sub}/>
               <input type="range" min={0} max={100} step={1} value={selProps.volume} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,volume:+e.target.value}}))} style={{width:70,accentColor:C.blue}}/>
@@ -4731,6 +4770,18 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <div style={{color:C.overlay,fontSize:10,marginTop:8,lineHeight:1.5}}>{exportFmt||"Preparing…"}<br/>You can keep editing. Keep this tab open — switching to another tab pauses the export until you come back.</div>
       <button onClick={()=>{exportCancelRef.current=true;}} style={{marginTop:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 12px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:700}}>Cancel export</button>
     </div>}
+    {sceneJob&&<div style={{position:"fixed",right:16,bottom:exporting?190:16,width:310,zIndex:1000,background:C.mantle,border:`1px solid ${SPOT_COLOR}66`,borderRadius:12,padding:"12px 14px",boxShadow:"0 12px 40px rgba(0,0,0,0.55)"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <ScissorsIcon size={13} color={SPOT_COLOR}/>
+        <span style={{color:"#fff",fontSize:12,fontWeight:800}}>Finding scenes</span>
+        <span style={{marginLeft:"auto",color:C.sub,fontSize:11,fontWeight:700}}>{Math.round(sceneJob.progress*100)}%</span>
+      </div>
+      <div style={{background:C.s0,borderRadius:6,height:6,overflow:"hidden"}}><div style={{height:"100%",width:`${Math.round(sceneJob.progress*100)}%`,background:SPOT_COLOR,transition:"width .3s"}}/></div>
+      <div style={{color:C.overlay,fontSize:10,marginTop:8,lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sceneJob.name}</div>
+      <div style={{color:C.overlay,fontSize:10,lineHeight:1.5}}>Takes about a quarter of the clip's length. Keep this tab open.</div>
+      <button onClick={()=>{sceneCancelRef.current=true;}} style={{marginTop:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 12px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:700}}>Cancel</button>
+    </div>}
+    {notice&&<div style={{position:"fixed",left:"50%",bottom:24,transform:"translateX(-50%)",zIndex:1200,background:C.mantle,border:`1px solid ${SPOT_COLOR}88`,borderRadius:10,padding:"10px 16px",color:"#fff",fontSize:12,fontWeight:700,boxShadow:"0 10px 30px rgba(0,0,0,0.5)"}}>{notice}</div>}
     {/* hover preview for folder clips */}
     <div style={{position:"fixed",left:skim?skim.left+10:-9999,top:skim?Math.max(8,Math.min(window.innerHeight-190,skim.top-50)):-9999,width:280,zIndex:1100,background:"#000",border:`1px solid ${C.s1}`,borderRadius:8,overflow:"hidden",pointerEvents:"none",boxShadow:"0 12px 32px rgba(0,0,0,.55)",visibility:skim?"visible":"hidden"}}>
       <video ref={skimVidRef} muted playsInline preload="auto" style={{width:"100%",aspectRatio:"16/9",display:"block",objectFit:"contain",background:"#000"}}
@@ -4806,6 +4857,73 @@ const LOUDNESS={threshold:-24,knee:6,ratio:12,attack:0.003,release:0.25,outGain:
 /* AUSA music library: songs every editor can put under a reel. Files live in
    brand/music/ beside the page; each is loudness-matched when it's added. */
 const BRAND_MUSIC=[];
+/* ── Split scenes ──
+   Finds the hard cuts in a clip's footage. A cut is a one-frame jump: the picture
+   stops resembling the previous frame while the frames around it change little.
+   "Resembling" is the normalised correlation of a 64×36 grey thumbnail, so the
+   spotlight in a finished reel (same shot, dimmed) is not a cut, only a change
+   of picture is. Tuned on a real AUSA reel: real cuts jumped 0.32–0.67 and
+   22–167× their neighbours; spotlights and camera pans stayed ≤ 0.15 and ≤ 7×.
+   Gradual transitions (dissolves) are not detected. */
+const SCENE={w:64,h:36,box:4,rate:4,candidate:0.18,cut:0.22,spike:8,step:0.04,minScene:0.4};
+/* g is a (w·box)×(h·box) canvas. Shrinking 720p straight to 64×36 with drawImage
+   aliases, so ordinary camera motion scored like a cut; averaging 4×4 blocks
+   matches what the thresholds were tuned on. */
+const sceneThumb=(g,v)=>{const B=SCENE.box,W=SCENE.w*B,H=SCENE.h*B;g.drawImage(v,0,0,W,H);const d=g.getImageData(0,0,W,H).data;const n=SCENE.w*SCENE.h;const y=new Float32Array(n);
+  for(let r=0;r<H;r++){const row=((r/B)|0)*SCENE.w;for(let c=0;c<W;c++){const i=(r*W+c)*4;y[row+((c/B)|0)]+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];}}
+  let m=0;for(let k=0;k<n;k++)m+=y[k];m/=n;let q=0;for(let k=0;k<n;k++){y[k]-=m;q+=y[k]*y[k];}return{y,norm:Math.sqrt(q)+1e-6};};
+const sceneChange=(a,b)=>{let x=0;for(let k=0;k<a.y.length;k++)x+=a.y[k]*b.y[k];return 1-x/(a.norm*b.norm);};
+async function detectSceneCuts(url,from,to,onProgress,cancelled){
+  const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";
+  if(/^https?:\/\//i.test(url))v.crossOrigin="anonymous";
+  /* attached (invisibly): a detached element may never present frames */
+  v.style.cssText="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;";
+  document.body.appendChild(v);
+  try{
+    v.src=url;
+    await new Promise((res,rej)=>{v.addEventListener("loadeddata",res,{once:true});v.addEventListener("error",()=>rej(new Error("the video could not be loaded")),{once:true});});
+    const cv=document.createElement("canvas");cv.width=SCENE.w*SCENE.box;cv.height=SCENE.h*SCENE.box;const g=cv.getContext("2d",{willReadFrequently:true});
+    const seek=t=>new Promise(res=>{const fin=()=>{v.removeEventListener("seeked",fin);clearTimeout(tm);res();};const tm=setTimeout(fin,4000);v.addEventListener("seeked",fin);v.currentTime=Math.max(0,t);});
+    /* 1 — play through at 4× and flag every big change between presented frames */
+    const cands=[];
+    if(v.requestVideoFrameCallback){
+      await seek(from);let prev=null;
+      await new Promise(res=>{let over=false;const finish=()=>{if(over)return;over=true;v.pause();res();};
+        const onFrame=(_n,meta)=>{if(over)return;if(cancelled())return finish();const t=meta.mediaTime;if(t>=to)return finish();
+          const f=sceneThumb(g,v);if(prev&&sceneChange(prev.f,f)>=SCENE.candidate)cands.push({t0:prev.t,t1:t});prev={t,f};
+          onProgress(Math.min(0.7,(t-from)/(to-from)*0.7));v.requestVideoFrameCallback(onFrame);};
+        v.requestVideoFrameCallback(onFrame);v.addEventListener("ended",finish,{once:true});
+        v.playbackRate=SCENE.rate;v.play().catch(finish);});
+    }else{
+      /* browsers without frame callbacks: sample by seeking */
+      let prev=null;
+      for(let t=from;t<to&&!cancelled();t+=SCENE.step*2){await seek(t);const f=sceneThumb(g,v);if(prev&&sceneChange(prev.f,f)>=SCENE.candidate)cands.push({t0:prev.t,t1:t});prev={t,f};onProgress(Math.min(0.7,(t-from)/(to-from)*0.7));}
+    }
+    /* 2 — for each flag, find the exact frame and keep it only if it is a true
+       one-frame jump against the steps around it */
+    const cuts=[];
+    for(let k=0;k<cands.length&&!cancelled();k++){
+      const c=cands[k];onProgress(0.7+0.3*k/Math.max(1,cands.length));
+      await seek(c.t0);const A=sceneThumb(g,v);await seek(c.t1);const B=sceneThumb(g,v);
+      let lo=c.t0,hi=c.t1;
+      while(hi-lo>0.003){const mid=(lo+hi)/2;await seek(mid);const M=sceneThumb(g,v);if(sceneChange(A,M)<sceneChange(B,M))lo=mid;else hi=mid;}
+      await seek(lo);const before=sceneThumb(g,v);await seek(hi);const after=sceneThumb(g,v);
+      const jump=sceneChange(before,after);
+      if(jump<SCENE.cut)continue;
+      const steps=[];let pf=null;
+      for(let i=4;i>=1;i--){const tt=hi-i*SCENE.step;if(tt<from)continue;await seek(tt);const f=sceneThumb(g,v);if(pf)steps.push(sceneChange(pf,f));pf=f;}
+      if(pf)steps.push(sceneChange(pf,before));
+      pf=after;for(let i=1;i<=3;i++){const tt=hi+i*SCENE.step;if(tt>to)break;await seek(tt);const f=sceneThumb(g,v);steps.push(sceneChange(pf,f));pf=f;}
+      steps.sort((a,b)=>a-b);const med=steps.length?steps[Math.floor(steps.length/2)]:0;
+      if(jump<SCENE.spike*Math.max(med,0.004))continue;
+      if(hi-from<SCENE.minScene||to-hi<SCENE.minScene)continue;
+      if(cuts.length&&hi-cuts[cuts.length-1]<SCENE.minScene)continue;
+      cuts.push(hi);
+    }
+    onProgress(1);
+    return cuts;
+  }finally{try{v.pause();v.removeAttribute("src");v.load();v.remove();}catch(e){}}
+}
 /* Social export shapes. LinkedIn's main feed shows 4:5 best; 9:16 fits Reels,
    TikTok, Shorts and LinkedIn's vertical feed. */
 const SOCIAL_FORMATS=[
