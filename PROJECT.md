@@ -153,6 +153,18 @@ Athletes-USA-Highlights-app/
 }
 ```
 
+### `sceneLibrary` (written by the Studio after each full export — see Features #43)
+```json
+{
+  "playerId": "pl-xxx | editor", "playerName": "...", "positions": ["LCB"], "roles": ["CB"],
+  "clipId": "clip-xxx", "sourceId": "vid-xxx", "sourceName": "...", "start": 52.429, "end": 62.939, "duration": 10.51,
+  "fromSplit": true, "label": "goal|assist|top|defense|weak|null", "goodFor": ["CB"], "notes": ["spoken note"],
+  "outcome": "kept|deleted", "order": 0, "keptCount": 5, "track": "V1|overlay|null",
+  "thumb": "data:image/jpeg;base64,... (160×90)", "savedAt": 1761930000000
+}
+```
+Doc id `{playerId}_{clipId}`. When Firestore rules are locked down, the Studio needs write access here.
+
 ---
 
 ## Color Palette (C object)
@@ -284,6 +296,16 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
     - **Thumbnails must be box-averaged** (draw at 256×144, average 4×4 blocks). Shrinking 720p straight to 64×36 with `drawImage` aliases: in-shot frame steps measured 0.29–0.35 instead of ~0.04, every cut was rejected as "motion". Box-averaged values match ffmpeg to ±0.005.
     - **Splitting** (`splitScenes`): one undo step; pieces keep the clip's props/keyframes; freezes and tags move to the piece that contains their source time, and later pieces are offset by those freezes; V1 re-compacts so the outro stays last. Progress card with Cancel; a toast reports "Split into N scenes — ⌘Z to undo."
     - Verified on the first 90s of a real 23.976fps recruiting reel (Luc Haller): the 7 hard cuts found by a numpy/ffmpeg ground truth (13.305, 22.773, 43.293, 52.427, 62.938, 68.527, 72.864) were all found on the exact frame, with 0 false cuts, in 27s. In the Studio: 8 pieces back to back with the outro last; deleting a scene closed the gap; ⌘Z ×2 restored the scene, then the whole clip; with a 1.5s freeze at source 14.83s the freeze moved to the 13.30–22.77 piece and later pieces shifted by 1.5s.
+    - **Hidden tab fix (Oct 31 2026):** a hidden tab (or a busy computer) stops presenting frames while the 4× playback runs on — 2 frames in 9.6s were delivered and the 43.29 cut was silently missed. Every stretch with a frame gap > 0.25s (`SCENE.gap`) is now re-checked by seeking every 0.08s, and the pass ends on `timeupdate` at the clip's end even with no frame callbacks. Re-verified fully hidden: all 7 cuts on the exact frame, 31s for 90s.
+43. Scene labels + scene library — learning step 1 (Oct 31 2026). Caio wants the app to learn which scenes are good from how he edits, and later pre-sort new videos.
+    - **Labels** (`SCENE_LABELS`, stored on the clip as `clip.scene = {label, roles[], notes[{text,at}]}`): ⚽ Goal (key 1), 🎯 Assist (2), ⭐ Top scene (3), 🛡 Defensive (4), 👎 Weak (5), 0 clears; pressing a label again removes it. Keys go to the selected clip, else the main-track clip under the playhead. The **scene row** under the clip bar has the same buttons, **Good for** positions (GK, CB, FB, DM, CM, AM, W, ST — `SCENE_ROLES`), the spoken notes (× removes one) and **Best first ↑**. Timeline clips show a coloured label badge and 🗣 when a scene has notes.
+    - **Front of the reel** (`reorderV1`): Goal/Assist/Top move the scene into the leading block right after the intro — goals, then assists, then top scenes, keeping the editor's order inside each group. **Best first** stable-sorts the whole reel (goal, assist, top, rest, weak last). All one undo step each.
+    - **Scene library** (`saveSceneLibrary`, runs after every full export — not social/range exports): writes one Firestore doc per scene to `sceneLibrary/{playerId}_{clipId}` (see Firestore Collections). Scenes deleted after Split scenes or after being labelled are recorded too (`outcome:"deleted"`) via the project's `sceneSeen` log, so the library learns what was thrown away as well as what was kept and where it ended up (`order`). A 160×90 JPEG still per scene (`sceneStills`), saved to IndexedDB (`sthumb:<clipId>`) at Split scenes or read at save time. Docs are overwritten on re-export, so they always reflect the final edit.
+    - Step 3 (later): use the library to pre-sort new videos (browser image model comparing new scenes to past top scenes per position). Step 4 needs a server (Claude vision for goal/assist suggestions) — see the roadmap.
+44. Voice (Oct 31 2026) — browser speech recognition (Chrome/Edge/Safari; in Chrome the audio goes to Google's speech service). Toolbar: **🎤 Voice**, **✎ Dictate**, language (EN / DE / PT, remembered). Or **hold ⌥ Option** (300ms, alone — Option+key stays a shortcut): in a text field it dictates, anywhere else it's a voice command. A red "Listening / Dictating" pill shows the live words; Done or releasing ⌥ finishes.
+    - **Commands** (`parseVoice`, English/German/Portuguese): labels ("goal", "Tor", "assist", "very good / sehr gut / muito bom" → Top, "bad / weak" → Weak, "tackle / defensive" → Defensive), positions ("center back / Innenverteidiger / zagueiro" → CB, etc.), "move to the start / end", "delete / remove", "split scenes", "cut here", "freeze", "undo", "redo", "sort best first", and "play" / "pause" only when said alone ("great play" is praise). Whatever describes the scene is also saved word for word as a note → scene library. Applies to the selected scene, else the one under the playhead (decided when you start talking).
+    - **Dictation** (`dictate`, `cleanDictation`): Wispr-style typing into the text field that had focus (caption, feedback, notes) with `execCommand("insertText")` so React state and ⌘Z work; drops um/uh/äh, turns "comma / period / new line" (and DE/PT) into punctuation, capitalises sentences, keeps mid-sentence inserts lowercase. With no text field it copies to the clipboard. Only inside the app — system-wide dictation needs Wispr Flow or macOS dictation.
+    - Verified with a scripted recogniser in a test copy: "This is a very good scene for a center back" → Top · CB · moved to front · note; "bad scene, delete it" → Weak + deleted (kept in the library as deleted+weak); "remove this one" with only the playhead on a scene deleted it; ⌥ hold with ⌥+A pressed did not start; dictation produced "The first touch is really good, but he loses the ball after. Trim the end." in the feedback box and it was saved. Library save (Firestore stubbed) wrote 5 kept + 2 deleted docs with labels, positions, notes, order and 3–7 KB stills.
 
 ---
 

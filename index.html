@@ -2489,6 +2489,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const edVidsRef=useRef(editorVideos);edVidsRef.current=editorVideos;
   const edMusRef=useRef(editorMusic);edMusRef.current=editorMusic;
   const edImgsRef=useRef(editorImages);edImgsRef.current=editorImages;
+  /* every scene this project has had, by clip id — so the scene library also learns
+     from the scenes that were deleted, not only the ones that stayed */
+  const[sceneSeen,setSceneSeen]=useState({});const sceneSeenRef=useRef(sceneSeen);sceneSeenRef.current=sceneSeen;
 
   const writeProject=useCallback((pid)=>{
     try{
@@ -2501,7 +2504,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         v:1,brand:2,savedAt:stamp,playerId:pid||null,
         tracks:slim(tracksRef.current),audioTracks:slim(audioTracksRef.current),
         tagTrack:tagTrackRef.current,clipProps:clipPropsRef.current,
-        zoom:zoomRef.current,playhead:playheadRef.current}));
+        zoom:zoomRef.current,playhead:playheadRef.current,sceneSeen:sceneSeenRef.current}));
       return stamp;
     }catch(e){return null;/* quota or private mode — editing still works, just unsaved */}
   },[]);
@@ -2545,7 +2548,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setTracks(p=>p.map((t,i)=>({...t,clips:i===0?[bt.intro,bt.outro]:[]})));
     setAudioTracks(p=>p.map((t,i)=>({...t,clips:i===0?[bt.audio]:[]})));
     setTagTrack(p=>({...p,clips:[]}));
-    setClipProps({});setSelectedClipId(null);setPlayhead(0);setHistory([]);setFuture([]);
+    setClipProps({});setSceneSeen({});setSelectedClipId(null);setPlayhead(0);setHistory([]);setFuture([]);
     setProjectSavedAt(null);
   },[]);
 
@@ -2594,7 +2597,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setTracks(p=>vt.length?vt:p.map(t=>({...t,clips:[]})));
     setAudioTracks(p=>at.length?at:p.map(t=>({...t,clips:[]})));
     setTagTrack(saved.tagTrack&&saved.tagTrack.clips?saved.tagTrack:{id:uid("ttag"),name:"TAGS",clips:[]});
-    setClipProps(saved.clipProps||{});
+    setClipProps(saved.clipProps||{});setSceneSeen(saved.sceneSeen||{});
     if(typeof saved.zoom==="number")setZoom(saved.zoom);
     setPlayhead(typeof saved.playhead==="number"?saved.playhead:0);
     setSelectedClipId(null);setHistory([]);setFuture([]);
@@ -2688,7 +2691,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       if(stamp)setProjectSavedAt(stamp);
     },600);
     return()=>clearTimeout(id);
-  },[tracks,audioTracks,tagTrack,clipProps,zoom,saveArmed,writeProject]);
+  },[tracks,audioTracks,tagTrack,clipProps,sceneSeen,zoom,saveArmed,writeProject]);
 
   const safeLogout=()=>{if(exporting){if(!confirm("An export is still running. Leave the Studio and cancel it?"))return;exportCancelRef.current=true;}onLogout();};
   useEffect(()=>{if(!exporting)return;const h=e=>{e.preventDefault();e.returnValue="";};window.addEventListener("beforeunload",h);return()=>window.removeEventListener("beforeunload",h);},[exporting]);
@@ -3425,6 +3428,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           a.href=u;a.download=`${opts.fileName||("AthletesUSA_Highlight_"+new Date().toISOString().slice(0,10))}.${ext}`;
           document.body.appendChild(a);a.click();document.body.removeChild(a);
           setTimeout(()=>URL.revokeObjectURL(u),2000);
+          if(!opts.range&&afterExportRef.current)afterExportRef.current();
         }
         cleanup();setExporting(false);resolve();
       };
@@ -3674,7 +3678,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const tags=tagTrackRef.current.clips;
     const fzBefore=t=>tags.filter(tg=>tg.clipId===cur.id&&tg.duration>0&&tg.sourceTime>=cur.clipStart&&tg.sourceTime<t).reduce((a,tg)=>a+tg.duration,0);
     const bounds=[cur.clipStart,...inside,cur.clipEnd];
-    const pieces=bounds.slice(0,-1).map((st,i)=>({...cur,id:uid("clip"),clipStart:st,clipEnd:bounds[i+1],trackStart:cur.trackStart+(st-cur.clipStart)+fzBefore(st)}));
+    const pieces=bounds.slice(0,-1).map((st,i)=>({...cur,id:uid("clip"),scene:undefined,clipStart:st,clipEnd:bounds[i+1],trackStart:cur.trackStart+(st-cur.clipStart)+fzBefore(st)}));
     const pieceFor=st=>pieces.find(pc=>st>=pc.clipStart&&st<pc.clipEnd)||pieces[pieces.length-1];
     const nextTags={...tagTrackRef.current,clips:tags.map(tg=>tg.clipId===cur.id?{...tg,clipId:pieceFor(tg.sourceTime).id}:tg)};
     setClipProps(p=>{const n={...p};if(p[cur.id])pieces.forEach(pc=>{n[pc.id]=clone(p[cur.id]);});return n;});
@@ -3682,8 +3686,181 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setTagTrack(nextTags);setTracks(n);recalcAll(n,nextTags,audioTracksRef.current);
     if(tr.id===n[0].id)compactV1(nextTags);
     setSelectedClipId(null);
-    setNotice(`Split into ${pieces.length} scenes — ⌘Z to undo.`);
+    setSceneSeen(p=>{const n={...p};pieces.forEach(pc=>{n[pc.id]={videoId:pc.videoId||"",name:pc.name,start:pc.clipStart,end:pc.clipEnd,playerId:pc.playerId||"",split:true};});return n;});
+    setNotice(`Split into ${pieces.length} scenes — ⌘Z to undo. Label them with 1–5 or your voice.`);
+    /* each scene's still for the library, in the background */
+    sceneStills(cur.url,pieces.map(pc=>(pc.clipStart+pc.clipEnd)/2)).then(bs=>bs.forEach((b,i)=>{if(b)storeBlob("sthumb:"+pieces[i].id,b).catch(()=>{});}));
   };
+  /* ═══ SCENE LABELS ═══ (see SCENE_LABELS) */
+  const selectedClipIdRef=useRef(selectedClipId);selectedClipIdRef.current=selectedClipId;
+  const isPlayingRef=useRef(isPlaying);isPlayingRef.current=isPlaying;
+  const snapHist=()=>{const clone=o=>JSON.parse(JSON.stringify(o));
+    setHistory(hh=>[...hh.slice(-40),{v:clone(tracksRef.current),t:clone(tagTrackRef.current),a:clone(audioTracksRef.current)}]);setFuture([]);};
+  const isScene=c=>!!c&&!c.brand&&!c.isAudio;
+  /* who a label, key or voice note is for: the selected clip, otherwise the
+     main-track clip under the playhead */
+  const sceneTargetId=()=>{
+    const sel=tracksRef.current.flatMap(t=>t.clips).find(c=>c.id===selectedClipIdRef.current);if(isScene(sel))return sel.id;
+    const ph=playheadRef.current,tg=tagTrackRef.current.clips;
+    const hit=((tracksRef.current[0]&&tracksRef.current[0].clips)||[]).find(c=>{if(!isScene(c))return false;
+      const fz=tg.filter(t=>t.clipId===c.id&&t.sourceTime>=c.clipStart&&t.sourceTime<c.clipEnd).reduce((a,t)=>a+t.duration,0);
+      return ph>=c.trackStart&&ph<c.trackStart+(c.clipEnd-c.clipStart)+fz;});
+    return hit?hit.id:null;
+  };
+  /* ed: {label (null clears), toggleRole, roles, note, dropNote, move:"front"|"end"} — one undo step.
+     A goal/assist/top label moves the scene to the front. Returns where it moved. */
+  const applySceneEdit=(id,ed)=>{
+    const trks=tracksRef.current;const ti=trks.findIndex(t=>t.clips.some(c=>c.id===id));if(ti<0)return null;
+    snapHist();
+    let move=ed.move||null,src=null,sc=null;
+    let clips=trks[ti].clips.map(c=>{if(c.id!==id)return c;src=c;
+      sc={label:null,roles:[],notes:[],...(c.scene||{})};
+      if(ed.label!==undefined){sc.label=ed.label;if(!move&&ed.label&&sceneLabel(ed.label).rank!=null)move="front";}
+      if(ed.toggleRole)sc.roles=sc.roles.includes(ed.toggleRole)?sc.roles.filter(r=>r!==ed.toggleRole):[...sc.roles,ed.toggleRole];
+      (ed.roles||[]).forEach(r=>{if(!sc.roles.includes(r))sc.roles=[...sc.roles,r];});
+      if(ed.note)sc.notes=[...sc.notes,{text:ed.note,at:Date.now()}];
+      if(ed.dropNote!=null)sc.notes=sc.notes.filter((_,i)=>i!==ed.dropNote);
+      return{...c,scene:sc};});
+    if(ti===0&&move)clips=reorderV1(clips,id,move,tagTrackRef.current.clips);else move=null;
+    const n=trks.map((t,i)=>i===ti?{...t,clips}:t);
+    setTracks(n);recalcAll(n,tagTrackRef.current,audioTracksRef.current);
+    /* remembered even if the scene is deleted later — that is a lesson too */
+    setSceneSeen(p=>({...p,[id]:{...(p[id]||{videoId:src.videoId||"",name:src.name,start:src.clipStart,end:src.clipEnd,playerId:src.playerId||"",split:false}),scene:sc}}));
+    return move;
+  };
+  const labelScene=(id,label)=>{
+    const c=tracksRef.current.flatMap(t=>t.clips).find(x=>x.id===id);if(!c)return;
+    const off=!label||(c.scene&&c.scene.label===label);
+    const moved=applySceneEdit(id,{label:off?null:label});
+    const l=sceneLabel(label);
+    setNotice(off?"Label removed.":`${l.icon} ${l.name}${moved==="front"?" — moved to the front":""}`);
+  };
+  const sortBestFirst=()=>{const trks=tracksRef.current;if(!trks[0])return;snapHist();
+    const clips=reorderV1(trks[0].clips,null,"best",tagTrackRef.current.clips);
+    const n=trks.map((t,i)=>i===0?{...t,clips}:t);setTracks(n);recalcAll(n,tagTrackRef.current,audioTracksRef.current);
+    setNotice("Sorted: goals, assists and top scenes first, weak scenes last. ⌘Z to undo.");};
+
+  /* ═══ SCENE LIBRARY — runs after every full export ═══ */
+  const saveSceneLibrary=async()=>{
+    const pid=loadedProjectRef.current||null;const pl=playersRef.current.find(p=>p.id===pid);
+    const trks=tracksRef.current;
+    const v1=((trks[0]&&trks[0].clips)||[]).filter(c=>isScene(c)&&c.kind!=="image").sort((a,b)=>a.trackStart-b.trackStart);
+    const upper=trks.slice(1).flatMap(t=>t.clips).filter(c=>isScene(c)&&c.kind!=="image");
+    const live=[...v1,...upper];
+    const liveIds=new Set(trks.flatMap(t=>t.clips.map(c=>c.id)));
+    const seen={...sceneSeenRef.current};
+    live.forEach(c=>{seen[c.id]={...(seen[c.id]||{}),videoId:c.videoId||"",name:c.name,start:c.clipStart,end:c.clipEnd,playerId:c.playerId||"",split:!!(seen[c.id]&&seen[c.id].split),scene:c.scene||null};});
+    setSceneSeen(seen);
+    const gone=Object.entries(seen).filter(([id])=>!liveIds.has(id));
+    if(!live.length&&!gone.length)return null;
+    /* stills: the one saved by Split scenes, otherwise read now from the clip */
+    const thumbs={};
+    for(const id of [...live.map(c=>c.id),...gone.map(g=>g[0])]){try{const b=await getBlob("sthumb:"+id);if(b)thumbs[id]=b;}catch(e){}}
+    const byUrl={};live.filter(c=>!thumbs[c.id]&&c.url).forEach(c=>{(byUrl[c.url]=byUrl[c.url]||[]).push(c);});
+    for(const[u,cs]of Object.entries(byUrl)){const bs=await sceneStills(u,cs.map(c=>(c.clipStart+c.clipEnd)/2));
+      bs.forEach((b,i)=>{if(b){thumbs[cs[i].id]=b;storeBlob("sthumb:"+cs[i].id,b).catch(()=>{});}});}
+    const positions=(pl&&pl.positions)||[];
+    const base={playerId:pid||"editor",playerName:pl?pl.name:"",positions,roles:[...new Set(positions.map(roleOfPosition).filter(Boolean))],keptCount:v1.length,savedAt:Date.now()};
+    const row=async(id,m,outcome,order,track)=>{const sc=m.scene||{};return[`${base.playerId}_${id}`,{...base,clipId:id,
+      sourceId:m.videoId||"",sourceName:m.name||"",start:+(+m.start).toFixed(3),end:+(+m.end).toFixed(3),duration:+(m.end-m.start).toFixed(3),fromSplit:!!m.split,
+      label:sc.label||null,goodFor:sc.roles||[],notes:(sc.notes||[]).map(n=>n.text),outcome,order,track,thumb:await blobToDataUrl(thumbs[id])}];};
+    const rows=[];
+    for(let i=0;i<v1.length;i++)rows.push(await row(v1[i].id,seen[v1[i].id],"kept",i,"V1"));
+    for(const c of upper)rows.push(await row(c.id,seen[c.id],"kept",null,"overlay"));
+    for(const[id,m]of gone)rows.push(await row(id,m,"deleted",null,null));
+    for(let i=0;i<rows.length;i+=200){const b=fbDb.batch();rows.slice(i,i+200).forEach(([id,data])=>b.set(fbDb.collection("sceneLibrary").doc(id),data));await b.commit();}
+    return{kept:live.length,deleted:gone.length};
+  };
+  const afterExportRef=useRef(null);
+  afterExportRef.current=()=>{saveSceneLibrary()
+    .then(r=>{if(r)setNotice(`Scene library: ${r.kept} kept and ${r.deleted} deleted scene${r.deleted===1?"":"s"} saved — the app learns from these.`);})
+    .catch(e=>setNotice("The video exported fine, but the scene library could not save ("+(e.code||e.message)+")."));};
+
+  /* ═══ VOICE ═══ (see parseVoice / cleanDictation) */
+  const[voice,setVoice]=useState(null);/* {mode:"command"|"dictate",text,interim} while listening */
+  const[voiceLang,setVoiceLang]=useState(()=>{try{return localStorage.getItem("aua_voice_lang")||"en-US";}catch(e){return"en-US";}});
+  const voiceLangRef=useRef(voiceLang);voiceLangRef.current=voiceLang;
+  useEffect(()=>{try{localStorage.setItem("aua_voice_lang",voiceLang);}catch(e){}},[voiceLang]);
+  const recRef=useRef(null);const voiceApiRef=useRef({});
+  const startVoice=mode=>{
+    if(recRef.current)return;
+    if(!SpeechRec){setNotice("Voice needs Chrome, Edge or Safari.");return;}
+    /* decided when you start talking — the playhead may move while you speak */
+    const target=mode==="dictate"?(isTextField(document.activeElement)?document.activeElement:null):sceneTargetId();
+    const rec=new SpeechRec();rec.lang=voiceLangRef.current;rec.continuous=true;rec.interimResults=true;
+    let fin="",interim="";
+    rec.onresult=e=>{interim="";for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];if(r.isFinal)fin+=r[0].transcript+" ";else interim+=r[0].transcript;}
+      setVoice(v=>v&&{...v,text:fin,interim});};
+    rec.onerror=e=>{
+      if(e.error==="not-allowed"||e.error==="service-not-allowed")setNotice("The microphone is blocked — click the 🔒 next to the web address, allow Microphone, and try again.");
+      else if(e.error==="network")setNotice("Voice needs an internet connection.");
+      else if(e.error!=="no-speech"&&e.error!=="aborted")setNotice("Voice stopped: "+e.error);};
+    rec.onend=()=>{recRef.current=null;setVoice(null);
+      const said=(fin+" "+interim).replace(/\s+/g," ").trim();if(!said)return;
+      if(mode==="dictate")voiceApiRef.current.dictate(said,target);else voiceApiRef.current.command(said,target);};
+    recRef.current=rec;setVoice({mode,text:"",interim:""});
+    try{rec.start();}catch(e){recRef.current=null;setVoice(null);}
+  };
+  const stopVoice=()=>{const r=recRef.current;if(r)try{r.stop();}catch(e){}};
+  /* Wispr-style: types into the field that had focus when you started */
+  const dictate=(said,el)=>{
+    if(el&&document.contains(el)){
+      el.focus();
+      if(el.isContentEditable){document.execCommand("insertText",false,cleanDictation(said,true));return;}
+      const v=el.value||"",a=el.selectionStart??v.length,b=el.selectionEnd??a,before=v.slice(0,a);
+      const text=cleanDictation(said,!before.trim()||/[.!?\n]\s*$/.test(before));if(!text)return;
+      const ins=(before&&!/[\s(\n]$/.test(before)?" ":"")+text;
+      /* insertText keeps undo and fires the input event React listens to */
+      if(!document.execCommand("insertText",false,ins)){
+        const proto=el.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto,"value").set.call(el,before+ins+v.slice(b));
+        el.dispatchEvent(new Event("input",{bubbles:true}));}
+      return;}
+    const text=cleanDictation(said,true);if(!text)return;
+    (navigator.clipboard?navigator.clipboard.writeText(text):Promise.reject())
+      .then(()=>setNotice(`Copied — paste it anywhere: “${text}”`),()=>setNotice(`You said: “${text}”`));
+  };
+  const voiceCommand=(said,targetId)=>{
+    const p=parseVoice(said),api=voiceApiRef.current,did=[];const has=a=>p.actions.includes(a);
+    const tgt=targetId&&tracksRef.current.some(t=>t.clips.some(c=>c.id===targetId))?targetId:null;
+    const feedback=!!(p.label||p.roles.length||!p.actions.length);
+    if((feedback||has("delete")||has("splitScenes")||has("front")||has("end"))&&!tgt){
+      setNotice(`Select a scene (or put the playhead on one), then talk. Heard: “${said}”`);return;}
+    if(has("play")&&!isPlayingRef.current){api.togglePlay();did.push("playing");}
+    if(has("pause")&&isPlayingRef.current){api.togglePlay();did.push("paused");}
+    if(has("undo")){api.undo();did.push("undone");}
+    if(has("redo")){api.redo();did.push("redone");}
+    if(has("cutHere")){api.cutAtPlayhead();did.push("cut at the playhead");}
+    if(has("freeze")){api.freezeAndTag();did.push("freeze added");}
+    if(tgt&&(feedback||has("front")||has("end"))){
+      const ed={};if(p.label)ed.label=p.label;if(p.roles.length)ed.roles=p.roles;if(feedback)ed.note=said;
+      if(has("front"))ed.move="front";else if(has("end"))ed.move="end";
+      const moved=applySceneEdit(tgt,ed);
+      if(p.label){const l=sceneLabel(p.label);did.push(l.icon+" "+l.name);}
+      if(p.roles.length)did.push("good for "+p.roles.join(", "));
+      if(moved)did.push(moved==="front"?"moved to the front":"moved to the end");
+      if(feedback)did.push("note saved");}
+    if(has("best")){api.sortBestFirst();did.push("sorted best first");}
+    /* these act on the selection, so select first and run after the re-render */
+    const later=fn=>{setSelectedClipId(tgt);setTimeout(()=>voiceApiRef.current[fn](),80);};
+    if(has("delete")){later("delClip");did.push("scene deleted");}
+    else if(has("splitScenes")){later("splitScenes");did.push("finding scenes…");}
+    setNotice(did.length?`🎤 “${said}” → ${did.join(" · ")}`:`🎤 Heard “${said}” — nothing to do with that.`);
+  };
+  /* hold ⌥ Option: dictation in a text field, a voice command anywhere else */
+  useEffect(()=>{let timer=null,held=false,mouse=false;
+    const md=()=>{mouse=true;},mu=()=>{mouse=false;};
+    const cancel=()=>{if(timer){clearTimeout(timer);timer=null;}};
+    const down=e=>{
+      if(e.key==="Alt"){if(e.repeat||mouse||held)return;cancel();
+        timer=setTimeout(()=>{timer=null;held=true;voiceApiRef.current.start(isTextField(document.activeElement)?"dictate":"command");},300);return;}
+      cancel();/* Option + a key is a shortcut or a special character, not a hold */};
+    const up=e=>{if(e.key!=="Alt")return;cancel();if(held){held=false;e.preventDefault();voiceApiRef.current.stop();}};
+    const blur=()=>{cancel();if(held){held=false;voiceApiRef.current.stop();}};
+    const evs=[["keydown",down],["keyup",up],["pointerdown",md],["pointerup",mu],["dragstart",md],["dragend",mu],["drop",mu]];
+    evs.forEach(([n,f])=>window.addEventListener(n,f,true));window.addEventListener("blur",blur);
+    return()=>{cancel();evs.forEach(([n,f])=>window.removeEventListener(n,f,true));window.removeEventListener("blur",blur);try{recRef.current&&recRef.current.abort();}catch(e){}};},[]);
+
   const duplicateClip=useCallback(()=>{const h=clipHit(selectedClipId);if(!h||h.c.brand||!copyClip())return;
     const span=(h.c.clipEnd-h.c.clipStart)+(h.isAudio?0:clipFreezeDur(h.c,tagTrack.clips));
     /* on the magnetic main track "just after its start" sorts it straight after the original */
@@ -3838,6 +4015,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     else if(!fwdA){a.pause();if(Math.abs(a.currentTime-at)>.1)a.currentTime=Math.max(0,at);}
     else{if(a.playbackRate!==playRate)a.playbackRate=playRate;if(a.paused)a.play().catch(()=>{});if(playRate!==1&&Math.abs(a.currentTime-at)>0.3)a.currentTime=Math.max(0,at);}}},[playhead,isPlaying,playRate,findActiveAudio,findActiveTag,freezeOffset,clipProps]);
 
+  voiceApiRef.current={start:startVoice,stop:stopVoice,dictate,command:voiceCommand,togglePlay,undo,redo,delClip,splitScenes,freezeAndTag,sortBestFirst,
+    labelKey:n=>{const id=sceneTargetId();if(!id)return false;labelScene(id,n?SCENE_LABELS[n-1].id:null);return true;},
+    cutAtPlayhead:()=>{const ph=playheadRef.current;for(const t of [...tracksRef.current,...audioTracksRef.current])for(const c of t.clips){const d=c.clipEnd-c.clipStart;if(ph>c.trackStart&&ph<c.trackStart+d){cutClip(t.id,c.id);return;}}}};
   /* shortcuts stay live while an export runs in the background */
   useEffect(()=>{const h=e=>{
     /* Only bail for real text entry. The old check skipped EVERY <input>, so after
@@ -3889,6 +4069,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       if(own){e.preventDefault();addTag(own.id,playhead);}
     }
     else if(e.key==="f"||e.key==="F"){e.preventDefault();freezeAndTag();}
+    /* 1 Goal · 2 Assist · 3 Top · 4 Defensive · 5 Weak · 0 clear — by key position */
+    else if(/^(Digit|Numpad)[0-5]$/.test(e.code)&&!e.altKey&&!e.shiftKey){if(voiceApiRef.current.labelKey(+e.code.slice(-1)))e.preventDefault();}
     else if(e.key==="Escape"){setSpotlightMode(null);setShowTagMenu(false);pendingFreezeRef.current=null;}};
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,contentEnd,tracks,resolvedTags,audioTracks,playhead,exporting,players,addTag,tagOwnerAt,freezeAndTag,redo,copyClip,pasteClip,duplicateClip,trimToPlayhead,shuttle,isPlaying]);
 
@@ -4326,6 +4508,18 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         onMouseEnter={e=>{e.currentTarget.style.background="#3b82f644";}} onMouseLeave={e=>{e.currentTarget.style.background="#3b82f622";}}>
         &#10074;&#10074; Freeze + Tag
       </button>
+      {/* voice: 🎤 talk to the editor · ✎ type with your voice (or hold ⌥ for either) */}
+      <div style={{display:"inline-flex",alignItems:"center",border:`1px solid ${voice?"#ef4444":C.s1}`,borderRadius:20,overflow:"hidden",flexShrink:0}}>
+        <button onMouseDown={e=>e.preventDefault()} onClick={()=>voice?stopVoice():startVoice("command")}
+          title={"Talk to the editor about the selected scene (or the one under the playhead):\n“goal” · “assist” · “very good scene for a center back” · “move to the start” · “delete” · “freeze” · “cut here” · “undo” · “sort best first”.\nEverything else is saved as a note on the scene. Click again to finish — or hold ⌥ Option while you talk."}
+          style={{background:voice&&voice.mode==="command"?"#ef444433":"transparent",border:"none",color:voice&&voice.mode==="command"?"#fca5a5":C.sub,cursor:"pointer",padding:"4px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>🎤 Voice</button>
+        <button onMouseDown={e=>e.preventDefault()} onClick={()=>voice?stopVoice():startVoice("dictate")}
+          title={"Type with your voice into the text box you are in (caption, feedback, notes). With no text box it goes to the clipboard.\nSay “comma”, “period”, “new line”. Click again to finish — or hold ⌥ Option while in a text box."}
+          style={{background:voice&&voice.mode==="dictate"?"#ef444433":"transparent",border:"none",borderLeft:`1px solid ${C.s1}`,color:voice&&voice.mode==="dictate"?"#fca5a5":C.sub,cursor:"pointer",padding:"4px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>✎ Dictate</button>
+        <select value={voiceLang} onChange={e=>setVoiceLang(e.target.value)} title="The language you speak"
+          style={{background:"transparent",border:"none",borderLeft:`1px solid ${C.s1}`,color:C.sub,fontSize:10,fontWeight:700,padding:"4px 6px",cursor:"pointer",outline:"none"}}>
+          {VOICE_LANGS.map(([v,l])=><option key={v} value={v} style={{background:C.mantle,color:C.text}}>{l}</option>)}</select>
+      </div>
       {(()=>{const v1=(tracks[0]&&tracks[0].clips)||[];const miss=!v1.some(c=>c.brand==="intro")||!v1.some(c=>c.brand==="outro");
         /* normally never shown — every project has both; this brings them back if deleted */
         return miss?<button onClick={()=>addBrandToProject()} title="Put the AUSA intro slot and outro back into this project"
@@ -4407,6 +4601,26 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             </button>
           </div>
         </div>
+        {!selIsTag&&isScene(selClip)&&selClip.kind!=="image"&&(()=>{const sc=selClip.scene||{};const roles=sc.roles||[];const notes=sc.notes||[];
+          return<div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:6,rowGap:6,padding:"5px 12px",borderTop:`1px solid ${C.s0}44`,fontSize:10}}>
+            <span style={{color:C.overlay,fontSize:9,fontWeight:800,letterSpacing:1}}>SCENE</span>
+            {SCENE_LABELS.map((l,i)=>{const on=sc.label===l.id;return<button key={l.id} onClick={()=>labelScene(selClip.id,l.id)} title={`${l.name} — key ${i+1}${l.rank!=null?". Moves the scene to the front of the reel.":""}`}
+              style={{display:"inline-flex",alignItems:"center",gap:4,background:on?l.color:"transparent",border:`1px solid ${on?l.color:C.s1}`,borderRadius:12,padding:"2px 9px",color:on?"#000":C.sub,cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
+              <span>{l.icon}</span>{l.name}<span style={{opacity:0.5,fontSize:8,marginLeft:1}}>{i+1}</span></button>;})}
+            <div style={{width:1,height:14,background:C.s0,margin:"0 4px"}}/>
+            <span style={{color:C.overlay,fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>Good for</span>
+            {SCENE_ROLES.map(([r,name])=>{const on=roles.includes(r);return<button key={r} onClick={()=>applySceneEdit(selClip.id,{toggleRole:r})} title={name}
+              style={{background:on?C.blue+"44":"transparent",border:`1px solid ${on?C.blue:C.s1}`,borderRadius:10,padding:"1px 7px",color:on?"#fff":C.overlay,cursor:"pointer",fontSize:9,fontWeight:700}}>{r}</button>;})}
+            {notes.length>0&&<><div style={{width:1,height:14,background:C.s0,margin:"0 4px"}}/>
+              {notes.map((n,i)=><span key={i} title={"Spoken note — saved to the scene library:\n“"+n.text+"”"} style={{display:"inline-flex",alignItems:"center",gap:4,background:C.s0,borderRadius:10,padding:"2px 2px 2px 8px",color:C.sub,fontSize:10,maxWidth:280}}>
+                <span>🗣</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.text}</span>
+                <button onClick={()=>applySceneEdit(selClip.id,{dropNote:i})} title="Remove this note" style={{background:"none",border:"none",color:C.overlay,cursor:"pointer",fontSize:12,lineHeight:1,padding:"0 4px"}}>×</button></span>)}</>}
+            <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+              <span style={{color:C.overlay,fontSize:9,whiteSpace:"nowrap"}}>🎤 hold ⌥ and talk</span>
+              <button onClick={sortBestFirst} title="Re-order the reel: goals, assists and top scenes first, weak scenes last (⌘Z undoes)"
+                style={{background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"2px 9px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>Best first ↑</button>
+            </div>
+          </div>;})()}
         {showFeedbackPanel&&(
           <div style={{padding:"8px 12px 10px",borderTop:`1px solid ${C.s0}44`,background:C.crust}}>
             <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}}>
@@ -4606,6 +4820,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                     display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1}}>
                   <div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
+                    {clip.scene&&clip.scene.label&&(()=>{const l=sceneLabel(clip.scene.label);return l&&<span title={l.name+((clip.scene.roles||[]).length?" · good for "+clip.scene.roles.join(", "):"")}
+                      style={{background:l.color,color:"#000",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",letterSpacing:0.3}}>{l.icon}{w>90?" "+l.name.toUpperCase():""}</span>;})()}
+                    {clip.scene&&(clip.scene.notes||[]).length>0&&<span title={clip.scene.notes.map(n=>"“"+n.text+"”").join("\n")} style={{fontSize:9,marginRight:3,flexShrink:0}}>🗣</span>}
                     <span style={{color:"#000",fontSize:10,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 0 4px rgba(255,255,255,0.3)"}}>{clip.name}</span>
                     {w>80&&<span style={{color:"#00000088",fontSize:8,marginLeft:"auto",flexShrink:0,fontFamily:"monospace"}}>{clip.playerName}</span>}
                   </div>
@@ -4781,7 +4998,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <div style={{color:C.overlay,fontSize:10,lineHeight:1.5}}>Takes about a quarter of the clip's length. Keep this tab open.</div>
       <button onClick={()=>{sceneCancelRef.current=true;}} style={{marginTop:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 12px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:700}}>Cancel</button>
     </div>}
-    {notice&&<div style={{position:"fixed",left:"50%",bottom:24,transform:"translateX(-50%)",zIndex:1200,background:C.mantle,border:`1px solid ${SPOT_COLOR}88`,borderRadius:10,padding:"10px 16px",color:"#fff",fontSize:12,fontWeight:700,boxShadow:"0 10px 30px rgba(0,0,0,0.5)"}}>{notice}</div>}
+    {notice&&<div style={{position:"fixed",left:"50%",bottom:24,transform:"translateX(-50%)",zIndex:1200,background:C.mantle,border:`1px solid ${SPOT_COLOR}88`,borderRadius:10,padding:"10px 16px",color:"#fff",fontSize:12,fontWeight:700,boxShadow:"0 10px 30px rgba(0,0,0,0.5)",maxWidth:"min(760px, calc(100vw - 32px))",textAlign:"center"}}>{notice}</div>}
+    {voice&&<div style={{position:"fixed",left:"50%",bottom:notice?78:24,transform:"translateX(-50%)",zIndex:1201,display:"flex",alignItems:"center",gap:10,background:"#18181bee",border:"1px solid #ef444499",borderRadius:24,padding:"9px 16px",color:"#fff",fontSize:12,boxShadow:"0 10px 30px rgba(0,0,0,0.5)",maxWidth:"min(760px, calc(100vw - 32px))"}}>
+      <span style={{width:10,height:10,borderRadius:"50%",background:"#ef4444",flexShrink:0,animation:"pulse 1s ease-in-out infinite"}}/>
+      <span style={{fontWeight:800,color:"#fca5a5",whiteSpace:"nowrap"}}>{voice.mode==="dictate"?"Dictating":"Listening"}</span>
+      <span style={{color:voice.text||voice.interim?"#fff":"#a1a1aa",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(voice.text+voice.interim).trim()||(voice.mode==="dictate"?"speak — it types into the text box":"say what this scene is…")}</span>
+      <button onMouseDown={e=>e.preventDefault()} onClick={stopVoice} style={{background:"#ef4444",border:"none",borderRadius:12,color:"#fff",fontSize:10,fontWeight:800,padding:"3px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>Done</button>
+    </div>}
     {/* hover preview for folder clips */}
     <div style={{position:"fixed",left:skim?skim.left+10:-9999,top:skim?Math.max(8,Math.min(window.innerHeight-190,skim.top-50)):-9999,width:280,zIndex:1100,background:"#000",border:`1px solid ${C.s1}`,borderRadius:8,overflow:"hidden",pointerEvents:"none",boxShadow:"0 12px 32px rgba(0,0,0,.55)",visibility:skim?"visible":"hidden"}}>
       <video ref={skimVidRef} muted playsInline preload="auto" style={{width:"100%",aspectRatio:"16/9",display:"block",objectFit:"contain",background:"#000"}}
@@ -4865,7 +5088,7 @@ const BRAND_MUSIC=[];
    of picture is. Tuned on a real AUSA reel: real cuts jumped 0.32–0.67 and
    22–167× their neighbours; spotlights and camera pans stayed ≤ 0.15 and ≤ 7×.
    Gradual transitions (dissolves) are not detected. */
-const SCENE={w:64,h:36,box:4,rate:4,candidate:0.18,cut:0.22,spike:8,step:0.04,minScene:0.4};
+const SCENE={w:64,h:36,box:4,rate:4,candidate:0.18,cut:0.22,spike:8,step:0.04,minScene:0.4,gap:0.25};
 /* g is a (w·box)×(h·box) canvas. Shrinking 720p straight to 64×36 with drawImage
    aliases, so ordinary camera motion scored like a cut; averaging 4×4 blocks
    matches what the thresholds were tuned on. */
@@ -4885,20 +5108,35 @@ async function detectSceneCuts(url,from,to,onProgress,cancelled){
     const cv=document.createElement("canvas");cv.width=SCENE.w*SCENE.box;cv.height=SCENE.h*SCENE.box;const g=cv.getContext("2d",{willReadFrequently:true});
     const seek=t=>new Promise(res=>{const fin=()=>{v.removeEventListener("seeked",fin);clearTimeout(tm);res();};const tm=setTimeout(fin,4000);v.addEventListener("seeked",fin);v.currentTime=Math.max(0,t);});
     /* 1 — play through at 4× and flag every big change between presented frames */
-    const cands=[];
+    const cands=[],gaps=[];
     if(v.requestVideoFrameCallback){
-      await seek(from);let prev=null;
+      await seek(from);let prev={t:from,f:sceneThumb(g,v)};
       await new Promise(res=>{let over=false;const finish=()=>{if(over)return;over=true;v.pause();res();};
         const onFrame=(_n,meta)=>{if(over)return;if(cancelled())return finish();const t=meta.mediaTime;if(t>=to)return finish();
-          const f=sceneThumb(g,v);if(prev&&sceneChange(prev.f,f)>=SCENE.candidate)cands.push({t0:prev.t,t1:t});prev={t,f};
-          onProgress(Math.min(0.7,(t-from)/(to-from)*0.7));v.requestVideoFrameCallback(onFrame);};
+          const f=sceneThumb(g,v);
+          /* A hidden tab or a busy computer stops presenting frames while the video
+             runs on — whole scenes went by unseen. Those stretches are re-checked
+             by seeking below. */
+          if(t-prev.t>SCENE.gap)gaps.push([prev.t,t]);
+          else if(sceneChange(prev.f,f)>=SCENE.candidate)cands.push({t0:prev.t,t1:t});
+          prev={t,f};
+          onProgress(Math.min(0.6,(t-from)/(to-from)*0.6));v.requestVideoFrameCallback(onFrame);};
         v.requestVideoFrameCallback(onFrame);v.addEventListener("ended",finish,{once:true});
+        /* without frames there are no callbacks — stop at the clip's end regardless */
+        v.addEventListener("timeupdate",()=>{if(v.currentTime>=to)finish();});
         v.playbackRate=SCENE.rate;v.play().catch(finish);});
-    }else{
-      /* browsers without frame callbacks: sample by seeking */
-      let prev=null;
-      for(let t=from;t<to&&!cancelled();t+=SCENE.step*2){await seek(t);const f=sceneThumb(g,v);if(prev&&sceneChange(prev.f,f)>=SCENE.candidate)cands.push({t0:prev.t,t1:t});prev={t,f};onProgress(Math.min(0.7,(t-from)/(to-from)*0.7));}
+      if(to-prev.t>SCENE.gap)gaps.push([prev.t,to]);
+    }else gaps.push([from,to]);/* browsers without frame callbacks: all by seeking */
+    const gapLen=gaps.reduce((a,[x,y])=>a+(y-x),0);let gapDone=0;
+    for(const[a,b]of gaps){
+      if(cancelled())break;
+      await seek(a);let prev={t:a,f:sceneThumb(g,v)};
+      for(let t=Math.min(b,a+SCENE.step*2);!cancelled();t=Math.min(b,t+SCENE.step*2)){
+        await seek(t);const f=sceneThumb(g,v);if(sceneChange(prev.f,f)>=SCENE.candidate)cands.push({t0:prev.t,t1:t});
+        gapDone+=t-prev.t;prev={t,f};onProgress(0.6+0.1*gapDone/gapLen);
+        if(t>=b)break;}
     }
+    cands.sort((x,y)=>x.t0-y.t0);
     /* 2 — for each flag, find the exact frame and keep it only if it is a true
        one-frame jump against the steps around it */
     const cuts=[];
@@ -4924,6 +5162,136 @@ async function detectSceneCuts(url,from,to,onProgress,cancelled){
     return cuts;
   }finally{try{v.pause();v.removeAttribute("src");v.load();v.remove();}catch(e){}}
 }
+/* Small JPEG stills (160×90) at the given source times — the picture each scene is
+   remembered by in the scene library. A null entry means that frame couldn't be
+   read (e.g. a storage URL without CORS taints the canvas). */
+async function sceneStills(url,times){
+  const out=times.map(()=>null);if(!url||!times.length)return out;
+  const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";
+  if(/^https?:\/\//i.test(url))v.crossOrigin="anonymous";
+  v.style.cssText="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;";
+  document.body.appendChild(v);
+  try{
+    v.src=url;
+    await new Promise((res,rej)=>{v.addEventListener("loadeddata",res,{once:true});v.addEventListener("error",rej,{once:true});setTimeout(rej,15000);});
+    const cv=document.createElement("canvas");cv.width=160;cv.height=90;const g=cv.getContext("2d");
+    for(let i=0;i<times.length;i++){
+      await new Promise(res=>{const fin=()=>{v.removeEventListener("seeked",fin);clearTimeout(tm);res();};const tm=setTimeout(fin,4000);v.addEventListener("seeked",fin);v.currentTime=Math.max(0,times[i]);});
+      try{g.drawImage(v,0,0,160,90);out[i]=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.7));}catch(e){}
+    }
+  }catch(e){}finally{try{v.pause();v.removeAttribute("src");v.load();v.remove();}catch(e){}}
+  return out;
+}
+const blobToDataUrl=b=>new Promise(r=>{if(!b)return r("");const fr=new FileReader();fr.onload=()=>r(fr.result);fr.onerror=()=>r("");fr.readAsDataURL(b);});
+
+/* ═══ SCENE LABELS & THE SCENE LIBRARY ═══
+   An editor marks what each scene is (keys 1–5, the scene row, or by voice).
+   Goals, assists and top scenes jump to the front of the reel. On every full export
+   each scene is written to Firestore `sceneLibrary` — its label, the positions it
+   is good for, spoken notes, whether it was kept or deleted and where it ended up
+   in the reel, plus a small still. That history is what later versions use to
+   pre-sort new videos. */
+const SCENE_LABELS=[
+  {id:"goal",name:"Goal",icon:"⚽",color:"#22c55e",rank:0},
+  {id:"assist",name:"Assist",icon:"🎯",color:"#38bdf8",rank:1},
+  {id:"top",name:"Top scene",icon:"⭐",color:"#f59e0b",rank:2},
+  {id:"defense",name:"Defensive",icon:"🛡",color:"#a78bfa",rank:null},
+  {id:"weak",name:"Weak",icon:"👎",color:"#94a3b8",rank:null},
+];
+const sceneLabel=id=>SCENE_LABELS.find(l=>l.id===id)||null;
+/* front-of-reel rank: goals, then assists, then top scenes */
+const frontRank=c=>{const l=c&&c.scene&&sceneLabel(c.scene.label);return l?l.rank:null;};
+/* "Best first" order; weak scenes sink to the end */
+const sortRank=c=>{const r=frontRank(c);if(r!=null)return r;return c.scene&&c.scene.label==="weak"?4:3;};
+const SCENE_ROLES=[["GK","Goalkeeper"],["CB","Center back"],["FB","Full back"],["DM","Defensive mid"],["CM","Central mid"],["AM","Number 10"],["W","Winger"],["ST","Striker"]];
+/* the profile's positions folded into those role groups */
+const roleOfPosition=p=>({GK:"GK",LCB:"CB",CB:"CB",RCB:"CB",LB:"FB",LWB:"FB",RB:"FB",RWB:"FB",CDM:"DM",CM:"CM",CAM:"AM",LM:"W",RM:"W",LW:"W",RW:"W",ST:"ST",CF:"ST",SS:"ST"})[p]||null;
+
+/* Re-order the main track. move: "front" (after the goals/assists/top scenes that
+   rank at or above it — or first of all when the scene has no front label),
+   "end" (just before the outro) or "best" (stable sort of the whole reel). */
+const reorderV1=(clips,id,move,tagClips)=>{
+  const body=clips.filter(c=>!c.brand).sort((a,b)=>a.trackStart-b.trackStart);
+  let order;
+  if(move==="best")order=body.map((c,i)=>[c,i]).sort((a,b)=>sortRank(a[0])-sortRank(b[0])||a[1]-b[1]).map(x=>x[0]);
+  else{
+    const tgt=body.find(c=>c.id===id);if(!tgt)return clips;
+    order=body.filter(c=>c.id!==id);
+    if(move==="end")order.push(tgt);
+    else{const r=frontRank(tgt);let k=0;
+      if(r!=null)for(let i=0;i<order.length&&frontRank(order[i])!=null;i++){if(frontRank(order[i])<=r)k=i+1;}
+      order.splice(k,0,tgt);}
+  }
+  const pos={};order.forEach((c,i)=>{pos[c.id]=i+1;});
+  return layoutV1(clips.map(c=>c.brand?c:{...c,trackStart:pos[c.id]}),tagClips);
+};
+
+/* ═══ VOICE ═══
+   Uses the browser's speech recognition (Chrome, Edge, Safari). In Chrome the
+   audio is transcribed by Google's speech service. Two modes:
+   - command: what is said is applied to the current scene (label, positions,
+     move, delete, …) and kept as a spoken note for the scene library;
+   - dictate: Wispr-style typing into the focused text field. */
+const SpeechRec=typeof window!=="undefined"?(window.SpeechRecognition||window.webkitSpeechRecognition||null):null;
+const VOICE_LANGS=[["en-US","EN"],["de-DE","DE"],["pt-BR","PT"]];
+const voiceNorm=s=>" "+s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/ß/g,"ss").replace(/[.,!?;:"“”]/g," ").replace(/\s+/g," ").trim()+" ";
+/* role phrases, most specific first; matched text is removed so "defensive
+   midfielder" does not also read as a defensive label */
+const VOICE_ROLES=[
+  ["GK",/ (goal ?keepers?|keepers?|goalies?|torwart|torhueter|torhuter|goleiros?|arqueiros?|gk) /],
+  ["DM",/ (defensive mid(fielder)?s?|holding mid(fielder)?s?|number six|sechser|volantes?|cdm|dm) /],
+  ["AM",/ (attacking mid(fielder)?s?|number (10|ten)|zehner|meias?|camisa 10|cam) /],
+  ["CB",/ (cent(er|re)[ -]?backs?|central defenders?|innenverteidiger|zagueiros?|cbs?) /],
+  ["FB",/ ((left|right|full)[ -]?backs?|wing[ -]?backs?|aussenverteidiger|laterais?|fb|lb|rb) /],
+  ["W",/ (wingers?|wide players?|fluegelspieler|flugelspieler|fluegel|flugel|pontas?|extremos?) /],
+  ["ST",/ (strikers?|forwards?|cent(er|re) forwards?|number (9|nine)|stuermer|sturmer|atacantes?|centroavantes?|st) /],
+  ["CM",/ ((central |centre |center )?mid(fielder)?s?|mittelfeldspieler|mittelfeld|meio[ -]?campo|cm) /],
+];
+const VOICE_LABELS=[
+  ["goal",/ (goals?|golazo|scores?|scored|tor|tore|treffer|gol|gols|golaco) /],
+  ["assist",/ (assists?|vorlagen?|assistencias?|passe para (o )?gol) /],
+  ["weak",/ (not good|no good|bad|weak|schlecht|nicht gut|ruim|fraco|fraca|nao (e |esta )?bom) /],
+  ["top",/ (top|great|very good|really good|amazing|excellent|awesome|brilliant|perfect|good|nice|beautiful|lovely|quality|world class|class|strong|sehr gut\w*|stark\w*|super|klasse|richtig gut\w*|gut|gute|guter|gutes|schoen\w*|muito bom|muito boa|otimo|otima|excelente|incrivel|bom|boa|bonito|bonita|lindo|linda) /],
+  ["defense",/ (defensive|defen[cs]e|defending|tackles?|interceptions?|blocks?|clearances?|duels?|zweikampf\w*|defensiv\w*|balleroberung|graetsche|gratsche|defesa|desarmes?|interceptacao|corte) /],
+];
+const VOICE_ACTIONS=[
+  ["splitScenes",/ (split (the |all )?scenes?|szenen (teilen|trennen|schneiden)|(dividir|separar) (as )?cenas) /],
+  ["cutHere",/ ((cut|split|blade) (it )?(here|now|at the playhead)|hier schneiden|schneide hier|(corta|cortar|corte) aqui) /],
+  ["delete",/ (delete|remove|get rid of|loeschen|loschen|losch|entfernen|entferne|weg damit|apagar|apaga|remover|deletar|tirar|tira) /],
+  ["front",/ ((move|put|bring|send|place)( (it|this|that|the scene|this scene))? (to |at |in )?(the )?(start|beginning|front|first)|to the (start|front|beginning)|nach vorne?|an den anfang|(para|pro|no) (o )?(inicio|comeco)) /],
+  ["end",/ ((move|put|send|place)( (it|this|that|the scene|this scene))? (to |at )?(the )?(end|back)|ans ende|nach hinten|(para|pro|no) (o )?final) /],
+  ["best",/ (best first|sort( the)?( reel| video| scenes)?|reorder|organi[sz]e( the)?( reel| video| scenes)?|sortieren|sortier|organizar|ordenar) /],
+  ["freeze",/ (freeze|einfrieren|standbild|congela|congelar) /],
+  ["redo",/ (redo|wiederherstellen|refazer) /],
+  ["undo",/ (undo|rueckgaengig|ruckgangig|desfazer|desfaz) /],
+];
+/* play/pause only when that is all that was said — "great play" is a compliment */
+const VOICE_SOLO=[["play",/^ (play|play it|go|abspielen|weiter|tocar|toca) $/],["pause",/^ (pause|stop|stopp|halt|pausa|parar|para) $/]];
+const parseVoice=raw=>{
+  let s=voiceNorm(raw);const out={label:null,roles:[],actions:[]};
+  for(const[a,re]of VOICE_SOLO)if(re.test(s)){out.actions.push(a);return out;}
+  for(const[a,re]of VOICE_ACTIONS)if(re.test(s)){out.actions.push(a);s=s.replace(re," ");}
+  for(const[r,re]of VOICE_ROLES){let m;while((m=s.match(re))){if(!out.roles.includes(r))out.roles.push(r);s=s.replace(m[0]," ");}}
+  for(const[l,re]of VOICE_LABELS)if(re.test(s)){out.label=l;break;}
+  return out;
+};
+/* spoken punctuation + filler removal for dictation */
+const DICT_MARKS=[[/\s*\b(new paragraph|neuer absatz|novo paragrafo)\b\s*/gi,"\n\n"],[/\s*\b(new line|neue zeile|nova linha)\b\s*/gi,"\n"],
+  [/\s*\b(comma|komma|virgula|vírgula)\b/gi,","],[/\s*\b(question mark|fragezeichen|ponto de interrogacao|ponto de interrogação)\b/gi,"?"],
+  [/\s*\b(exclamation mark|ausrufezeichen|ponto de exclamacao|ponto de exclamação)\b/gi,"!"],[/\s*\b(full stop|period|punkt|ponto final)\b/gi,"."]];
+/* startCap: the text starts a sentence (empty field, or after . ! ?) */
+const cleanDictation=(t,startCap=true)=>{
+  let s=" "+t+" ";
+  s=s.replace(/\s(um+|uh+|uhm+|erm+|hmm+|äh+m*|öh+m*|ehm+|eh+)(?=[\s,.!?])/gi," ");
+  for(const[re,rep]of DICT_MARKS)s=s.replace(re,rep);
+  s=s.replace(/[ \t]+/g," ").replace(/ ([,.!?])/g,"$1").replace(/ *\n */g,"\n").trim();
+  s=s.replace(/([.!?]\s+|\n)([a-zà-ÿ])/g,(m,a,b)=>a+b.toUpperCase());
+  if(startCap)s=s.charAt(0).toUpperCase()+s.slice(1);
+  if(s&&!/[.!?,\n]$/.test(s)&&s.split(/\s+/).length>=3)s+=".";
+  return s;
+};
+const isTextField=el=>!!el&&(el.tagName==="TEXTAREA"||el.isContentEditable||
+  (el.tagName==="INPUT"&&!/^(range|checkbox|radio|button|submit|reset|color|file|hidden)$/i.test(el.type||"text")));
 /* Social export shapes. LinkedIn's main feed shows 4:5 best; 9:16 fits Reels,
    TikTok, Shorts and LinkedIn's vertical feed. */
 const SOCIAL_FORMATS=[
