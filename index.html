@@ -2606,7 +2606,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       }
       return out;
     };
-    let vt=await rehydrate(saved.tracks);
+    let vt=(await rehydrate(saved.tracks)).map(t=>({...t,clips:t.clips.map(c=>c.scene?{...c,scene:migrateScene(c.scene)}:c)}));
     let at=await rehydrate(saved.audioTracks||[]);
     /* Projects saved before the template existed get it on first open. From then
        on the save carries brand:1, so an outro removed on purpose stays removed. */
@@ -3752,10 +3752,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     snapHist();
     let move=ed.move||null,src=null,sc=null;
     let clips=trks[ti].clips.map(c=>{if(c.id!==id)return c;src=c;
-      sc={label:null,roles:[],notes:[],...(c.scene||{})};
+      sc={label:null,roles:[],tags:[],notes:[],...(migrateScene(c.scene)||{})};
       if(ed.label!==undefined){sc.label=ed.label;if(!move&&ed.label&&sceneLabel(ed.label).rank!=null)move="front";}
       if(ed.toggleRole)sc.roles=sc.roles.includes(ed.toggleRole)?sc.roles.filter(r=>r!==ed.toggleRole):[...sc.roles,ed.toggleRole];
       (ed.roles||[]).forEach(r=>{if(!sc.roles.includes(r))sc.roles=[...sc.roles,r];});
+      if(ed.toggleTag)sc.tags=sc.tags.includes(ed.toggleTag)?sc.tags.filter(t=>t!==ed.toggleTag):[...sc.tags,ed.toggleTag];
+      (ed.tags||[]).forEach(t=>{if(!sc.tags.includes(t))sc.tags=[...sc.tags,t];});
       if(ed.note)sc.notes=[...sc.notes,{text:ed.note,at:Date.now()}];
       if(ed.dropNote!=null)sc.notes=sc.notes.filter((_,i)=>i!==ed.dropNote);
       return{...c,scene:sc};});
@@ -3832,9 +3834,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       bs.forEach((b,i)=>{if(b){thumbs[cs[i].id]=b;storeBlob("sthumb:"+cs[i].id,b).catch(()=>{});}});}
     const positions=(pl&&pl.positions)||[];
     const base={playerId:pid||"editor",playerName:pl?pl.name:"",positions,roles:[...new Set(positions.map(roleOfPosition).filter(Boolean))],keptCount:v1.length,savedAt:Date.now()};
-    const row=async(id,m,outcome,order,track)=>{const sc=m.scene||{};return[`${base.playerId}_${id}`,{...base,clipId:id,
+    const row=async(id,m,outcome,order,track)=>{const sc=migrateScene(m.scene)||{};return[`${base.playerId}_${id}`,{...base,clipId:id,
       sourceId:m.videoId||"",sourceName:m.name||"",start:+(+m.start).toFixed(3),end:+(+m.end).toFixed(3),duration:+(m.end-m.start).toFixed(3),fromSplit:!!m.split,
-      label:sc.label||null,goodFor:sc.roles||[],notes:(sc.notes||[]).map(n=>n.text),outcome,order,track,thumb:await blobToDataUrl(thumbs[id])}];};
+      label:sc.label||null,tags:sc.tags||[],goodFor:sc.roles||[],notes:(sc.notes||[]).map(n=>n.text),outcome,order,track,thumb:await blobToDataUrl(thumbs[id])}];};
     const rows=[];
     for(let i=0;i<v1.length;i++)rows.push(await row(v1[i].id,seen[v1[i].id],"kept",i,"V1"));
     for(const c of upper)rows.push(await row(c.id,seen[c.id],"kept",null,"overlay"));
@@ -3894,7 +3896,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const voiceCommand=(said,targetId)=>{
     const p=parseVoice(said),api=voiceApiRef.current,did=[];const has=a=>p.actions.includes(a);
     const tgt=targetId&&tracksRef.current.some(t=>t.clips.some(c=>c.id===targetId))?targetId:null;
-    const feedback=!!(p.label||p.roles.length||!p.actions.length);
+    const feedback=!!(p.label||p.roles.length||p.tags.length||!p.actions.length);
     if((feedback||has("delete")||has("splitScenes")||has("detach")||has("front")||has("end"))&&!tgt){
       setNotice(`Select a scene (or put the playhead on one), then talk. Heard: “${said}”`);return;}
     if(has("play")&&!isPlayingRef.current){api.togglePlay();did.push("playing");}
@@ -3904,10 +3906,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(has("cutHere")){api.cutAtPlayhead();did.push("cut at the playhead");}
     if(has("freeze")){api.freezeAndTag();did.push("freeze added");}
     if(tgt&&(feedback||has("front")||has("end"))){
-      const ed={};if(p.label)ed.label=p.label;if(p.roles.length)ed.roles=p.roles;if(feedback)ed.note=said;
+      const ed={};if(p.label)ed.label=p.label;if(p.roles.length)ed.roles=p.roles;if(p.tags.length)ed.tags=p.tags;if(feedback)ed.note=said;
       if(has("front"))ed.move="front";else if(has("end"))ed.move="end";
       const moved=applySceneEdit(tgt,ed);
       if(p.label){const l=sceneLabel(p.label);did.push(l.icon+" "+l.name);}
+      if(p.tags.length)did.push(p.tags.map(sceneTagName).join(", "));
       if(p.roles.length)did.push("good for "+p.roles.join(", "));
       if(moved)did.push(moved==="front"?"moved to the front":"moved to the end");
       if(feedback)did.push("note saved");}
@@ -4166,7 +4169,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       if(own){e.preventDefault();addTag(own.id,playhead);}
     }
     else if(e.key==="f"||e.key==="F"){e.preventDefault();freezeAndTag();}
-    /* 1 Goal · 2 Assist · 3 Top · 4 Defensive · 5 Weak · 0 clear — by key position */
+    /* 1 Goal · 2 Assist · 3 Top · 4 Good · 5 Weak · 0 clear — by key position */
     else if(/^(Digit|Numpad)[0-5]$/.test(e.code)&&!e.altKey&&!e.shiftKey){if(voiceApiRef.current.labelKey(+e.code.slice(-1)))e.preventDefault();}
     else if(e.key==="Escape"){setSpotlightMode(null);setShowTagMenu(false);pendingFreezeRef.current=null;}};
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[togglePlay,undo,delClip,cutClip,cutTag,tlDur,contentEnd,tracks,resolvedTags,audioTracks,playhead,exporting,players,addTag,tagOwnerAt,freezeAndTag,redo,copyClip,pasteClip,duplicateClip,trimToPlayhead,shuttle,isPlaying]);
@@ -4609,7 +4612,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       {/* voice: 🎤 talk to the editor · ✎ type with your voice (or hold ⌥ for either) */}
       <div style={{display:"inline-flex",alignItems:"center",border:`1px solid ${voice?"#ef4444":C.s1}`,borderRadius:20,overflow:"hidden",flexShrink:0}}>
         <button onMouseDown={e=>e.preventDefault()} onClick={()=>voice?stopVoice():startVoice("command")}
-          title={"Talk to the editor about the selected scene (or the one under the playhead):\n“goal” · “assist” · “very good scene for a center back” · “move to the start” · “delete” · “freeze” · “cut here” · “undo” · “sort best first”.\nEverything else is saved as a note on the scene. Click again to finish — or hold ⌥ Option while you talk."}
+          title={"Talk to the editor about the selected scene (or the one under the playhead):\n“goal” · “assist” · “good long ball” · “header goal” · “very good scene for a center back” · “move to the start” · “delete” · “freeze” · “cut here” · “undo” · “sort best first”.\nEverything else is saved as a note on the scene. Click again to finish — or hold ⌥ Option while you talk."}
           style={{background:voice&&voice.mode==="command"?"#ef444433":"transparent",border:"none",color:voice&&voice.mode==="command"?"#fca5a5":C.sub,cursor:"pointer",padding:"4px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>🎤 Voice</button>
         <button onMouseDown={e=>e.preventDefault()} onClick={()=>voice?stopVoice():startVoice("dictate")}
           title={"Type with your voice into the text box you are in (caption, feedback, notes). With no text box it goes to the clipboard.\nSay “comma”, “period”, “new line”. Click again to finish — or hold ⌥ Option while in a text box."}
@@ -4707,12 +4710,16 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             </button>
           </div>
         </div>
-        {!selIsTag&&isScene(selClip)&&selClip.kind!=="image"&&(()=>{const sc=selClip.scene||{};const roles=sc.roles||[];const notes=sc.notes||[];
+        {!selIsTag&&isScene(selClip)&&selClip.kind!=="image"&&(()=>{const sc=migrateScene(selClip.scene)||{};const roles=sc.roles||[];const notes=sc.notes||[];const tags=sc.tags||[];
           return<div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:6,rowGap:6,padding:"5px 12px",borderTop:`1px solid ${C.s0}44`,fontSize:10}}>
             <span style={{color:C.overlay,fontSize:9,fontWeight:800,letterSpacing:1}}>SCENE</span>
             {SCENE_LABELS.map((l,i)=>{const on=sc.label===l.id;return<button key={l.id} onClick={()=>labelScene(selClip.id,l.id)} title={`${l.name} — key ${i+1}${l.rank!=null?". Moves the scene to the front of the reel.":""}`}
               style={{display:"inline-flex",alignItems:"center",gap:4,background:on?l.color:"transparent",border:`1px solid ${on?l.color:C.s1}`,borderRadius:12,padding:"2px 9px",color:on?"#000":C.sub,cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
               <span>{l.icon}</span>{l.name}<span style={{opacity:0.5,fontSize:8,marginLeft:1}}>{i+1}</span></button>;})}
+            <div style={{width:1,height:14,background:C.s0,margin:"0 4px"}}/>
+            <span style={{color:C.overlay,fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>Type</span>
+            {SCENE_TAGS.map(t=>{const on=tags.includes(t.id);return<button key={t.id} onClick={()=>applySceneEdit(selClip.id,{toggleTag:t.id})} title={`${t.name} — what happens in this scene (pick any)`}
+              style={{background:on?C.lavender+"44":"transparent",border:`1px solid ${on?C.lavender:C.s1}`,borderRadius:10,padding:"1px 8px",color:on?"#fff":C.overlay,cursor:"pointer",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>{t.name}</button>;})}
             <div style={{width:1,height:14,background:C.s0,margin:"0 4px"}}/>
             <span style={{color:C.overlay,fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>Good for</span>
             {SCENE_ROLES.map(([r,name])=>{const on=roles.includes(r);return<button key={r} onClick={()=>applySceneEdit(selClip.id,{toggleRole:r})} title={name}
@@ -4935,8 +4942,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                     display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1}}>
                   <div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
-                    {clip.scene&&clip.scene.label&&(()=>{const l=sceneLabel(clip.scene.label);return l&&<span title={l.name+((clip.scene.roles||[]).length?" · good for "+clip.scene.roles.join(", "):"")}
-                      style={{background:l.color,color:"#000",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",letterSpacing:0.3}}>{l.icon}{w>90?" "+l.name.toUpperCase():""}</span>;})()}
+                    {clip.scene&&(()=>{const sc=migrateScene(clip.scene),l=sceneLabel(sc.label),tg=(sc.tags||[]).map(sceneTagName);if(!l&&!tg.length)return null;
+                      const tip=[l&&l.name,tg.join(", "),(sc.roles||[]).length&&"good for "+sc.roles.join(", ")].filter(Boolean).join(" · ");
+                      return<>{l&&<span title={tip}
+                      style={{background:l.color,color:"#000",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",letterSpacing:0.3}}>{l.icon}{w>90?" "+l.name.toUpperCase():""}</span>}
+                        {tg.length>0&&w>(l?150:60)&&<span title={tip} style={{background:"#00000033",color:"#000",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:w*0.45}}>{tg.join(" · ").toUpperCase()}</span>}</>;})()}
                     {clip.audioDetached&&<span title="Sound detached to an audio track" style={{fontSize:9,marginRight:3,flexShrink:0}}>🔇</span>}
                     {clip.scene&&(clip.scene.notes||[]).length>0&&<span title={clip.scene.notes.map(n=>"“"+n.text+"”").join("\n")} style={{fontSize:9,marginRight:3,flexShrink:0}}>🗣</span>}
                     <span style={{color:"#000",fontSize:10,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 0 4px rgba(255,255,255,0.3)"}}>{clip.name}</span>
@@ -5409,14 +5419,23 @@ const SCENE_LABELS=[
   {id:"goal",name:"Goal",icon:"⚽",color:"#22c55e",rank:0},
   {id:"assist",name:"Assist",icon:"🎯",color:"#38bdf8",rank:1},
   {id:"top",name:"Top scene",icon:"⭐",color:"#f59e0b",rank:2},
-  {id:"defense",name:"Defensive",icon:"🛡",color:"#a78bfa",rank:null},
+  {id:"good",name:"Good",icon:"👍",color:"#2dd4bf",rank:null},/* solid — not top, not weak */
   {id:"weak",name:"Weak",icon:"👎",color:"#94a3b8",rank:null},
 ];
+/* What happens in the scene — any number per scene, next to its one quality label
+   ("Good" + "Long ball", "Goal" + "Header"). Stored in clip.scene.tags. */
+const SCENE_TAGS=[
+  {id:"header",name:"Header"},{id:"longball",name:"Long ball"},{id:"pass",name:"Good pass"},
+  {id:"dribble",name:"Dribble"},{id:"shot",name:"Shot"},{id:"defense",name:"Defensive"},{id:"save",name:"Save"},
+];
+const sceneTagName=id=>(SCENE_TAGS.find(t=>t.id===id)||{name:id}).name;
+/* "Defensive" used to be a quality label; it is a scene type now */
+const migrateScene=sc=>sc&&sc.label==="defense"?{...sc,label:null,tags:[...new Set([...(sc.tags||[]),"defense"])]}:sc;
 const sceneLabel=id=>SCENE_LABELS.find(l=>l.id===id)||null;
 /* front-of-reel rank: goals, then assists, then top scenes */
 const frontRank=c=>{const l=c&&c.scene&&sceneLabel(c.scene.label);return l?l.rank:null;};
-/* "Best first" order; weak scenes sink to the end */
-const sortRank=c=>{const r=frontRank(c);if(r!=null)return r;return c.scene&&c.scene.label==="weak"?4:3;};
+/* "Best first" order: goals, assists, top, good, untagged — weak scenes last */
+const sortRank=c=>{const r=frontRank(c);if(r!=null)return r;const l=c.scene&&c.scene.label;return l==="good"?3:l==="weak"?5:4;};
 const SCENE_ROLES=[["GK","Goalkeeper"],["CB","Center back"],["FB","Full back"],["DM","Defensive mid"],["CM","Central mid"],["AM","Number 10"],["W","Winger"],["ST","Striker"]];
 /* the profile's positions folded into those role groups */
 const roleOfPosition=p=>({GK:"GK",LCB:"CB",CB:"CB",RCB:"CB",LB:"FB",LWB:"FB",RB:"FB",RWB:"FB",CDM:"DM",CM:"CM",CAM:"AM",LM:"W",RM:"W",LW:"W",RW:"W",ST:"ST",CF:"ST",SS:"ST"})[p]||null;
@@ -5465,8 +5484,19 @@ const VOICE_LABELS=[
   ["goal",/ (goals?|golazo|scores?|scored|tor|tore|treffer|gol|gols|golaco) /],
   ["assist",/ (assists?|vorlagen?|assistencias?|passe para (o )?gol) /],
   ["weak",/ (not good|no good|bad|weak|schlecht|nicht gut|ruim|fraco|fraca|nao (e |esta )?bom) /],
-  ["top",/ (top|great|very good|really good|amazing|excellent|awesome|brilliant|perfect|good|nice|beautiful|lovely|quality|world class|class|strong|sehr gut\w*|stark\w*|super|klasse|richtig gut\w*|gut|gute|guter|gutes|schoen\w*|muito bom|muito boa|otimo|otima|excelente|incrivel|bom|boa|bonito|bonita|lindo|linda) /],
+  ["top",/ (top|great|very good|really good|amazing|excellent|awesome|brilliant|perfect|beautiful|world class|class|quality|sehr gut\w*|stark\w*|super|klasse|richtig gut\w*|muito bom|muito boa|otimo|otima|excelente|incrivel|lindo|linda) /],
+  /* plain praise is the middle tier */
+  ["good",/ (good|nice|solid|decent|fine|ok|okay|gut|gute|guter|gutes|schoen\w*|ordentlich|solide|bom|boa|bonito|bonita|legal) /],
+];
+/* scene types — several can be said at once ("good header, long ball") */
+const VOICE_TAGS=[
+  ["header",/ (headers?|headed|heading|head ball|kopfball\w*|kopfballtor|cabeceio|cabecada|cabeca) /],
+  ["longball",/ (long balls?|long pass(es)?|switch(es)? of play|diagonal( ball| pass)?|langer ball|lange balle|langer pass|seitenwechsel|bola longa|lancamento|lancamentos|virada de jogo) /],
+  ["pass",/ (pass(es|ing)?|through ball|key pass|pass spiel|zuspiel|steilpass|passe|passes) /],
+  ["dribble",/ (dribbl\w*|one (v|on|versus) one|1 ?v ?1|skill|skills|drible\w*|drible|finta|finte) /],
+  ["shot",/ (shots?|shoot\w*|strike|finish(ing)?|schuss|torschuss|abschluss|chute|chutes|finalizacao) /],
   ["defense",/ (defensive|defen[cs]e|defending|tackles?|interceptions?|blocks?|clearances?|duels?|zweikampf\w*|defensiv\w*|balleroberung|graetsche|gratsche|defesa|desarmes?|interceptacao|corte) /],
+  ["save",/ (saves?|saved|parade|paraden|gehalten|defendeu|defesaca|milagre) /],
 ];
 const VOICE_ACTIONS=[
   ["splitScenes",/ (split (the |all )?scenes?|szenen (teilen|trennen|schneiden)|(dividir|separar) (as )?cenas) /],
@@ -5483,10 +5513,12 @@ const VOICE_ACTIONS=[
 /* play/pause only when that is all that was said — "great play" is a compliment */
 const VOICE_SOLO=[["play",/^ (play|play it|go|abspielen|weiter|tocar|toca) $/],["pause",/^ (pause|stop|stopp|halt|pausa|parar|para) $/]];
 const parseVoice=raw=>{
-  let s=voiceNorm(raw);const out={label:null,roles:[],actions:[]};
+  /* German compounds carry two facts: Kopfballtor = header + goal */
+  let s=voiceNorm(raw).replace(/(kopfball|fallrueckzieher|freistoss|elfmeter|distanz)(tore?) /g,"$1 $2 ");const out={label:null,roles:[],tags:[],actions:[]};
   for(const[a,re]of VOICE_SOLO)if(re.test(s)){out.actions.push(a);return out;}
   for(const[a,re]of VOICE_ACTIONS)if(re.test(s)){out.actions.push(a);s=s.replace(re," ");}
   for(const[r,re]of VOICE_ROLES){let m;while((m=s.match(re))){if(!out.roles.includes(r))out.roles.push(r);s=s.replace(m[0]," ");}}
+  for(const[t,re]of VOICE_TAGS)if(re.test(s)){out.tags.push(t);s=s.replace(re," ");}
   for(const[l,re]of VOICE_LABELS)if(re.test(s)){out.label=l;break;}
   return out;
 };
