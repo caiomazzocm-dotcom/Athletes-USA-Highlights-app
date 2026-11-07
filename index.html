@@ -4324,11 +4324,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           <div style={{color:C.coral,fontSize:9,fontWeight:800,letterSpacing:1,textTransform:"uppercase",margin:"2px 0 4px"}}>AUSA Music</div>
           {BRAND_MUSIC.map(m=>(
             <div key={m.id} draggable onDragStart={e=>{e.dataTransfer.setData("application/json",JSON.stringify({id:m.id,name:m.name,url:m.file,duration:m.dur,playerId:"editor",playerName:"AUSA Music",type:"audio"}));e.dataTransfer.effectAllowed="copy";}}
-              onDoubleClick={()=>addBrandSong(m)} title="Double-click to put it under the reel (from the intro to the outro), or drag it onto A1"
+              onDoubleClick={()=>addBrandSong(m)} title={"Double-click to put it under the reel (from the intro to the outro), or drag it onto an audio track."+(m.contentId?"\n⚠ Registered with YouTube Content ID: YouTube/Instagram may show a copyright claim — dispute it with the Pixabay licence: "+m.page:"")}
               style={{display:"flex",alignItems:"center",gap:5,padding:"3px 4px",cursor:"grab",borderRadius:4,fontSize:10}}
               onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <MusicIcon size={10} color={C.coral}/>
-              <span style={{color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{m.name}{m.artist&&<span style={{color:C.overlay}}> · {m.artist}</span>}</span>
+              <span style={{color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{m.contentId&&<span style={{color:C.peach||"#fab387"}}>⚠ </span>}{m.name}{m.artist&&<span style={{color:C.overlay}}> · {m.artist}</span>}</span>
               <span style={{color:C.overlay,fontSize:8}}>{fmtTime(m.dur)}</span>
             </div>))}
         </div>}
@@ -5211,9 +5211,16 @@ const LOUDNESS={threshold:-24,knee:6,ratio:12,attack:0.003,release:0.25,outGain:
    brand/music/ beside the page; each is loudness-matched when it's added. */
 /* All loudness-matched to −16 LUFS (two-pass loudnorm, AAC 192k), so any song sits
    at the same level under a reel. Only music a company may use without per-video
-   credit goes here (Pixabay licence) — Uppbeat's free plan is for solo creators. */
+   credit goes here (Pixabay licence) — Uppbeat's free plan is for solo creators.
+   contentId: registered with YouTube Content ID — allowed, but a platform may raise a
+   claim that has to be disputed with the Pixabay licence. New songs are picked from
+   unregistered tracks. page: the track's Pixabay page (licence proof). */
 const BRAND_MUSIC=[
-  {id:"ausa-song-afro-beat",name:"Afro Beat",artist:"Kiravale",file:"brand/music/afro-beat.m4a",dur:238.0,src:"Pixabay"},
+  {id:"ausa-song-afro-house-mastery",name:"Afro House x Afro Beat (Mastery)",artist:"47643651",file:"brand/music/afro-house-mastery.m4a",dur:151.8,src:"Pixabay",page:"https://pixabay.com/music/afrobeat-afro-house-x-afro-beat-mastery-292197/"},
+  {id:"ausa-song-afro-house",name:"Afro House",artist:"ArtIssizm",file:"brand/music/afro-house.m4a",dur:132.0,src:"Pixabay",page:"https://pixabay.com/music/afrobeat-afro-house-455843/"},
+  {id:"ausa-song-hip-hop-upbeat",name:"Hip Hop – Upbeat",artist:"MusicForPeople",file:"brand/music/hip-hop-upbeat.m4a",dur:122.8,src:"Pixabay",page:"https://pixabay.com/music/beats-hip-hop-upbeat-491996/"},
+  {id:"ausa-song-happy-advertising",name:"Happy Advertising Hip-Hop",artist:"BombinSound",file:"brand/music/happy-advertising-hip-hop.m4a",dur:124.5,src:"Pixabay",page:"https://pixabay.com/music/old-school-hip-hop-happy-advertising-hip-hop-magic-moments-628139/"},
+  {id:"ausa-song-afro-beat",name:"Afro Beat",artist:"Kiravale",file:"brand/music/afro-beat.m4a",dur:238.0,src:"Pixabay",contentId:true,page:"https://pixabay.com/music/afrobeat-afro-beat-598119/"},
 ];
 /* ── Split scenes ──
    Finds the hard cuts in a clip's footage. A cut is a one-frame jump: the picture
