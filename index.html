@@ -4328,7 +4328,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               style={{display:"flex",alignItems:"center",gap:5,padding:"3px 4px",cursor:"grab",borderRadius:4,fontSize:10}}
               onMouseEnter={e=>e.currentTarget.style.background=C.s0} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
               <MusicIcon size={10} color={C.coral}/>
-              <span style={{color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{m.name}</span>
+              <span style={{color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{m.name}{m.artist&&<span style={{color:C.overlay}}> · {m.artist}</span>}</span>
               <span style={{color:C.overlay,fontSize:8}}>{fmtTime(m.dur)}</span>
             </div>))}
         </div>}
@@ -4857,8 +4857,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const v1=(tracks[0]&&tracks[0].clips)||[];const intro=v1.find(c=>c.brand==="intro");const outro=v1.find(c=>c.brand==="outro");
     const start=intro?intro.trackStart+(intro.clipEnd-intro.clipStart)+clipFreezeDur(intro,tagTrack.clips):0;
     const stop=outro?outro.trackStart:contentEnd;
-    const a1=audioTracks[0];if(!a1)return;
-    addClip(a1.id,{id:m.id,name:m.name,url:m.file,duration:Math.max(1,Math.min(m.dur,stop-start)),playerId:"editor",playerName:"AUSA Music"},start,true);
+    const dur=Math.max(1,Math.min(m.dur,stop-start)),end=start+dur;
+    /* the first audio track that is free over that stretch — A1 may hold detached clip sound */
+    const free=audioTracks.find(t=>!t.clips.some(x=>x.trackStart<end-0.001&&x.trackStart+(x.clipEnd-x.clipStart)>start+0.001));
+    let tid=free&&free.id;
+    if(!tid){tid=uid("atrk");setAudioTracks(p=>[...p,{id:tid,name:`A${p.length+1}`,clips:[]}]);}
+    addClip(tid,{id:m.id,name:m.name,url:m.file,duration:dur,playerId:"editor",playerName:"AUSA Music"},start,true);
   };
 
   /* Skim: the mouse position across a folder clip picks the moment shown in the
@@ -5205,7 +5209,12 @@ const outroGain=f=>!f?1:f.side==="out"?1-f.mix:1-f.mix*f.mix;
 const LOUDNESS={threshold:-24,knee:6,ratio:12,attack:0.003,release:0.25,outGain:0.5};
 /* AUSA music library: songs every editor can put under a reel. Files live in
    brand/music/ beside the page; each is loudness-matched when it's added. */
-const BRAND_MUSIC=[];
+/* All loudness-matched to −16 LUFS (two-pass loudnorm, AAC 192k), so any song sits
+   at the same level under a reel. Only music a company may use without per-video
+   credit goes here (Pixabay licence) — Uppbeat's free plan is for solo creators. */
+const BRAND_MUSIC=[
+  {id:"ausa-song-afro-beat",name:"Afro Beat",artist:"Kiravale",file:"brand/music/afro-beat.m4a",dur:238.0,src:"Pixabay"},
+];
 /* ── Split scenes ──
    Finds the hard cuts in a clip's footage. A cut is a one-frame jump: the picture
    stops resembling the previous frame while the frames around it change little.
@@ -5427,6 +5436,7 @@ const SCENE_LABELS=[
 const SCENE_TAGS=[
   {id:"header",name:"Header"},{id:"longball",name:"Long ball"},{id:"pass",name:"Good pass"},
   {id:"dribble",name:"Dribble"},{id:"shot",name:"Shot"},{id:"defense",name:"Defensive"},{id:"save",name:"Save"},
+  {id:"freekick",name:"Free kick"},{id:"corner",name:"Corner"},{id:"penalty",name:"Penalty"},
 ];
 const sceneTagName=id=>(SCENE_TAGS.find(t=>t.id===id)||{name:id}).name;
 /* "Defensive" used to be a quality label; it is a scene type now */
@@ -5497,6 +5507,9 @@ const VOICE_TAGS=[
   ["shot",/ (shots?|shoot\w*|strike|finish(ing)?|schuss|torschuss|abschluss|chute|chutes|finalizacao) /],
   ["defense",/ (defensive|defen[cs]e|defending|tackles?|interceptions?|blocks?|clearances?|duels?|zweikampf\w*|defensiv\w*|balleroberung|graetsche|gratsche|defesa|desarmes?|interceptacao|corte) /],
   ["save",/ (saves?|saved|parade|paraden|gehalten|defendeu|defesaca|milagre) /],
+  ["freekick",/ (free ?kicks?|set piece|freistoss\w*|freistoesse|cobranca de falta|bola parada|tiro livre|falta) /],
+  ["corner",/ (corners?|corner kicks?|eckball\w*|eckbaelle|ecke|ecken|escanteios?|cantos?) /],
+  ["penalty",/ (penalt(y|ies)|penalty kicks?|pk|spot kicks?|elfmeter\w*|strafstoss|penaltis?|penalti|penalidade) /],
 ];
 const VOICE_ACTIONS=[
   ["splitScenes",/ (split (the |all )?scenes?|szenen (teilen|trennen|schneiden)|(dividir|separar) (as )?cenas) /],
