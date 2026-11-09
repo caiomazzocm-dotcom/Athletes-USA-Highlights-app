@@ -29,6 +29,7 @@
   input[type="range"]::-webkit-slider-thumb{appearance:none;width:12px;height:12px;border-radius:50%;cursor:pointer;background:#89b4fa}
   @keyframes fadeIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  @keyframes cutFlash{0%{opacity:1}100%{opacity:0}}
   .drag-over-cat{outline:2px solid #3b82f6!important;outline-offset:-2px}
 
   /* ═══ MOBILE RESPONSIVE (athlete-facing pages only) ═══ */
@@ -2519,6 +2520,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     filmSubs.add(f);return()=>{filmSubs.delete(f);cancelAnimationFrame(raf);};},[]);
   /* the part of the timeline on screen, in px — pictures and frame ticks are only made for it */
   const[tlView,setTlView]=useState({l:0,w:1600});const tlViewRaf=useRef(0);const frameHoverRef=useRef(null);const bladeLineRef=useRef(null);
+  const[cutFlash,setCutFlash]=useState(null);useEffect(()=>{if(!cutFlash)return;const t=setTimeout(()=>setCutFlash(null),900);return()=>clearTimeout(t);},[cutFlash]);
   const syncTlView=()=>{if(tlViewRaf.current)return;tlViewRaf.current=requestAnimationFrame(()=>{tlViewRaf.current=0;const sc=tlScrollRef.current;if(sc)setTlView(v=>v.l===sc.scrollLeft&&v.w===sc.clientWidth?v:{l:sc.scrollLeft,w:sc.clientWidth});});};
   useEffect(()=>{syncTlView();window.addEventListener("resize",syncTlView);return()=>window.removeEventListener("resize",syncTlView);},[]);
 
@@ -2856,7 +2858,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   /* Find a zero-duration tag overlay: tag is anchored to a clip and shows when the video passes its sourceTime.
      The overlay displays for a fixed window (1.5s) after the sourceTime is reached during playback. */
-  const freezeOffset=useCallback((clipStart,ph)=>{let total=0;for(const tg of resolvedTags){const tEnd=tg._tlStart+tg.duration;if(tEnd<=clipStart||tg._tlStart>=ph)continue;const s=Math.max(tg._tlStart,clipStart);const e=Math.min(tEnd,ph);if(e>s)total+=e-s;}return total;},[resolvedTags]);
+  /* Freeze time between a clip's start and ph. Pass the clip: then only that clip's own
+     freezes count — exactly what the layout counts (clipFreezeDur). Counting every tag
+     overlapping that stretch (other tracks, old tags without a clip) put the frame
+     maths a little off in busy projects, so some cuts landed outside the piece and
+     were silently refused. A number (legacy) still counts every tag. */
+  const freezeOffset=useCallback((clipOrStart,ph)=>{const own=typeof clipOrStart==="object"?clipOrStart:null;const clipStart=own?own.trackStart:clipOrStart;let total=0;
+    for(const tg of resolvedTags){if(own&&tg.clipId!==own.id)continue;const tEnd=tg._tlStart+tg.duration;if(tEnd<=clipStart||tg._tlStart>=ph)continue;const s=Math.max(tg._tlStart,clipStart);const e=Math.min(tEnd,ph);if(e>s)total+=e-s;}return total;},[resolvedTags]);
 
   /* Tag timing. FREEZE_DUR / TAG_OVERLAY_DUR are what you get when you add one;
      TAG_MAX_DUR is only a runaway guard on the resize handle, not the working length. */
@@ -2872,7 +2880,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const SPOT_RGB="59,130,246";
   const findOverlayTag=useCallback((clip,ph)=>{
     if(!clip)return null;
-    const fo=freezeOffset(clip.trackStart,ph);
+    const fo=freezeOffset(clip,ph);
     const srcT=clip.clipStart+(ph-clip.trackStart-fo);
     for(const tg of tagTrack.clips){
       if(tg.clipId!==clip.id||tg.duration>0)continue; /* only zero-duration (non-freeze) tags */
@@ -2947,7 +2955,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* No freeze at playhead — create standalone overlay tag (duration:0) */
     const clip=findActiveClip(start);
     if(!clip){console.warn("No video clip at playhead for tag");return;}
-    const fo=freezeOffset(clip.trackStart,start);
+    const fo=freezeOffset(clip,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
     const tag={id:uid("tag"),type:"tag",clipId:clip.id,sourceTime,playerId,playerName:player.name,playerColor:playerColor(playerIdx),trackStart:0,duration:0,spotX,spotY,spotScale:SPOT_SCALE_DEFAULT};
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:SPOT_SCALE_DEFAULT}}));
@@ -2959,7 +2967,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const addFreeze=useCallback((start)=>{pushHist();
     const clip=findActiveClip(start);
     if(!clip){console.warn("No video clip at playhead for freeze");return;}
-    const fo=freezeOffset(clip.trackStart,start);
+    const fo=freezeOffset(clip,start);
     const sourceTime=clip.clipStart+(start-clip.trackStart-fo);
     const tag={id:uid("frz"),type:"freeze",clipId:clip.id,sourceTime,playerId:null,playerName:"FREEZE",playerColor:"#60a5fa",trackStart:0,duration:FREEZE_DUR,spotX:50,spotY:50,spotScale:SPOT_SCALE_DEFAULT};
     setClipProps(p=>({...p,[tag.id]:{volume:100,scale:1,spotScale:SPOT_SCALE_DEFAULT}}));
@@ -3041,10 +3049,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const srcTrks=isVideo?tracks:audioTracks;
     const trk=srcTrks.find(t=>t.id===trackId);if(!trk)return;
     const c=trk.clips.find(x=>x.id===clipId);if(!c)return;
-    const d=c.clipEnd-c.clipStart;const fo=freezeOffset(c.trackStart,playhead);
+    /* the AUSA intro/outro are template pieces — cutting the intro split it into slivers */
+    if(c.brand==="intro"||c.brand==="outro"){setNotice(`The AUSA ${c.brand} can't be cut — it's part of the template.`);return;}
+    const d=c.clipEnd-c.clipStart;const fo=freezeOffset(c,playhead);
     /* the cut goes exactly at the start of the frame the preview is showing */
     const cut=snapF(c,c.clipStart+(playhead-c.trackStart-fo),"floor")-c.clipStart;
-    if(cut<=.02||cut>=d-.02)return;
+    /* never fail silently — say why there's nothing to cut */
+    if(cut<=.02){setNotice("Nothing to cut there — that's the first frame of this piece (it already starts there).");return;}
+    if(cut>=d-.02){setNotice("Nothing to cut there — that's the last frame of this piece (it already ends there).");return;}
     pushHist();
     const a={...c,id:uid("clip"),clipEnd:c.clipStart+cut};
     const b={...c,id:uid("clip"),trackStart:c.trackStart+fo+cut,clipStart:c.clipStart+cut};
@@ -3057,6 +3069,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(isVideo){setTracks(applied);recalcAll(applied,nextTags,audioTracks);compactV1(nextTags);}
     else{setAudioTracks(applied);recalcAll(tracks,nextTags,applied);}
     setSelectedClipId(null);
+    /* a short orange flash where the cut went, so it's obvious it happened */
+    setCutFlash({x:b.trackStart,id:b.id});
   },[pushHist,playhead,tracks,tagTrack,audioTracks,recalcAll,compactV1,freezeOffset]);
 
   const cutTag=useCallback((tagId)=>{pushHist();
@@ -3678,7 +3692,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     for(let i=0;i<tracks.length&&!hit;i++)for(const c of tracks[i].clips)if(on(c)){hit={t:tracks[i],c};break;}
     if(!hit||hit.c.brand)return;
     const c=hit.c,isV1=hit.t.id===tracks[0].id;
-    const rawT=Math.max(c.clipStart,Math.min(c.clipEnd,c.clipStart+(playhead-c.trackStart-freezeOffset(c.trackStart,playhead))));
+    const rawT=Math.max(c.clipStart,Math.min(c.clipEnd,c.clipStart+(playhead-c.trackStart-freezeOffset(c,playhead))));
     const srcT=snapF(c,rawT,"floor");
     if(side==="start"?srcT<=c.clipStart+0.02:srcT>=c.clipEnd-0.02)return;
     pushHist();
@@ -3995,7 +4009,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     for(const c of v1){if(c.kind==="image"||!fpsOf(c))continue;
       const fz=tg.filter(x=>x.clipId===c.id&&x.sourceTime>=c.clipStart&&x.sourceTime<c.clipEnd).reduce((a,x)=>a+x.duration,0);
       if(t<c.trackStart||t>=c.trackStart+(c.clipEnd-c.clipStart)+fz)continue;
-      const f=exactFps(fpsOf(c)),fo=freezeOffset(c.trackStart,t),src=c.clipStart+(t-c.trackStart-fo);
+      const f=exactFps(fpsOf(c)),fo=freezeOffset(c,t),src=c.clipStart+(t-c.trackStart-fo);
       if(src>=c.clipEnd)return null;/* inside a freeze at the end */
       const k=Math.floor(src*f+1e-4);return{c,f,k,start:c.trackStart+fo+(k/f-c.clipStart),dur:1/f};}
     return null;};
@@ -4118,7 +4132,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     /* NORMAL CLIP playback */
     const wasInTag=prevTagRef.current!==null;prevTagRef.current=null;
     const pr=clipProps[clip.id]||{volume:100,scale:1,panX:0,panY:0};
-    const fo=freezeOffset(clip.trackStart,playhead);
+    const fo=freezeOffset(clip,playhead);
     const vt=clip.clipStart+(playhead-clip.trackStart-fo);
     const oc=tracks[0]&&tracks[0].clips.find(c=>c.brand==="outro");
     const vol=clip.audioDetached?0:pr.volume/100*(oc?outroGain(outroFx(playhead-oc.trackStart)):1);
@@ -4185,7 +4199,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const ph=playheadRef.current,end=contentEnd||tlDur,clamp=x=>Math.max(0,Math.min(end,x));
     const c=findActiveClip(ph),f=fpsOf(c);
     if(!c||!f||c.kind==="image"){setPlayhead(clamp(ph+n/30));return;}
-    const fo=freezeOffset(c.trackStart,ph);const k=Math.floor((c.clipStart+(ph-c.trackStart-fo))*f+1e-4)+n;const ns=k/f+FRAME_IN;
+    const fo=freezeOffset(c,ph);const k=Math.floor((c.clipStart+(ph-c.trackStart-fo))*f+1e-4)+n;const ns=k/f+FRAME_IN;
     if(ns<c.clipStart||ns>=c.clipEnd){setPlayhead(clamp(ph+n/f));return;}
     setPlayhead(clamp(c.trackStart+fo+(ns-c.clipStart)));
   };
@@ -4212,7 +4226,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(tn==="INPUT"||tn==="SELECT")return;
     if((e.metaKey||e.ctrlKey)&&(e.key==="b"||e.key==="B")){e.preventDefault();
       for(const tg of resolvedTags){if(playhead>tg._tlStart&&playhead<tg._tlStart+tg.duration){cutTag(tg.id);return;}}
-      const allTrks=[...tracks,...audioTracks];for(const t of allTrks)for(const c of t.clips){const d=c.clipEnd-c.clipStart;if(playhead>c.trackStart&&playhead<c.trackStart+d){cutClip(t.id,c.id);return;}}
+      /* a video clip spans its footage plus its freezes; without the freezes the last
+         stretch of a clip with freezes could never be cut with ⌘B */
+      for(const t of tracks)for(const c of t.clips){const d=c.clipEnd-c.clipStart+clipFreezeDur(c,tagTrack.clips);if(playhead>c.trackStart&&playhead<c.trackStart+d){cutClip(t.id,c.id);return;}}
+      for(const t of audioTracks)for(const c of t.clips){const d=c.clipEnd-c.clipStart;if(playhead>c.trackStart&&playhead<c.trackStart+d){cutClip(t.id,c.id);return;}}
+      setNotice("Put the red line on a clip to cut it.");
     }
     else if((e.metaKey||e.ctrlKey)&&e.shiftKey&&(e.key==="z"||e.key==="Z")){e.preventDefault();redo();}
     else if((e.metaKey||e.ctrlKey)&&(e.key==="y"||e.key==="Y")){e.preventDefault();redo();}
@@ -4254,7 +4272,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const activeSpotTag=findOverlayTag(activeClip,playhead); /* overlay spotlight (duration===0) */
   const activeTag=activeFreezeTag||activeSpotTag; /* backward compat — used by video pool sync etc */
   /* source time of a clip under a timeline position (it stands still in a freeze) */
-  const srcTimeAt=(c,ph)=>c&&c.clipEnd!=null?Math.max(c.clipStart,Math.min(c.clipEnd,c.clipStart+(ph-c.trackStart-(c.kind==="image"?0:freezeOffset(c.trackStart,ph))))):0;
+  const srcTimeAt=(c,ph)=>c&&c.clipEnd!=null?Math.max(c.clipStart,Math.min(c.clipEnd,c.clipStart+(ph-c.trackStart-(c.kind==="image"?0:freezeOffset(c,ph))))):0;
   const activeSrcT=srcTimeAt(activeClip,playhead);
   const actProps=activeClip?propsAt(clipProps[activeClip.id]||{volume:100,scale:1,panX:0,panY:0},activeSrcT):null;
   /* intro look in the preview — the same curves the export uses */
@@ -4992,6 +5010,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
           onMouseMove={e=>{const el=bladeLineRef.current;if(!el)return;if(tool!=="blade"){el.style.display="none";return;}
             const t=timeAtMouse(e);if(t==null)return;el.style.display="block";el.style.left=(t*zoom)+"px";}}
           onMouseLeave={()=>{if(bladeLineRef.current)bladeLineRef.current.style.display="none";}}>
+          {cutFlash&&<div key={cutFlash.id} style={{position:"absolute",top:RULER_H,left:cutFlash.x*zoom-2,width:4,height:totalTracksH+48,background:"#fb923c",boxShadow:"0 0 10px #fb923c",zIndex:26,pointerEvents:"none",animation:"cutFlash .9s ease-out forwards"}}/>}
           <div ref={bladeLineRef} style={{position:"absolute",top:RULER_H,width:2,marginLeft:-1,height:totalTracksH+48,background:"#fb923c",boxShadow:"0 0 4px #fb923c",zIndex:25,pointerEvents:"none",display:"none"}}/>
           <div onClick={e=>handleTlClick(e,true)} onMouseMove={e=>{const el=frameHoverRef.current,sc=tlScrollRef.current;if(!el||!sc)return;
               const r=sc.getBoundingClientRect(),fr=frameAtTime((e.clientX-r.left+sc.scrollLeft)/zoom);
@@ -5006,14 +5025,19 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 a band over the frame on screen, and a grey band following the mouse. */}
             {(()=>{const out=[];const v1=(tracks[0]&&tracks[0].clips)||[];const L=tlView.l/zoom,R=(tlView.l+tlView.w)/zoom;
               for(const c of v1){const f=c.kind!=="image"&&fpsOf(c);if(!f||zoom/f<5)continue;
-                const fz=clipFreezeDur(c,tagTrack.clips),cs=c.trackStart,ce=cs+(c.clipEnd-c.clipStart)+fz;if(ce<L||cs>R)continue;
-                const base=cs+freezeOffset(cs,Math.max(cs,L))-c.clipStart;/* timeline time of source 0 (freezes before the view) */
+                const own=tagTrack.clips.filter(x=>x.clipId===c.id&&x.duration>0&&x.sourceTime>=c.clipStart&&x.sourceTime<c.clipEnd).sort((a,b)=>a.sourceTime-b.sourceTime);
+                const cs=c.trackStart,ce=cs+(c.clipEnd-c.clipStart)+own.reduce((a,x)=>a+x.duration,0);if(ce<L||cs>R)continue;
                 const px=zoom/f,every=[1,2,5,10,15,30].find(m=>m*px>=46)||30;
-                const k0=Math.max(Math.ceil(c.clipStart*f-1e-6),Math.floor((L-base)*f)),k1=Math.min(Math.floor(c.clipEnd*f+1e-6),Math.ceil((R-base)*f));
-                for(let k=k0;k<=k1;k++){const T=base+k/f;if(T>ce)break;const sec=Math.floor(T+1e-6),fr=Math.round((T-sec)*f);
-                  const major=fr===0||fr===Math.round(f);
-                  out.push(<div key={c.id+"f"+k} style={{position:"absolute",left:T*zoom,bottom:0,width:1,height:major?12:k%every===0?8:4,background:major?C.sub:C.s2,pointerEvents:"none"}}/>);
-                  if(k%every===0&&!major)out.push(<span key={c.id+"l"+k} style={{position:"absolute",left:T*zoom+3,bottom:9,color:C.overlay,fontSize:8,fontFamily:"monospace",pointerEvents:"none",whiteSpace:"nowrap"}}>{fr}f</span>);}}
+                /* a freeze shifts the footage after it by its length (rarely a whole number
+                   of frames), so each stretch between freezes gets its own frame grid */
+                let acc=0,a=c.clipStart;
+                for(let si=0;si<=own.length;si++){const b=si<own.length?own[si].sourceTime:c.clipEnd;const base=cs+acc-c.clipStart;
+                  const k0=Math.max(Math.ceil(a*f-1e-6),Math.floor((L-base)*f)),k1=Math.min(Math.floor(b*f+1e-6),Math.ceil((R-base)*f));
+                  for(let k=k0;k<=k1;k++){const T=base+k/f;const sec=Math.floor(T+1e-6),fr=Math.round((T-sec)*f);
+                    const major=fr===0||fr===Math.round(f);
+                    out.push(<div key={c.id+"f"+si+"_"+k} style={{position:"absolute",left:T*zoom,bottom:0,width:1,height:major?12:k%every===0?8:4,background:major?C.sub:C.s2,pointerEvents:"none"}}/>);
+                    if(k%every===0&&!major)out.push(<span key={c.id+"l"+si+"_"+k} style={{position:"absolute",left:T*zoom+3,bottom:9,color:C.overlay,fontSize:8,fontFamily:"monospace",pointerEvents:"none",whiteSpace:"nowrap"}}>{fr}f</span>);}
+                  if(si<own.length){acc+=own[si].duration;a=b;}}}
               const fr=frameAtTime(playhead);
               if(fr&&fr.dur*zoom>=5)out.push(<div key="fcur" style={{position:"absolute",left:fr.start*zoom,bottom:0,width:Math.max(2,fr.dur*zoom),height:RULER_H,background:C.blue+"40",pointerEvents:"none"}}/>);
               return out;})()}
@@ -5051,6 +5075,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   {/* the clip's pictures (filmstrip) behind its label, the player colour on top */}
                   {!tiny&&<div style={{position:"absolute",left:0,top:0,width:"100%",height:"calc(100% - 22px)",overflow:"hidden",zIndex:0,pointerEvents:"none"}}>{filmTiles(clip,clip.trackStart*zoom,w,clipFreezes)}</div>}
                   {!tiny&&<div style={{position:"absolute",left:0,right:0,top:0,height:3,background:pCol,zIndex:1,pointerEvents:"none"}}/>}
+                  {/* a clear dark line where one piece ends and the next begins */}
+                  {!tiny&&<div style={{position:"absolute",left:0,top:0,bottom:0,width:2,background:"#05070c",zIndex:4,pointerEvents:"none"}}/>}
                   {!tiny&&<div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0,position:"relative",zIndex:1,background:"linear-gradient(180deg,rgba(0,0,0,0.45),rgba(0,0,0,0) 85%)"}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
                     {clip.scene&&(()=>{const sc=migrateScene(clip.scene),l=sceneLabel(sc.label),tg=(sc.tags||[]).map(sceneTagName);if(!l&&!tg.length)return null;
@@ -5564,6 +5590,11 @@ async function filmPump(){if(filmBusy)return;filmBusy=true;
     try{await s.ready;}catch(e){filmBad.add(job.url);continue;}
     const v=s.v;
     await new Promise(res=>{const fin=()=>{v.removeEventListener("seeked",fin);clearTimeout(tm);res();};const tm=setTimeout(fin,3000);v.addEventListener("seeked",fin);v.currentTime=Math.max(0,Math.min(job.t,(v.duration||job.t+1)-0.01));});
+    /* A streamed video (Firebase) can report "seeked" before that frame is decoded, and
+       drawing then gives a black picture — wait for the frame, and never cache an early one. */
+    if(v.readyState<2)await new Promise(res=>{const done=()=>{v.removeEventListener("canplay",done);clearTimeout(tm);res();};const tm=setTimeout(done,2000);v.addEventListener("canplay",done);});
+    if(v.requestVideoFrameCallback)await new Promise(res=>{const tm=setTimeout(res,250);v.requestVideoFrameCallback(()=>{clearTimeout(tm);res();});});
+    if(v.readyState<2)continue;/* not ready: it will be asked for again on the next render */
     /* cover-fit the frame into the 16:9 tile */
     const vw=v.videoWidth||16,vh=v.videoHeight||9,ta=cv.width/cv.height,va=vw/vh;let sx=0,sy=0,sw=vw,sh=vh;
     if(va>ta){sw=vh*ta;sx=(vw-sw)/2;}else{sh=vw/ta;sy=(vh-sh)/2;}
