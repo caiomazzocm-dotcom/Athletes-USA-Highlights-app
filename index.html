@@ -141,8 +141,8 @@ const DEFAULT_CATS=["Goals","Assists","Defensive Actions","Attacking Actions","F
 let _id=0;const uid=(p="id")=>`${p}-${++_id}-${Date.now().toString(36)}`;
 const fmtTime=(s,fps=30)=>{if(!isFinite(s)||s<0)s=0;const m=Math.floor(s/60),sec=Math.floor(s%60),fr=Math.min(Math.ceil(fps)-1,Math.floor((s%1)*fps+1e-6));return`${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}:${String(fr).padStart(2,"0")}`};
 const TRACK_H=74,AUDIO_TRACK_H=48,TAG_TRACK_H=36,RULER_H=28,MIN_CLIP_W=4;
-/* px per second at full zoom — enough to see and click single frames */
-const ZOOM_MAX=1000;
+/* px per second at full zoom — about 130 px per frame at 30 fps, like CapCut */
+const ZOOM_MAX=4000;
 const YT_W=1920,YT_H=1080;
 const ib={background:"none",border:"none",cursor:"pointer",padding:4,display:"flex",alignItems:"center",borderRadius:4};
 const tb={display:"flex",alignItems:"center",gap:4,padding:"4px 10px",borderRadius:6,cursor:"pointer",fontWeight:500};
@@ -2510,6 +2510,17 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* "floor": the start of the frame being shown at t (where a cut goes);
      "round": the nearest frame boundary (where a dragged edge lands) */
   const snapF=(c,t,mode)=>{const f=fpsOf(c);if(!f)return t;return(mode==="floor"?Math.floor(t*f+1e-4):Math.round(t*f))/f;};
+  /* The playhead sits just inside the frame it shows (2 ms after its start), so the
+     line lines up with that frame's tick and a cut there starts on that frame. */
+  const FRAME_IN=0.002;
+  /* filmstrip pictures arriving re-render the timeline (at most once a frame) */
+  const[filmVer,setFilmVer]=useState(0);
+  useEffect(()=>{let raf=0;const f=()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;setFilmVer(v=>v+1);});};
+    filmSubs.add(f);return()=>{filmSubs.delete(f);cancelAnimationFrame(raf);};},[]);
+  /* the part of the timeline on screen, in px — pictures and frame ticks are only made for it */
+  const[tlView,setTlView]=useState({l:0,w:1600});const tlViewRaf=useRef(0);const frameHoverRef=useRef(null);
+  const syncTlView=()=>{if(tlViewRaf.current)return;tlViewRaf.current=requestAnimationFrame(()=>{tlViewRaf.current=0;const sc=tlScrollRef.current;if(sc)setTlView(v=>v.l===sc.scrollLeft&&v.w===sc.clientWidth?v:{l:sc.scrollLeft,w:sc.clientWidth});});};
+  useEffect(()=>{syncTlView();window.addEventListener("resize",syncTlView);return()=>window.removeEventListener("resize",syncTlView);},[]);
 
   const writeProject=useCallback((pid)=>{
     try{
@@ -2614,7 +2625,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if((saved.brand||0)<2){const r=shortenIntro(vt,at,(saved.tagTrack&&saved.tagTrack.clips)||[]);if(r){vt=r.vt;at=r.at;}}
     setTracks(p=>vt.length?vt:p.map(t=>({...t,clips:[]})));
     setAudioTracks(p=>at.length?at:p.map(t=>({...t,clips:[]})));
-    setTagTrack(saved.tagTrack&&saved.tagTrack.clips?saved.tagTrack:{id:uid("ttag"),name:"TAGS",clips:[]});
+    const savedTags=saved.tagTrack&&saved.tagTrack.clips?saved.tagTrack:{id:uid("ttag"),name:"TAGS",clips:[]};
+    setTagTrack(savedTags);
+    /* the timeline's length: without this a reopened project kept the 2-minute default,
+       the ruler stopped at 2:00 and clicks past it never reached the timeline */
+    recalcAll(vt,savedTags,at);
     setClipProps(saved.clipProps||{});setSceneSeen(saved.sceneSeen||{});
     if(typeof saved.zoom==="number")setZoom(saved.zoom);
     setPlayhead(typeof saved.playhead==="number"?saved.playhead:0);
@@ -3952,6 +3967,59 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     audioTracks.forEach(t=>t.clips.forEach(c=>{const e=c.trackStart+(c.clipEnd-c.clipStart);if(e>mx)mx=e;}));
     return mx;
   },[tracks,resolvedTags,audioTracks]);
+  /* the timeline is always at least as long as what is on it */
+  useEffect(()=>{if(contentEnd+30>tlDur)setTlDur(contentEnd+30);},[contentEnd]);
+
+  /* ═══ ZOOM ═══ Zooming keeps the playhead where it is on screen (or centres it if it
+     was off screen), like CapCut. A trackpad pinch (ctrl+wheel) zooms around the mouse. */
+  const zoomPrevRef=useRef(zoom);const zoomAnchorRef=useRef(null);
+  React.useLayoutEffect(()=>{const sc=tlScrollRef.current,z0=zoomPrevRef.current;zoomPrevRef.current=zoom;if(!sc||z0===zoom)return;
+    const a=zoomAnchorRef.current;zoomAnchorRef.current=null;
+    if(a){sc.scrollLeft=Math.max(0,a.t*zoom-a.x);}
+    else{const ph=playheadRef.current,x=ph*z0-sc.scrollLeft;sc.scrollLeft=Math.max(0,ph*zoom-(x>=0&&x<=sc.clientWidth?x:sc.clientWidth/2));}
+    syncTlView();},[zoom]);
+  useEffect(()=>{const sc=tlScrollRef.current;if(!sc)return;
+    const wh=e=>{if(!e.ctrlKey)return;e.preventDefault();/* pinch, not page zoom */
+      const r=sc.getBoundingClientRect(),x=e.clientX-r.left,z=zoomRef.current;
+      const nz=Math.max(2,Math.min(ZOOM_MAX,z*Math.exp(-e.deltaY*0.01)));if(nz===z)return;
+      zoomAnchorRef.current={t:(x+sc.scrollLeft)/z,x};setZoom(nz);};
+    sc.addEventListener("wheel",wh,{passive:false});return()=>sc.removeEventListener("wheel",wh);},[]);
+
+  /* Clicking the timeline: zoomed in far enough to see frames, the playhead lands on
+     the frame under the mouse (V1's frames), like CapCut. */
+  const frameAtTime=t=>{const v1=(tracksRef.current[0]&&tracksRef.current[0].clips)||[],tg=tagTrackRef.current.clips;
+    for(const c of v1){if(c.kind==="image"||!fpsOf(c))continue;
+      const fz=tg.filter(x=>x.clipId===c.id&&x.sourceTime>=c.clipStart&&x.sourceTime<c.clipEnd).reduce((a,x)=>a+x.duration,0);
+      if(t<c.trackStart||t>=c.trackStart+(c.clipEnd-c.clipStart)+fz)continue;
+      const f=exactFps(fpsOf(c)),fo=freezeOffset(c.trackStart,t),src=c.clipStart+(t-c.trackStart-fo);
+      if(src>=c.clipEnd)return null;/* inside a freeze at the end */
+      const k=Math.floor(src*f+1e-4);return{c,f,k,start:c.trackStart+fo+(k/f-c.clipStart),dur:1/f};}
+    return null;};
+
+  /* The pictures for the part of a clip that is on screen. Each tile shows the frame at
+     its centre (freezes show their frozen frame). Zoomed out, times snap to a
+     power-of-two grid so nearby zoom levels reuse the same pictures; zoomed in to
+     frames, each frame is one picture, repeated across its width like CapCut. */
+  const filmTiles=(clip,x,w,clipFreezes)=>{
+    if(!clip.url||clip.kind==="image")return null;
+    const tw=FILM.w,a=Math.max(0,tlView.l-x-tw),b=Math.min(w,tlView.l+tlView.w-x+tw);if(b<=a)return null;
+    const f=fpsOf(clip),step=tw/zoom,perFrame=f&&step<=2/f,q=Math.pow(2,Math.ceil(Math.log2(Math.max(step,1/64))));
+    const out=[];
+    for(let k=Math.floor(a/tw);k*tw<b;k++){
+      const o=(k*tw+tw/2)/zoom;let acc=0,src=null;
+      for(const fz of clipFreezes){const st=(fz.sourceTime-clip.clipStart)+acc;if(o<st)break;if(o<st+fz.duration){src=fz.sourceTime;break;}acc+=fz.duration;}
+      if(src==null)src=clip.clipStart+o-acc;
+      src=Math.max(clip.clipStart,Math.min(clip.clipEnd-0.001,src));
+      const t=perFrame?(Math.floor(src*f+1e-4)+0.5)/f:(Math.floor(src/q)+0.5)*q;
+      const u=filmGet(clip.url,t);
+      if(u)out.push(<img key={k} src={u} alt="" draggable={false} style={{position:"absolute",left:k*tw,top:0,width:tw,height:"100%",objectFit:"cover",pointerEvents:"none"}}/>);}
+    return out;};
+  /* leftovers of cutting: pieces of a few frames on the video tracks */
+  const tinyPieces=React.useMemo(()=>tracks.flatMap(t=>t.clips.filter(c=>!c.brand&&c.kind!=="image"&&(c.clipEnd-c.clipStart)+clipFreezeDur(c,tagTrack.clips)<TINY_PIECE)),[tracks,tagTrack]);
+  const removeTinyPieces=()=>{if(!tinyPieces.length)return;snapHist();const ids=new Set(tinyPieces.map(c=>c.id));
+    const n=tracksRef.current.map(t=>({...t,clips:t.clips.filter(c=>!ids.has(c.id))}));
+    setTracks(n);recalcAll(n,tagTrackRef.current,audioTracksRef.current);compactV1();if(ids.has(selectedClipIdRef.current))setSelectedClipId(null);
+    setNotice(`Removed ${ids.size} tiny piece${ids.size===1?"":"s"} — ⌘Z to undo.`);};
 
   /* ═══ GAP-SKIP HELPER — find next clip start after a given time ═══ */
   const findNextClipStart=useCallback((afterTime)=>{
@@ -4106,13 +4174,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   },[playhead,isPlaying,playRate,audioTracks,clipProps,tracks]);
   useEffect(()=>()=>{Object.values(audioPoolRef.current).forEach(a=>{try{a.pause();a.removeAttribute("src");a.load();}catch(e){}});},[]);
 
-  /* Lands in the middle of the target frame, so the preview shows exactly that
-     frame and a cut there starts on it. Without a measured rate: 1/30s. */
+  /* Lands at the start of the target frame (+2 ms), so the preview shows exactly that
+     frame, the line sits on its tick and a cut there starts on it. Without a measured rate: 1/30s. */
   const frameStep=n=>{
     const ph=playheadRef.current,end=contentEnd||tlDur,clamp=x=>Math.max(0,Math.min(end,x));
     const c=findActiveClip(ph),f=fpsOf(c);
     if(!c||!f||c.kind==="image"){setPlayhead(clamp(ph+n/30));return;}
-    const fo=freezeOffset(c.trackStart,ph);const k=Math.floor((c.clipStart+(ph-c.trackStart-fo))*f+1e-4)+n;const ns=(k+0.5)/f;
+    const fo=freezeOffset(c.trackStart,ph);const k=Math.floor((c.clipStart+(ph-c.trackStart-fo))*f+1e-4)+n;const ns=k/f+FRAME_IN;
     if(ns<c.clipStart||ns>=c.clipEnd){setPlayhead(clamp(ph+n/f));return;}
     setPlayhead(clamp(c.trackStart+fo+(ns-c.clipStart)));
   };
@@ -4765,7 +4833,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
 
   /* keepSel: the ruler only moves the playhead. Deselecting there made the clip's
      controls vanish on every move — unusable for setting keyframes at new times. */
-  const handleTlClick=(e,keepSel)=>{const scrollEl=tlScrollRef.current;if(!scrollEl)return;const r=scrollEl.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;setPlayhead(Math.max(0,(e.clientX-r.left+scrollL)/zoom));if(!keepSel)setSelectedClipId(null);};
+  const handleTlClick=(e,keepSel)=>{const scrollEl=tlScrollRef.current;if(!scrollEl)return;const r=scrollEl.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;
+    let t=Math.max(0,(e.clientX-r.left+scrollL)/zoom);
+    const fr=frameAtTime(t);if(fr&&fr.dur*zoom>=4)t=fr.start+FRAME_IN;
+    setPlayhead(t);if(!keepSel)setSelectedClipId(null);};
   const handlePlayheadDrag=e=>{e.stopPropagation();e.preventDefault();const scrollEl=tlScrollRef.current;if(!scrollEl)return;
     const parent=scrollEl.querySelector("[data-tl-area]")||scrollEl;
     const move=ev=>{const r=parent.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;const x=ev.clientX-r.left+scrollL;setPlayhead(Math.max(0,x/zoom));};
@@ -4887,7 +4958,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       addClipForPlayer(d,trkId,dropT,dropIsAudio);
     }catch(err){}};
 
-  const totalW=tlDur*zoom;const tickI=zoom>=80?1:zoom>=40?5:10;const ticks=[];for(let i=0;i<=tlDur;i+=tickI)ticks.push(i);const subI=tickI/5;
+  const totalW=tlDur*zoom;const tickI=[1,2,5,10,15,30,60,120,300].find(i=>i*zoom>=70)||600;const ticks=[];for(let i=0;i<=tlDur;i+=tickI)ticks.push(i);const subI=tickI/5;
   const allVideoTrkIds=tracks.map(t=>t.id);const allAudioTrkIds=audioTracks.map(t=>t.id);const allTrkIds=[...allVideoTrkIds,...allAudioTrkIds];
   const totalTracksH=tracks.length*TRACK_H+TAG_TRACK_H*2+audioTracks.length*AUDIO_TRACK_H;
 
@@ -4904,21 +4975,33 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         {audioTracks.map(t=><div key={t.id} style={{height:AUDIO_TRACK_H,display:"flex",alignItems:"center",justifyContent:"center",borderBottom:`1px solid ${C.s0}22`,color:C.lavender,fontSize:10,fontWeight:600}}><MusicIcon size={10} style={{marginRight:3}}/>{t.name}</div>)}
         <button onClick={addAudioTrack} style={{width:"100%",height:24,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:C.overlay,cursor:"pointer",fontSize:9}} title="Add audio track"><PlusIcon size={10}/></button>
       </div>
-      <div ref={tlScrollRef} style={{flex:1,overflowX:"auto",overflowY:"auto",position:"relative"}}>
+      <div ref={tlScrollRef} onScroll={syncTlView} style={{flex:1,overflowX:"auto",overflowY:"auto",position:"relative"}}>
         <div data-tl-area="1" style={{width:totalW,minWidth:"100%",position:"relative"}}>
-          <div onClick={e=>handleTlClick(e,true)} style={{height:RULER_H,position:"relative",borderBottom:`1px solid ${C.s1}`,cursor:"pointer",background:C.mantle,userSelect:"none"}}>
+          <div onClick={e=>handleTlClick(e,true)} onMouseMove={e=>{const el=frameHoverRef.current,sc=tlScrollRef.current;if(!el||!sc)return;
+              const r=sc.getBoundingClientRect(),fr=frameAtTime((e.clientX-r.left+sc.scrollLeft)/zoom);
+              if(fr&&fr.dur*zoom>=5){el.style.display="block";el.style.left=fr.start*zoom+"px";el.style.width=fr.dur*zoom+"px";}else el.style.display="none";}}
+            onMouseLeave={()=>{if(frameHoverRef.current)frameHoverRef.current.style.display="none";}}
+            style={{height:RULER_H,position:"relative",borderBottom:`1px solid ${C.s1}`,cursor:"pointer",background:C.mantle,userSelect:"none"}}>
             {socialOpen&&socialRange&&<div title="Social clip" style={{position:"absolute",top:0,bottom:0,left:socialRange.from*zoom,width:Math.max(2,(socialRange.to-socialRange.from)*zoom),background:SPOT_COLOR+"38",borderLeft:`2px solid ${SPOT_COLOR}`,borderRight:`2px solid ${SPOT_COLOR}`,pointerEvents:"none",boxSizing:"border-box"}}/>}
             {ticks.map(t=><div key={`t${t}`} style={{position:"absolute",left:t*zoom,top:0}}><div style={{position:"absolute",left:0,top:RULER_H-14,width:1,height:14,background:C.s2}}/><span style={{position:"absolute",left:4,top:2,color:C.sub,fontSize:9,fontFamily:"monospace",whiteSpace:"nowrap"}}>{fmtTime(t)}</span></div>)}
             {subI>=.5&&ticks.map(t=>{const s=[];for(let x=t+subI;x<t+tickI&&x<=tlDur;x+=subI)s.push(x);return s.map(x=><div key={`s${x}`} style={{position:"absolute",left:x*zoom,bottom:0,width:1,height:6,background:C.s1}}/>);})}
-            {/* zoomed in far enough to see frames: one tick per frame of the clip under the
-                playhead (around it), and a band over the frame on screen */}
-            {(()=>{const c=findActiveClip(playhead);const f=c&&c.kind!=="image"&&fpsMap[c.videoId]&&exactFps(fpsMap[c.videoId]);if(!f||zoom/f<5)return null;
-              const base=c.trackStart+freezeOffset(c.trackStart,playhead)-c.clipStart;/* timeline time of source 0 */
-              const k0=Math.max(Math.ceil(c.clipStart*f-1e-6),Math.floor((playhead-base-4)*f)),k1=Math.min(Math.floor(c.clipEnd*f+1e-6),Math.ceil((playhead-base+4)*f));
-              const cur=Math.floor((playhead-base)*f+1e-4);const out=[];
-              for(let k=k0;k<=k1;k++)out.push(<div key={"f"+k} style={{position:"absolute",left:(base+k/f)*zoom,bottom:0,width:1,height:k%Math.round(f)===0?10:5,background:C.s2,pointerEvents:"none"}}/>);
-              out.push(<div key="fcur" style={{position:"absolute",left:(base+cur/f)*zoom,bottom:0,width:Math.max(2,zoom/f),height:RULER_H,background:C.blue+"40",pointerEvents:"none"}}/>);
+            {/* Zoomed in far enough to see frames (like CapCut): a tick per frame of the V1
+                clips on screen, labelled "Nf" (frame within the second) or the second itself,
+                a band over the frame on screen, and a grey band following the mouse. */}
+            {(()=>{const out=[];const v1=(tracks[0]&&tracks[0].clips)||[];const L=tlView.l/zoom,R=(tlView.l+tlView.w)/zoom;
+              for(const c of v1){const f=c.kind!=="image"&&fpsOf(c);if(!f||zoom/f<5)continue;
+                const fz=clipFreezeDur(c,tagTrack.clips),cs=c.trackStart,ce=cs+(c.clipEnd-c.clipStart)+fz;if(ce<L||cs>R)continue;
+                const base=cs+freezeOffset(cs,Math.max(cs,L))-c.clipStart;/* timeline time of source 0 (freezes before the view) */
+                const px=zoom/f,every=[1,2,5,10,15,30].find(m=>m*px>=46)||30;
+                const k0=Math.max(Math.ceil(c.clipStart*f-1e-6),Math.floor((L-base)*f)),k1=Math.min(Math.floor(c.clipEnd*f+1e-6),Math.ceil((R-base)*f));
+                for(let k=k0;k<=k1;k++){const T=base+k/f;if(T>ce)break;const sec=Math.floor(T+1e-6),fr=Math.round((T-sec)*f);
+                  const major=fr===0||fr===Math.round(f);
+                  out.push(<div key={c.id+"f"+k} style={{position:"absolute",left:T*zoom,bottom:0,width:1,height:major?12:k%every===0?8:4,background:major?C.sub:C.s2,pointerEvents:"none"}}/>);
+                  if(k%every===0&&!major)out.push(<span key={c.id+"l"+k} style={{position:"absolute",left:T*zoom+3,bottom:9,color:C.overlay,fontSize:8,fontFamily:"monospace",pointerEvents:"none",whiteSpace:"nowrap"}}>{fr}f</span>);}}
+              const fr=frameAtTime(playhead);
+              if(fr&&fr.dur*zoom>=5)out.push(<div key="fcur" style={{position:"absolute",left:fr.start*zoom,bottom:0,width:Math.max(2,fr.dur*zoom),height:RULER_H,background:C.blue+"40",pointerEvents:"none"}}/>);
               return out;})()}
+            <div ref={frameHoverRef} style={{position:"absolute",left:0,bottom:0,width:0,height:RULER_H,background:"#ffffff22",pointerEvents:"none",display:"none"}}/>
           </div>
           {tracks.map(trk=>(
             <div key={trk.id} onDragOver={e=>{e.preventDefault();e.currentTarget.style.background=C.s0+"44";}} onDragLeave={e=>{e.currentTarget.style.background="transparent";}} onDrop={e=>handleDrop(e,trk.id,false)} onClick={handleTlClick}
@@ -4934,34 +5017,42 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 const pi=players.findIndex(p=>p.id===clip.playerId);const pCol=clip.brand?C.coral:(pi>=0?playerColor(pi):C.peach);
                 const emptyIntro=clip.brand==="intro"&&!clip.url;
                 const isSel=clip.id===selectedClipId;
-                const x=clip.trackStart*zoom;
+                /* A piece of a few frames was narrower than its two 8px trim handles, so a
+                   click always grabbed an edge and it could never be selected or deleted.
+                   It now gets a 14px click area on top of its neighbours, an orange mark
+                   and no trim handles. */
+                const tiny=!clip.brand&&w<24;const leftover=tiny&&effectiveD<TINY_PIECE;const hitW=tiny?Math.max(w,14):w;
+                const x=clip.trackStart*zoom-(hitW-w)/2;const edgeW=Math.min(8,hitW/4);
                 return(
                 <div key={clip.id} onMouseDown={e=>handleClipMD(e,trk.id,clip,allVideoTrkIds)} onClick={e=>e.stopPropagation()}
                   onDoubleClick={e=>{if(clip.kind==="image"){e.stopPropagation();pickIntroImage(clip.id);}}}
-                  title={emptyIntro?"Double-click to choose the athlete thumbnail":clip.brand==="outro"?"AUSA outro — stays at the end automatically":undefined}
-                  style={{position:"absolute",left:x,width:w,top:3,bottom:3,
-                    background:`linear-gradient(180deg,${pCol}cc 60%,${pCol}44 60%)`,borderRadius:5,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
-                    border:isSel?`2px solid ${C.text}`:emptyIntro?`2px dashed ${C.coral}`:`1px solid ${pCol}44`,boxShadow:isSel?`0 0 8px ${C.blue}55`:"none",
+                  title={leftover?`Very short piece: ${Math.max(1,Math.round(effectiveD*(fpsOf(clip)||30)))} frames (${effectiveD.toFixed(2)}s). Click it and press Delete — or use "Remove tiny pieces".`:emptyIntro?"Double-click to choose the athlete thumbnail":clip.brand==="outro"?"AUSA outro — stays at the end automatically":undefined}
+                  style={{position:"absolute",left:x,width:hitW,top:3,bottom:3,
+                    background:leftover?"repeating-linear-gradient(135deg,#f97316 0 4px,#fdba74 4px 8px)":tiny?pCol:`linear-gradient(180deg,${pCol}cc 60%,${pCol}44 60%)`,borderRadius:tiny?3:5,cursor:tool==="blade"?"crosshair":"grab",overflow:"hidden",
+                    border:isSel?`2px solid ${C.text}`:emptyIntro?`2px dashed ${C.coral}`:leftover?"1px solid #fff":tiny?"1px solid #ffffff88":`1px solid ${pCol}44`,boxShadow:isSel?`0 0 8px ${C.blue}55`:"none",
                     ...(emptyIntro?{background:C.coral+"14"}:{}),
-                    display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?5:1}}>
-                  <div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0}}>
+                    display:"flex",flexDirection:"column",userSelect:"none",zIndex:isSel?8:tiny?7:1}}>
+                  {/* the clip's pictures (filmstrip) behind its label, the player colour on top */}
+                  {!tiny&&<div style={{position:"absolute",left:0,top:0,width:"100%",height:"calc(100% - 22px)",overflow:"hidden",zIndex:0,pointerEvents:"none"}}>{filmTiles(clip,clip.trackStart*zoom,w,clipFreezes)}</div>}
+                  {!tiny&&<div style={{position:"absolute",left:0,right:0,top:0,height:3,background:pCol,zIndex:1,pointerEvents:"none"}}/>}
+                  {!tiny&&<div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0,position:"relative",zIndex:1,background:"linear-gradient(180deg,rgba(0,0,0,0.45),rgba(0,0,0,0) 85%)"}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
                     {clip.scene&&(()=>{const sc=migrateScene(clip.scene),l=sceneLabel(sc.label),tg=(sc.tags||[]).map(sceneTagName);if(!l&&!tg.length)return null;
                       const tip=[l&&l.name,tg.join(", "),(sc.roles||[]).length&&"good for "+sc.roles.join(", ")].filter(Boolean).join(" · ");
                       return<>{l&&<span title={tip}
                       style={{background:l.color,color:"#000",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",letterSpacing:0.3}}>{l.icon}{w>90?" "+l.name.toUpperCase():""}</span>}
-                        {tg.length>0&&w>(l?150:60)&&<span title={tip} style={{background:"#00000033",color:"#000",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:w*0.45}}>{tg.join(" · ").toUpperCase()}</span>}</>;})()}
+                        {tg.length>0&&w>(l?150:60)&&<span title={tip} style={{background:"#000000aa",color:"#fff",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:w*0.45}}>{tg.join(" · ").toUpperCase()}</span>}</>;})()}
                     {clip.audioDetached&&<span title="Sound detached to an audio track" style={{fontSize:9,marginRight:3,flexShrink:0}}>🔇</span>}
                     {clip.scene&&(clip.scene.notes||[]).length>0&&<span title={clip.scene.notes.map(n=>"“"+n.text+"”").join("\n")} style={{fontSize:9,marginRight:3,flexShrink:0}}>🗣</span>}
-                    <span style={{color:"#000",fontSize:10,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 0 4px rgba(255,255,255,0.3)"}}>{clip.name}</span>
-                    {w>80&&<span style={{color:"#00000088",fontSize:8,marginLeft:"auto",flexShrink:0,fontFamily:"monospace"}}>{clip.playerName}</span>}
-                  </div>
-                  <div style={{height:22,padding:"0 2px",opacity:0.7,flexShrink:0}}>
+                    <span style={{color:"#fff",fontSize:10,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 1px 2px rgba(0,0,0,0.9)"}}>{clip.name}</span>
+                    {w>80&&<span style={{color:"#ffffffbb",fontSize:8,marginLeft:"auto",flexShrink:0,fontFamily:"monospace",textShadow:"0 1px 2px rgba(0,0,0,0.9)"}}>{clip.playerName}</span>}
+                  </div>}
+                  {!tiny&&<div style={{height:22,padding:"0 2px",opacity:0.7,flexShrink:0,position:"relative",zIndex:1,background:C.crust+"cc"}}>
                     {clip.kind==="image"
                       ?(clip.url?<div style={{height:20,borderRadius:3,backgroundImage:`url(${clip.url})`,backgroundSize:"auto 100%",backgroundRepeat:"repeat-x"}}/>
                         :<div style={{height:20,display:"flex",alignItems:"center",color:C.coral,fontSize:8,fontWeight:700,paddingLeft:4}}>+ drop thumbnail</div>)
                       :<Waveform w={Math.max(4,w-4)} h={20} color={pCol} seed={clip.id.charCodeAt(4)||1}/>}
-                  </div>
+                  </div>}
                   {(()=>{const kf=(clipProps[clip.id]||{}).kf||{};const ts=[...new Set(Object.values(kf).flat().map(k=>k.t))];if(!ts.length)return null;
                     return ts.map(t=>{let fzb=0;clipFreezes.forEach(fz=>{if(fz.sourceTime<t)fzb+=fz.duration;});const off=(t-clip.clipStart)+fzb;if(off<0||off>effectiveD)return null;
                       return<div key={"kf"+t} title="Keyframe — click to jump here" onMouseDown={e=>{e.stopPropagation();setSelectedClipId(clip.id);setPlayhead(clip.trackStart+off+0.0001);}}
@@ -4977,8 +5068,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                       display:"flex",alignItems:"center",justifyContent:"center",borderLeft:"1px solid #60a5fa",borderRight:"1px solid #60a5fa",zIndex:2}}>
                       <span style={{color:"#fff",fontSize:8,fontWeight:800,letterSpacing:0.5,textShadow:"0 0 3px rgba(0,0,0,0.5)"}}>{fz.hasSpotlight?"❄ "+fz.playerName:"❄ FREEZE"}</span>
                     </div>;});})()}
-                  <div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,true,false,false)} style={{position:"absolute",left:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0,zIndex:3}}/>
-                  <div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,false,false,false)} style={{position:"absolute",right:0,top:0,bottom:0,width:8,cursor:"col-resize",opacity:0,zIndex:3}}/>
+                  {!tiny&&<div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,true,false,false)} style={{position:"absolute",left:0,top:0,bottom:0,width:edgeW,cursor:"col-resize",opacity:0,zIndex:3}}/>}
+                  {!tiny&&<div onMouseDown={e=>handleEdgeMouseDown(e,trk.id,clip.id,false,false,false)} style={{position:"absolute",right:0,top:0,bottom:0,width:edgeW,cursor:"col-resize",opacity:0,zIndex:3}}/>}
                 </div>);})}
             </div>
           ))}
@@ -5083,6 +5174,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       </div>
       <div style={{display:"flex",alignItems:"center",flexShrink:0}}>
       <button onClick={closeGaps} style={{display:"flex",alignItems:"center",gap:5,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 10px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:600,marginLeft:8}} title="Close gaps">Close Gaps</button>
+      {tinyPieces.length>0&&<button onClick={removeTinyPieces} title={`${tinyPieces.length} piece${tinyPieces.length===1?" is":"s are"} shorter than ${TINY_PIECE}s — leftovers of cutting, often too small to grab. Removes them all (⌘Z undoes).`}
+        style={{display:"flex",alignItems:"center",gap:5,background:"#f9731622",border:"1px solid #f97316",borderRadius:6,padding:"4px 10px",color:"#fdba74",cursor:"pointer",fontSize:10,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>
+        Remove {tinyPieces.length} tiny piece{tinyPieces.length===1?"":"s"}</button>}
       <span title={projectSavedAt?"Your timeline is saved in this browser and restores automatically":"Nothing to save yet"}
         style={{display:"flex",alignItems:"center",gap:5,marginLeft:8,color:projectSavedAt?C.green:C.s2,fontSize:10,fontWeight:600,whiteSpace:"nowrap"}}>
         <span style={{width:6,height:6,borderRadius:"50%",background:projectSavedAt?C.green:C.s2,flexShrink:0}}/>
@@ -5422,6 +5516,48 @@ async function measureFps(url){
     return std||Math.round(raw*100)/100;
   }catch(e){return null;}finally{try{v.pause();v.removeAttribute("src");v.load();v.remove();}catch(e){}}
 }
+/* ═══ FILMSTRIP ═══ The pictures inside timeline clips (like CapCut). One hidden video
+   per source makes them — one seek per picture, newest request first (what is on
+   screen now), cached as small JPEGs (LRU). At frame-level zoom every frame gets its
+   own picture. A source whose frames can't be read (storage without CORS) is skipped
+   and its clips keep their plain colour. */
+const FILM={w:82,h:46,max:3000};
+/* pieces shorter than this (≈7 frames) are leftovers of cutting — "Remove tiny pieces" clears them */
+const TINY_PIECE=0.3;
+const filmCache=new Map(),filmBad=new Set(),filmSrc=new Map(),filmSubs=new Set();let filmQ=[],filmBusy=false;
+const filmKey=(url,t)=>url+"|"+Math.round(t*1000);
+const filmGet=(url,t)=>{const k=filmKey(url,t),hit=filmCache.get(k);
+  if(hit){filmCache.delete(k);filmCache.set(k,hit);return hit;}
+  if(filmBad.has(url))return null;
+  if(!filmQ.some(q=>q.k===k)){filmQ.push({k,url,t});if(filmQ.length>240)filmQ.splice(0,filmQ.length-240);}
+  if(!filmBusy)setTimeout(filmPump,0);return null;};
+const filmSource=url=>{let s=filmSrc.get(url);if(s)return s;
+  const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";if(/^https?:\/\//i.test(url))v.crossOrigin="anonymous";
+  v.style.cssText="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;";document.body.appendChild(v);
+  const ready=new Promise((res,rej)=>{v.addEventListener("loadeddata",res,{once:true});v.addEventListener("error",rej,{once:true});setTimeout(rej,20000);});
+  ready.catch(()=>{});v.src=url;s={v,ready};filmSrc.set(url,s);
+  if(filmSrc.size>6){const[u0,s0]=filmSrc.entries().next().value;filmSrc.delete(u0);try{s0.v.removeAttribute("src");s0.v.load();s0.v.remove();}catch(e){}}
+  return s;};
+async function filmPump(){if(filmBusy)return;filmBusy=true;
+  const cv=document.createElement("canvas");cv.width=FILM.w*2;cv.height=FILM.h*2;const g=cv.getContext("2d");
+  try{while(filmQ.length){
+    await whenVisible();/* a hidden tab decodes nothing */
+    const job=filmQ.pop();
+    if(filmCache.has(job.k)||filmBad.has(job.url))continue;
+    const s=filmSource(job.url);
+    try{await s.ready;}catch(e){filmBad.add(job.url);continue;}
+    const v=s.v;
+    await new Promise(res=>{const fin=()=>{v.removeEventListener("seeked",fin);clearTimeout(tm);res();};const tm=setTimeout(fin,3000);v.addEventListener("seeked",fin);v.currentTime=Math.max(0,Math.min(job.t,(v.duration||job.t+1)-0.01));});
+    /* cover-fit the frame into the 16:9 tile */
+    const vw=v.videoWidth||16,vh=v.videoHeight||9,ta=cv.width/cv.height,va=vw/vh;let sx=0,sy=0,sw=vw,sh=vh;
+    if(va>ta){sw=vh*ta;sx=(vw-sw)/2;}else{sh=vw/ta;sy=(vh-sh)/2;}
+    try{g.drawImage(v,sx,sy,sw,sh,0,0,cv.width,cv.height);
+      const b=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.7));if(!b)continue;
+      filmCache.set(job.k,URL.createObjectURL(b));
+      while(filmCache.size>FILM.max){const[k0,u0]=filmCache.entries().next().value;filmCache.delete(k0);URL.revokeObjectURL(u0);}
+      filmSubs.forEach(f=>f());
+    }catch(e){filmBad.add(job.url);}
+  }}finally{filmBusy=false;}}
 const blobToDataUrl=b=>new Promise(r=>{if(!b)return r("");const fr=new FileReader();fr.onload=()=>r(fr.result);fr.onerror=()=>r("");fr.readAsDataURL(b);});
 
 /* ═══ SCENE LABELS & THE SCENE LIBRARY ═══
