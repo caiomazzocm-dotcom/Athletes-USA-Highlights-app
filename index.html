@@ -2518,7 +2518,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   useEffect(()=>{let raf=0;const f=()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;setFilmVer(v=>v+1);});};
     filmSubs.add(f);return()=>{filmSubs.delete(f);cancelAnimationFrame(raf);};},[]);
   /* the part of the timeline on screen, in px — pictures and frame ticks are only made for it */
-  const[tlView,setTlView]=useState({l:0,w:1600});const tlViewRaf=useRef(0);const frameHoverRef=useRef(null);
+  const[tlView,setTlView]=useState({l:0,w:1600});const tlViewRaf=useRef(0);const frameHoverRef=useRef(null);const bladeLineRef=useRef(null);
   const syncTlView=()=>{if(tlViewRaf.current)return;tlViewRaf.current=requestAnimationFrame(()=>{tlViewRaf.current=0;const sc=tlScrollRef.current;if(sc)setTlView(v=>v.l===sc.scrollLeft&&v.w===sc.clientWidth?v:{l:sc.scrollLeft,w:sc.clientWidth});});};
   useEffect(()=>{syncTlView();window.addEventListener("resize",syncTlView);return()=>window.removeEventListener("resize",syncTlView);},[]);
 
@@ -2835,6 +2835,10 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
            This forces the browser to actually download and decode video frames. */
         vel.addEventListener("loadeddata",function onld(){
           vel.removeEventListener("loadeddata",onld);
+          /* Already the clip on screen (e.g. the second piece right after a cut): show
+             exactly the frame asked for. The warm-up below jumped to the clip's start
+             and played 150ms, so the preview sat 3–4 frames off the playhead. */
+          if(vel._want!=null){vel.muted=false;if(Math.abs(vel.currentTime-vel._want)>0.01)vel.currentTime=vel._want;return;}
           vel.currentTime=c.clipStart||0;
           vel.play().then(()=>{setTimeout(()=>{vel.pause();vel.muted=false;},150);}).catch(()=>{vel.muted=false;});
         },{once:true});
@@ -3032,7 +3036,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
      new clip ids exist before the tags are re-pointed at them. Compacting first and
      re-pointing after left every tag orphaned at compaction time, and V1 closed up
      over the freeze it was supposed to leave room for. */
-  const cutClip=useCallback((trackId,clipId)=>{
+  const cutClip=useCallback((trackId,clipId,atT)=>{const playhead=atT!=null?atT:playheadRef.current;
     const isVideo=tracks.some(t=>t.clips.some(c=>c.id===clipId));
     const srcTrks=isVideo?tracks:audioTracks;
     const trk=srcTrks.find(t=>t.id===trackId);if(!trk)return;
@@ -4074,8 +4078,9 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       Object.entries(pool).forEach(([cid,vel])=>{
         if(cid===clipId){
           vel.style.opacity="1";vel.style.zIndex="2";vel.style.pointerEvents="auto";
-          vel.volume=vol;
-          if(Math.abs(vel.currentTime-seekTo)>0.15)vel.currentTime=Math.max(0,seekTo);
+          vel.volume=vol;vel._want=Math.max(0,seekTo);
+          /* paused: the exact frame; playing: only fix real drift */
+          if(Math.abs(vel.currentTime-seekTo)>(shouldPlay?0.15:0.01))vel.currentTime=Math.max(0,seekTo);
           vel.playbackRate=shouldPlay?playRate:1;
           if(shouldPlay&&vel.paused)vel.play().catch(()=>{});
           if(!shouldPlay&&!vel.paused)vel.pause();
@@ -4132,7 +4137,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       if(vel){
         vel.style.opacity="1";vel.style.zIndex="2";vel.style.pointerEvents="auto";
         vel.volume=vol;
-        if(!vel.paused)vel.pause();
+        if(!vel.paused)vel.pause();vel._want=Math.max(0,vt);
         /* within ~a quarter frame — anything looser and a one-frame step never shows */
         if(Math.abs(vel.currentTime-vt)>0.01)vel.currentTime=Math.max(0,vt);
         activeVideoRef.current=vel;
@@ -4842,7 +4847,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const move=ev=>{const r=parent.getBoundingClientRect();const scrollL=scrollEl.scrollLeft;const x=ev.clientX-r.left+scrollL;setPlayhead(Math.max(0,x/zoom));};
     const up=()=>{document.removeEventListener("mousemove",move);document.removeEventListener("mouseup",up);};
     document.addEventListener("mousemove",move);document.addEventListener("mouseup",up);};
-  const handleClipMD=(e,trkId,clip,allTrkIds)=>{e.stopPropagation();if(tool==="blade"){cutClip(trkId,clip.id);return;}
+  /* the time under the mouse; zoomed in to frames, the start of the frame under it */
+  const timeAtMouse=e=>{const sc=tlScrollRef.current;if(!sc)return null;const r=sc.getBoundingClientRect();
+    const t=Math.max(0,(e.clientX-r.left+sc.scrollLeft)/zoom);const fr=frameAtTime(t);return fr&&fr.dur*zoom>=4?fr.start:t;};
+  /* Blade (like CapCut): cuts the clip where you click — before, it cut at the playhead,
+     so clicking a clip the playhead wasn't on did nothing. The playhead moves to the
+     cut, showing the first frame of the second piece. */
+  const handleClipMD=(e,trkId,clip,allTrkIds)=>{e.stopPropagation();
+    if(tool==="blade"){const t=timeAtMouse(e);if(t==null)return;cutClip(trkId,clip.id,t);setPlayhead(t+FRAME_IN);return;}
     setSelectedClipId(clip.id);const sx=e.clientX,sts=clip.trackStart,tidx=allTrkIds.indexOf(trkId),sy=e.clientY;let curTid=trkId;const th=clip.isAudio?AUDIO_TRACK_H:TRACK_H;const cDur=clip.clipEnd-clip.clipStart;
     const onM=ev=>{const dx=ev.clientX-sx;let ns=Math.max(0,sts+dx/zoom);ns=snapToEdges(ns,clip.id,cDur);const dy=ev.clientY-sy,off=Math.round(dy/th),ni=Math.min(allTrkIds.length-1,Math.max(0,tidx+off)),ntid=allTrkIds[ni];moveClip(curTid,clip.id,ns,ntid);curTid=ntid;};
     const onU=()=>{document.removeEventListener("mousemove",onM);document.removeEventListener("mouseup",onU);compactV1();};document.addEventListener("mousemove",onM);document.addEventListener("mouseup",onU);};
@@ -4976,7 +4988,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         <button onClick={addAudioTrack} style={{width:"100%",height:24,display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",border:"none",color:C.overlay,cursor:"pointer",fontSize:9}} title="Add audio track"><PlusIcon size={10}/></button>
       </div>
       <div ref={tlScrollRef} onScroll={syncTlView} style={{flex:1,overflowX:"auto",overflowY:"auto",position:"relative"}}>
-        <div data-tl-area="1" style={{width:totalW,minWidth:"100%",position:"relative"}}>
+        <div data-tl-area="1" style={{width:totalW,minWidth:"100%",position:"relative"}}
+          onMouseMove={e=>{const el=bladeLineRef.current;if(!el)return;if(tool!=="blade"){el.style.display="none";return;}
+            const t=timeAtMouse(e);if(t==null)return;el.style.display="block";el.style.left=(t*zoom)+"px";}}
+          onMouseLeave={()=>{if(bladeLineRef.current)bladeLineRef.current.style.display="none";}}>
+          <div ref={bladeLineRef} style={{position:"absolute",top:RULER_H,width:2,marginLeft:-1,height:totalTracksH+48,background:"#fb923c",boxShadow:"0 0 4px #fb923c",zIndex:25,pointerEvents:"none",display:"none"}}/>
           <div onClick={e=>handleTlClick(e,true)} onMouseMove={e=>{const el=frameHoverRef.current,sc=tlScrollRef.current;if(!el||!sc)return;
               const r=sc.getBoundingClientRect(),fr=frameAtTime((e.clientX-r.left+sc.scrollLeft)/zoom);
               if(fr&&fr.dur*zoom>=5){el.style.display="block";el.style.left=fr.start*zoom+"px";el.style.width=fr.dur*zoom+"px";}else el.style.display="none";}}
