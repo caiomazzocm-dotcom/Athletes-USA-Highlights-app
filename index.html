@@ -2996,8 +2996,8 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(out.length){setEditorImages(p=>[...p,...out]);setShowEditorSection(true);}
     return out;
   };
-  const handleEdVidUpload=async(files)=>{const vids=[];for(const f of files){const id=uid("evid");const url=URL.createObjectURL(f);const dur=await getMediaDur(url);await storeBlob(id,f);vids.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorVideos(p=>[...p,...vids]);};
-  const handleEdMusicUpload=async(files)=>{const songs=[];for(const f of files){const id=uid("mus");const url=URL.createObjectURL(f);const dur=await getAudioDur(url);await storeBlob(id,f);songs.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorMusic(p=>[...p,...songs]);};
+  const handleEdVidUpload=async(files)=>{const vids=[];for(const f of files){const id=uid("evid");const url=URL.createObjectURL(f);const dur=await getMediaDur(url);await storeBlob(id,f);vids.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorVideos(p=>[...p,...vids]);if(vids.length)setShowEditorSection(true);return vids;};
+  const handleEdMusicUpload=async(files)=>{const songs=[];for(const f of files){const id=uid("mus");const url=URL.createObjectURL(f);const dur=await getAudioDur(url);await storeBlob(id,f);songs.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur});}setEditorMusic(p=>[...p,...songs]);if(songs.length)setShowEditorSection(true);return songs;};
 
   /* ═══ MAIN TRACK COMPACTION (Magnetic Timeline — like Final Cut Pro) ═══ */
   /* V1 (primary storyline) ALWAYS stays gapless — clips ripple together after every
@@ -5110,8 +5110,84 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const free=audioTracks.find(t=>!t.clips.some(x=>x.trackStart<end-0.001&&x.trackStart+(x.clipEnd-x.clipStart)>start+0.001));
     let tid=free&&free.id;
     if(!tid){tid=uid("atrk");setAudioTracks(p=>[...p,{id:tid,name:`A${p.length+1}`,clips:[]}]);}
-    addClip(tid,{id:m.id,name:m.name,url:m.file,duration:dur,playerId:"editor",playerName:"AUSA Music"},start,true);
+    addClip(tid,{id:m.id,name:m.name,url:m.file,duration:dur,playerId:"editor",playerName:m.source||"AUSA Music"},start,true);
   };
+  const addBrandSongRef=useRef(null);addBrandSongRef.current=addBrandSong;
+
+  /* Drag and drop from Finder (works offline — nothing is uploaded).
+     Videos → Editor Media and onto the end of the reel, in the order dropped
+     (hold ⌥ over a video track to place them exactly there). Songs → Editor Media
+     and under the reel like an AUSA song (dropped on an audio track: right there).
+     Pictures → Editor Media; the first one fills an empty intro. */
+  const FINDER_VID=/\.(mp4|mov|m4v|webm|mkv|avi|mts|3gp)$/i,FINDER_AUD=/\.(mp3|m4a|wav|aac|ogg|oga|flac|aif|aiff|opus)$/i,FINDER_IMG=/\.(jpe?g|png|gif|webp|heic|bmp)$/i;
+  const finderKind=f=>{const t=f.type||"";
+    if(t.startsWith("video/")||(!t&&FINDER_VID.test(f.name)))return"video";
+    if(t.startsWith("audio/")||(!t&&FINDER_AUD.test(f.name)))return"audio";
+    if(t.startsWith("image/")||(!t&&FINDER_IMG.test(f.name)))return"image";
+    return null;};
+  /* wait for React to apply the last change; a timer as well as a frame, because
+     frames stop while the window is in the background */
+  const afterRender=async()=>{const tick=renderTickRef.current;for(let i=0;i<30&&renderTickRef.current===tick;i++)await new Promise(r=>{requestAnimationFrame(r);setTimeout(r,40);});};
+  const addFinderFiles=async(files,where={})=>{
+    const byName=(a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true});
+    const vids=files.filter(f=>finderKind(f)==="video").sort(byName),auds=files.filter(f=>finderKind(f)==="audio"),imgs=files.filter(f=>finderKind(f)==="image");
+    const skipped=files.length-vids.length-auds.length-imgs.length;
+    if(!vids.length&&!auds.length&&!imgs.length){setNotice("Those files aren't videos, songs or pictures, so nothing was added.");return;}
+    setNotice(`Adding ${files.length-skipped} file${files.length-skipped===1?"":"s"}…`);
+    const said=[];
+    if(imgs.length){
+      const added=await addEditorImages(imgs);
+      const intro=tracksRef.current[0]&&tracksRef.current[0].clips.find(c=>c.brand==="intro");
+      if(added[0]&&intro&&!intro.url){putThumbnail(added[0]);await afterRender();said.push("the picture is the intro thumbnail");}
+      else if(added.length)said.push(`${added.length} picture${added.length===1?"":"s"} in Editor Media`);
+    }
+    if(vids.length){
+      const added=await handleEdVidUpload(vids);
+      let at=where.at;
+      for(const v of added){
+        const data={...v,playerId:"editor",playerName:"Editor",duration:v.duration,type:"video"};
+        if(where.alt&&where.trackId&&!where.isAudio){addClipRef.current(where.trackId,data,at,false);at+=v.duration||0;}
+        else addClipRef.current(tracksRef.current[0].id,data,v1EndPosRef.current(),false);
+        await afterRender();
+      }
+      said.push(`${added.length} video${added.length===1?"":"s"} at the end of the reel`);
+    }
+    if(auds.length){
+      const added=await handleEdMusicUpload(auds);
+      if(added[0]){
+        await afterRender();
+        let spot="under the reel";
+        if(where.isAudio&&where.trackId){
+          /* the track aimed at, unless something already plays there — then the next free one */
+          const at=where.at,end=at+(added[0].duration||0),ats=audioTracksRef.current;
+          const busy=t=>t.clips.some(x=>x.trackStart<end-0.001&&x.trackStart+(x.clipEnd-x.clipStart)>at+0.001);
+          const aimed=ats.find(t=>t.id===where.trackId);
+          let tr=aimed&&!busy(aimed)?aimed:ats.find(t=>!busy(t));
+          if(!tr){tr={id:uid("atrk"),name:`A${ats.length+1}`,clips:[]};setAudioTracks(p=>[...p,tr]);await afterRender();}
+          addClipRef.current(tr.id,{...added[0],playerId:"editor",playerName:"Your music",duration:added[0].duration},at,true);
+          spot=`on ${tr.name} at ${fmtTime(at)}`;}
+        else addBrandSongRef.current({id:added[0].id,name:added[0].name,file:added[0].url,dur:added[0].duration,source:"Your music"});
+        said.push(`"${added[0].name}" ${spot}`+(added.length>1?` (the other ${added.length-1} song${added.length>2?"s are":" is"} in Editor Media)`:""));
+      }
+    }
+    setNotice("Added: "+said.join(" · ")+(skipped?` · ${skipped} file${skipped===1?"":"s"} skipped (not a video, song or picture)`:""));
+  };
+  const addFinderFilesSafe=async(files,where)=>{try{await addFinderFiles(files,where);}catch(err){console.error("Drop from Finder failed:",err);setNotice("Couldn't add those files: "+(err&&err.message||err));}};
+  const addFinderFilesRef=useRef(null);addFinderFilesRef.current=addFinderFilesSafe;
+  /* Anywhere on the Studio: show where things will go while dragging, and never let
+     Chrome open a dropped video in place of the app. Drops on a track are handled by
+     the track (position-aware) and arrive here already handled. */
+  const[finderDrag,setFinderDrag]=useState(false);
+  useEffect(()=>{
+    const hasFiles=e=>e.dataTransfer&&Array.from(e.dataTransfer.types||[]).includes("Files");
+    const over=e=>{if(!hasFiles(e))return;e.preventDefault();e.dataTransfer.dropEffect="copy";setFinderDrag(true);};
+    const leave=e=>{if(!e.relatedTarget||e.clientX<=0||e.clientY<=0||e.clientX>=innerWidth||e.clientY>=innerHeight)setFinderDrag(false);};
+    const drop=e=>{if(!hasFiles(e))return;setFinderDrag(false);if(e.defaultPrevented)return;e.preventDefault();
+      const fl=Array.from(e.dataTransfer.files||[]);if(fl.length)addFinderFilesRef.current(fl);};
+    const end=()=>setFinderDrag(false);
+    window.addEventListener("dragover",over);window.addEventListener("dragleave",leave);window.addEventListener("drop",drop);window.addEventListener("dragend",end);
+    return()=>{window.removeEventListener("dragover",over);window.removeEventListener("dragleave",leave);window.removeEventListener("drop",drop);window.removeEventListener("dragend",end);};
+  },[]);
 
   /* Skim: the mouse position across a folder clip picks the moment shown in the
      hover preview. The video is seeked directly (no re-render per mouse move). */
@@ -5122,7 +5198,11 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const vid=skimVidRef.current;if(vid&&vid.dataset.src===v.url&&vid.readyState>=1&&!vid.seeking){try{vid.currentTime=t;}catch(err){}}};
 
   const handleDrop=(e,trkId,isAudio=false)=>{e.preventDefault();e.currentTarget.style.background="transparent";
-    const dropped=e.dataTransfer.files&&e.dataTransfer.files[0];
+    const fl=Array.from(e.dataTransfer.files||[]);
+    if(fl.length&&fl.some(f=>finderKind(f)==="video"||finderKind(f)==="audio")){
+      const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
+      addFinderFilesSafe(fl,{trackId:trkId,isAudio,at:Math.max(0,x/zoom),alt:e.altKey});return;}
+    const dropped=fl[0];
     if(dropped&&dropped.type.startsWith("image/")){const intro=tracks[0].clips.find(c=>c.brand==="intro");if(intro)setIntroImage(intro.id,dropped);return;}
     try{const d=JSON.parse(e.dataTransfer.getData("application/json"));
       if(d.type==="image"){putThumbnail(d);return;}const r=e.currentTarget.getBoundingClientRect();const x=e.clientX-r.left+(tlScrollRef.current?.scrollLeft||0);
@@ -5413,6 +5493,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
       <div style={{color:C.overlay,fontSize:10,marginTop:8,lineHeight:1.5,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sceneJob.name}</div>
       <div style={{color:sceneJob.paused?C.peach||"#fab387":C.overlay,fontSize:10,lineHeight:1.5}}>{sceneJob.paused?"Paused while this tab is in the background — it carries on when you come back.":"Takes about a quarter of the clip's length. Keep this tab open."}</div>
       <button onClick={()=>{sceneCancelRef.current=true;}} style={{marginTop:8,background:"transparent",border:`1px solid ${C.s1}`,borderRadius:6,padding:"4px 12px",color:C.sub,cursor:"pointer",fontSize:10,fontWeight:700}}>Cancel</button>
+    </div>}
+    {finderDrag&&<div style={{position:"fixed",inset:0,zIndex:1300,pointerEvents:"none",border:`3px dashed ${C.blue}`,background:"rgba(8,8,16,0.55)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:C.mantle,border:`1px solid ${C.blue}88`,borderRadius:12,padding:"16px 22px",color:C.text,fontSize:13,fontWeight:700,textAlign:"center",lineHeight:1.7,boxShadow:"0 10px 30px rgba(0,0,0,0.5)"}}>
+        <div style={{fontSize:15,marginBottom:4}}>Drop to add</div>
+        <div style={{color:C.sub,fontWeight:600}}>🎬 Videos → end of the reel · 🎵 Songs → under the reel · 🖼 Pictures → intro thumbnail</div>
+        <div style={{color:C.overlay,fontWeight:600,fontSize:11}}>Drop on a track to place it there (⌥ for videos) · works offline</div>
+      </div>
     </div>}
     {notice&&<div style={{position:"fixed",left:"50%",bottom:24,transform:"translateX(-50%)",zIndex:1200,background:C.mantle,border:`1px solid ${SPOT_COLOR}88`,borderRadius:10,padding:"10px 16px",color:"#fff",fontSize:12,fontWeight:700,boxShadow:"0 10px 30px rgba(0,0,0,0.5)",maxWidth:"min(760px, calc(100vw - 32px))",textAlign:"center"}}>{notice}</div>}
     {voice&&<div style={{position:"fixed",left:"50%",bottom:notice?78:24,transform:"translateX(-50%)",zIndex:1201,display:"flex",alignItems:"center",gap:10,background:"#18181bee",border:"1px solid #ef444499",borderRadius:24,padding:"9px 16px",color:"#fff",fontSize:12,boxShadow:"0 10px 30px rgba(0,0,0,0.5)",maxWidth:"min(760px, calc(100vw - 32px))"}}>

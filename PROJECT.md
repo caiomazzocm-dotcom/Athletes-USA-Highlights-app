@@ -373,6 +373,13 @@ yellow: #eab308  lavender: #a78bfa  peach: #fb923c   coral: #f43f5e
     - **Offline badge** (bottom-left, every screen): amber "Offline — your work is saved on this computer"; green "Back online…" for 5s when the connection returns.
     - **Videos added offline**: an athlete upload with no internet skips the cloud (it used to retry for up to 10 min) and is kept on this computer; when the app is online again it uploads every player video that has no cloud link but is on this computer, then saves the player (`syncingRef` effect in App).
     - Verified in Chrome on a localhost test copy: the worker saved 13 app files + 8 libraries; with the server switched off a new tab opened the Studio from the saved copy, the AUSA outro played and seeked to 4s, a song loaded (132s); Save offline streamed Christian Frizzi's 27 videos with the % on the button. Not testable here: true airplane mode for Firestore (Firebase's documented offline behaviour) and the reconnect upload (would write to the real cloud).
+56. Drag and drop from Finder (Nov 11 2026) — Caio: "if I have the video and the songs on my computer already… open the app offline, drag and drop the video and work on it?" Before, only pictures could be dropped (onto the intro); a dropped video made Chrome open the file in place of the app.
+    - Drop anywhere on the Studio (`addFinderFiles`, window `dragover`/`drop` listeners; a dashed overlay explains where things go while dragging). Nothing is uploaded, so it works offline; files are kept in the browser's video store like Editor Media uploads.
+    - **Videos** → Editor Media and the end of the reel (before the outro), sorted by file name ("1 …", "2 …"). On a video track with ⌥ held: at that exact spot, one after another.
+    - **Songs** → Editor Media and under the reel like an AUSA song (`addBrandSong`, first free audio track); extra songs stay in Editor Media. Dropped on a music track: at that time, on that track, or the next free track (a new one if needed) when something already plays there.
+    - **Pictures** → Editor Media; the first fills an empty intro. Other files are skipped and counted. The notice says what went where; errors show as a notice too.
+    - `afterRender` waits for a frame **or** 40 ms: frames stop when the window is in the background, which stalled the first drop after a reload.
+    - Verified in a test copy with simulated Finder drops: two videos + a song + a .txt in one drop → videos at 5.00 and 11.06 in name order before the outro, song 5.00–15.22 under the reel, 1 file skipped; a picture became the intro; a song dropped on A1 where music already plays went to a new A2 at the drop time.
 ---
 
 ## Roadmap agreed with Caio (Sept 25 2026)
