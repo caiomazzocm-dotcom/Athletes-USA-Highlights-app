@@ -116,6 +116,7 @@ const MusicIcon=p=><I {...p} d={<><path d="M9 18V5l12-2v13"/><circle cx="6" cy="
 const GripIcon=p=><I {...p} d={<><circle cx="9" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="19" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="19" r="1" fill="currentColor" stroke="none"/></>}/>;
 const MaximizeIcon=p=><I {...p} d={<><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></>}/>;
 const MoveIcon=p=><I {...p} d={<><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="15 19 12 22 9 19"/><polyline points="19 9 22 12 19 15"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="2" x2="12" y2="22"/></>}/>;
+const CloudDownIcon=p=><I {...p} d={<><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></>}/>;
 const DownloadIcon=p=><I {...p} d={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>}/>;
 const LinkIcon=p=><I {...p} d={<><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></>}/>;
 const ExternalLinkIcon=p=><I {...p} d={<><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></>}/>;
@@ -159,19 +160,28 @@ const openVDB=()=>new Promise((res,rej)=>{const rq=indexedDB.open(VDB_NAME,VDB_V
 const storeBlob=async(id,blob)=>{const db=await openVDB();return new Promise((res,rej)=>{const tx=db.transaction(VDB_STORE,"readwrite");tx.objectStore(VDB_STORE).put(blob,id);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});};
 const getBlob=async(id)=>{const db=await openVDB();return new Promise((res,rej)=>{const tx=db.transaction(VDB_STORE,"readonly");const rq=tx.objectStore(VDB_STORE).get(id);rq.onsuccess=()=>res(rq.result||null);rq.onerror=()=>rej(rq.error);});};
 const deleteBlob=async(id)=>{const db=await openVDB();return new Promise((res,rej)=>{const tx=db.transaction(VDB_STORE,"readwrite");tx.objectStore(VDB_STORE).delete(id);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});};
+const blobKeys=async()=>{try{const db=await openVDB();return await new Promise((res,rej)=>{const rq=db.transaction(VDB_STORE,"readonly").objectStore(VDB_STORE).getAllKeys();rq.onsuccess=()=>res(new Set(rq.result||[]));rq.onerror=()=>rej(rq.error);});}catch(e){return new Set();}};
+/* Pictures (thumbnails, profile photos) live in Firebase Storage; offline the app's
+   service worker answers from this cache. */
+const OFFLINE_MEDIA_CACHE="ausa-media-v1";
+const cacheMediaUrl=async u=>{if(!u||!/^https?:/.test(u)||!("caches" in window))return false;try{const c=await caches.open(OFFLINE_MEDIA_CACHE);if(await c.match(u))return true;const r=await fetch(u);if(!r.ok)return false;await c.put(u,r);return true;}catch(e){return false;}};
 const hydratePlayerVideos=async(players)=>{const out=[];for(const pl of players){const cats=[];for(const cat of pl.categories){const vids=[];for(const v of cat.videos){try{const blob=await getBlob(v.id);if(blob){const url=URL.createObjectURL(blob);vids.push({...v,url});}else{vids.push({...v,url:v.cloudUrl||v.url||""});}}catch(e){vids.push({...v,url:v.cloudUrl||v.url||""});}}cats.push({...cat,videos:vids});}out.push({...pl,categories:cats});}return out;};
 
 /* ═══ FIREBASE CLOUD ═══ */
 const firebaseConfig={apiKey:"AIzaSyBuce5w22HDy9mFsx5jz7g3s9XXtKUNlgE",authDomain:"athletes-usa.firebaseapp.com",projectId:"athletes-usa",storageBucket:"athletes-usa.firebasestorage.app",messagingSenderId:"599507645774",appId:"1:599507645774:web:8aa8c5f518b0dda6d45a1f"};
 firebase.initializeApp(firebaseConfig);
 const fbDb=firebase.firestore();
+/* Offline mode: Firestore keeps a copy on this computer, so data reads work with no
+   internet and changes made offline are sent automatically when it comes back —
+   even if the tab was closed in between. */
+try{fbDb.enablePersistence({synchronizeTabs:true}).catch(e=>console.warn("Offline data copy unavailable:",e.code||e));}catch(e){}
 const fbStorage=firebase.storage();
 
 const uploadVideoToCloud=async(videoId,blob,onProgress)=>{const ref=fbStorage.ref(`videos/${videoId}`);const task=ref.put(blob);if(onProgress)task.on("state_changed",snap=>onProgress(snap.bytesTransferred/snap.totalBytes));await task;return await ref.getDownloadURL();};
 const deleteVideoFromCloud=async(videoId)=>{try{await fbStorage.ref(`videos/${videoId}`).delete();}catch(e){}};
 const savePlayerToCloud=async(player)=>{try{const safe={id:player.id,name:player.name,recruitingClass:player.recruitingClass,size:player.size||"",dob:player.dob||"",shirtNumber:player.shirtNumber||"",uniformDesc:player.uniformDesc||"",positions:player.positions||[],profilePicUrl:player.profilePicUrl||"",playingPicUrl:player.playingPicUrl||"",phone:player.phone||"",gameLinks:player.gameLinks||[],extraPhotos:player.extraPhotos||[],categories:player.categories.map(c=>({...c,videos:c.videos.map(v=>({id:v.id,name:v.name,duration:v.duration,cloudUrl:v.cloudUrl||""}))}))};await fbDb.collection("players").doc(player.id).set(safe);}catch(e){console.warn("Cloud save failed:",e);}};
 const deletePlayerFromCloud=async(playerId)=>{try{await fbDb.collection("players").doc(playerId).delete();}catch(e){}};
-const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("players").get();return snap.docs.map(d=>{const p=d.data();return{...p,categories:(p.categories||[]).map(c=>({...c,videos:(c.videos||[]).map(v=>({...v,url:v.cloudUrl||""}))}))};});}catch(e){console.warn("Cloud load failed:",e);return[];}};
+const loadPlayersFromCloud=async()=>{try{const snap=await fbDb.collection("players").get(navigator.onLine?undefined:{source:"cache"});return snap.docs.map(d=>{const p=d.data();return{...p,categories:(p.categories||[]).map(c=>({...c,videos:(c.videos||[]).map(v=>({...v,url:v.cloudUrl||""}))}))};});}catch(e){console.warn("Cloud load failed:",e);return[];}};
 
 /* ═══ FEEDBACK CLOUD ═══ */
 const uploadFeedbackScreenshot=async(feedbackId,file,idx)=>{const ref=fbStorage.ref(`feedback/${feedbackId}/screenshot_${idx}_${Date.now()}`);await ref.put(file);return await ref.getDownloadURL();};
@@ -1379,7 +1389,7 @@ function AthletePortal({player,onUpdatePlayer,onBack,isEditorMode,onOpenOverlay,
     for(let i=0;i<files.length;i++){const f=files[i];const id=uid("vid");const url=URL.createObjectURL(f);const dur=await getMediaDur(url);
       setUploadProg({cur:i+1,total:files.length,pct:0,name:f.name});
       let cloudUrl="";
-      try{cloudUrl=await uploadVideoToCloud(id,f,pct=>setUploadProg(p=>({...p,pct})));}catch(e){console.warn("Cloud upload failed:",e);}
+      if(navigator.onLine){try{cloudUrl=await uploadVideoToCloud(id,f,pct=>setUploadProg(p=>({...p,pct})));}catch(e){console.warn("Cloud upload failed:",e);}}
       await storeBlob(id,f);
       vids.push({id,name:f.name.replace(/\.[^.]+$/,""),url,duration:dur,cloudUrl});}
     setUploadProg(null);
@@ -2734,6 +2744,61 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     });
     return out;
   },[players,activePlayerId,tracks,tagTrack,projectSavedAt]);
+
+  /* Offline mode — "Save offline" on a player copies every video their project
+     needs (and their pictures) onto this computer, so it can be edited, previewed
+     and exported with no internet. Videos go where uploads from this computer
+     already live (the browser's video store); pictures go to the offline cache. */
+  const[offKeys,setOffKeys]=useState(()=>new Set());
+  const[offSaving,setOffSaving]=useState({});/* {playerId:{done,total}} */
+  useEffect(()=>{blobKeys().then(setOffKeys);},[players]);
+  const offlineNeeds=pl=>{
+    const urlOf={};players.forEach(p=>(p.categories||[]).forEach(c=>(c.videos||[]).forEach(v=>{const u=v.cloudUrl||v.url;if(u&&/^https?:/.test(u))urlOf[v.id]=u;})));
+    const vids={};(pl.categories||[]).forEach(c=>(c.videos||[]).forEach(v=>{vids[v.id]=urlOf[v.id]||"";}));
+    const pics=new Set([pl.profilePicUrl,pl.playingPicUrl,...(pl.extraPhotos||[]).map(x=>x.url)].filter(Boolean));
+    let trk=null;
+    if(pl.id===activePlayerId)trk=[...tracks,...audioTracks];
+    else{try{const sv=JSON.parse(localStorage.getItem(projectKey(pl.id))||"null");if(sv)trk=[...(sv.tracks||[]),...(sv.audioTracks||[])];}catch(e){}}
+    (trk||[]).forEach(t=>(t.clips||[]).forEach(c=>{
+      if(c.brand)return;
+      if(c.kind==="image"){const u=c.url||c.srcUrl;if(u&&/^https?:/.test(u))pics.add(u);return;}
+      if(c.videoId&&!(c.videoId in vids))vids[c.videoId]=urlOf[c.videoId]||(c.srcUrl&&/^https?:/.test(c.srcUrl)?c.srcUrl:(c.url&&/^https?:/.test(c.url)?c.url:""));
+    }));
+    return{vids,pics:[...pics]};
+  };
+  const offReadyMap=React.useMemo(()=>{const out={};players.forEach(pl=>{const ids=Object.keys(offlineNeeds(pl).vids);out[pl.id]=ids.length>0&&ids.every(id=>offKeys.has(id));});return out;},[players,offKeys,activePlayerId,tracks,audioTracks]);
+  const offlineReady=pl=>!!offReadyMap[pl.id];
+  const saveOffline=async pl=>{
+    if(offSaving[pl.id])return;
+    if(!navigator.onLine){alert("You're offline — connect to the internet to save "+pl.name+" for offline.");return;}
+    try{if(navigator.storage&&navigator.storage.persist)await navigator.storage.persist();}catch(e){}
+    const{vids,pics}=offlineNeeds(pl);const have=await blobKeys();
+    const todo=Object.entries(vids).filter(([id])=>!have.has(id));
+    const total=todo.length+pics.length;let done=0,failed=0;const got={};
+    setOffSaving(p=>({...p,[pl.id]:{done,total,pct:0}}));
+    /* streamed so the button can show how far a big video has got (they're often 300 MB+) */
+    const getBlobFrom=async(u,onPct)=>{try{const r=await fetch(u);if(r.ok){
+        const len=+r.headers.get("content-length")||0;if(!r.body||!len)return await r.blob();
+        const rd=r.body.getReader();const parts=[];let got=0,last=-1;
+        for(;;){const{done:end,value}=await rd.read();if(end)break;parts.push(value);got+=value.length;const pc=Math.floor(got/len*100);if(pc!==last){last=pc;onPct(pc,got,len);}}
+        return new Blob(parts,{type:r.headers.get("content-type")||"video/mp4"});}}catch(e){}
+      return await new Promise(res=>{const x=new XMLHttpRequest();x.open("GET",u,true);x.responseType="blob";x.onload=()=>res(x.status===200?x.response:null);x.onerror=()=>res(null);x.send();});};
+    for(const[id,u] of todo){
+      let ok=false;
+      if(u){const b=await getBlobFrom(u,(pct,got,len)=>setOffSaving(p=>({...p,[pl.id]:{done,total,pct,mb:`${Math.round(got/1e6)} / ${Math.round(len/1e6)} MB`}})));if(b&&b.size){try{await storeBlob(id,b);got[id]=URL.createObjectURL(b);ok=true;}catch(e){console.warn("Offline save failed (disk full?):",e);}}}
+      if(!ok)failed++;done++;setOffSaving(p=>({...p,[pl.id]:{done,total,pct:0}}));
+    }
+    for(const u of pics){await cacheMediaUrl(u);done++;setOffSaving(p=>({...p,[pl.id]:{done,total,pct:0}}));}
+    /* the open timeline switches to the saved copies right away */
+    if(Object.keys(got).length){
+      const swap=ts=>ts.map(t=>({...t,clips:t.clips.map(c=>got[c.videoId]&&!(c.url||"").startsWith("blob:")?{...c,url:got[c.videoId]}:c)}));
+      setTracks(swap);setAudioTracks(swap);
+      if(onRefreshPlayers)onRefreshPlayers();
+    }
+    setOffKeys(await blobKeys());
+    setOffSaving(p=>{const n={...p};delete n[pl.id];return n;});
+    if(failed)alert(`${pl.name}: ${failed} of ${todo.length} video(s) could not be saved for offline. Check the internet connection and press Save offline again.`);
+  };
 
   /* Autosave, debounced. Disarmed until the initial load finishes so an empty
      starting timeline can never overwrite a saved project. */
@@ -4409,6 +4474,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
               ?<span style={{fontSize:8,fontWeight:800,letterSpacing:0.8,color:"#fff",background:SPOT_COLOR,padding:"2px 6px",borderRadius:4}}>EDITING</span>
               :<button onClick={e=>{e.stopPropagation();openProject(pl.id);}} title={`Open ${pl.name}'s project — your current edit is saved first`}
                 style={{fontSize:9,fontWeight:700,color:SPOT_COLOR,background:"transparent",border:`1px solid ${SPOT_COLOR}88`,borderRadius:4,padding:"1px 7px",cursor:"pointer"}}>Edit</button>}
+            {(()=>{const sv=offSaving[pl.id];const ready=!sv&&offlineReady(pl);
+              return<button onClick={e=>{e.stopPropagation();saveOffline(pl);}}
+                title={sv?`Saving for offline… ${Math.min(sv.done+1,sv.total)} of ${sv.total}${sv.mb?" · "+sv.mb:""}`:ready?`${pl.name} is saved on this computer — works offline. Press again to save anything new.`:`Save offline — copy ${pl.name}'s videos to this computer so you can edit with no internet`}
+                style={{...ib,display:"flex",alignItems:"center",gap:2,color:ready?C.green:C.blue,padding:2,marginLeft:2,opacity:sv||ready?1:0.7}}
+                onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity=sv||ready?"1":"0.7"}>
+                {sv?<span style={{fontSize:8,fontWeight:800}}>{sv.pct?sv.pct+"%":`${sv.done}/${sv.total}`}</span>:ready?<CheckIcon size={12}/>:<CloudDownIcon size={12}/>}
+              </button>;})()}
             <button onClick={e=>{e.stopPropagation();downloadPlayerZip(pl,prog=>{}).then(r=>{createBatchFromDownload(pl,"Editor").catch(()=>{});if(r&&r.missing>0)alert(r.downloaded+"/"+r.total+" clips downloaded. "+r.missing+" missing — see MISSING_FILES.txt");}).catch(err=>alert("Zip failed: "+err.message));}}
               style={{...ib,color:C.green,padding:2,marginLeft:2,opacity:0.7}} title="Download all clips as ZIP"
               onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.7"}>
@@ -6114,6 +6186,40 @@ function App(){
 
   useEffect(()=>{if(hydrated)savePlayers(players);},[players,hydrated]);
 
+  /* Offline mode: a video added with no internet is kept on this computer only.
+     When the connection is back (or the app opens online), send it to the cloud and
+     record its cloud link, so other devices and editors can see it too. */
+  const playersNow=useRef(players);playersNow.current=players;
+  const syncingRef=useRef(false);
+  useEffect(()=>{
+    if(!hydrated)return;
+    const run=async()=>{
+      if(!navigator.onLine||syncingRef.current)return;
+      syncingRef.current=true;
+      try{
+        for(const pl of playersNow.current){
+          const pending=[];
+          for(const c of pl.categories||[])for(const v of c.videos||[])if(!v.cloudUrl)pending.push(v.id);
+          if(!pending.length)continue;
+          const done={};
+          for(const id of pending){
+            if(!navigator.onLine)break;
+            try{const b=await getBlob(id);if(b)done[id]=await uploadVideoToCloud(id,b,()=>{});}catch(e){console.warn("Offline video upload failed:",e);}
+          }
+          if(!Object.keys(done).length)continue;
+          const cur=playersNow.current.find(p=>p.id===pl.id);if(!cur)continue;
+          const updated={...cur,categories:cur.categories.map(c=>({...c,videos:c.videos.map(v=>done[v.id]?{...v,cloudUrl:done[v.id]}:v)}))};
+          setPlayers(p=>p.map(x=>x.id===updated.id?updated:x));
+          await savePlayerToCloud(updated);
+          window.dispatchEvent(new CustomEvent("ausa-synced",{detail:{count:Object.keys(done).length}}));
+        }
+      }finally{syncingRef.current=false;}
+    };
+    run();
+    window.addEventListener("online",run);
+    return()=>window.removeEventListener("online",run);
+  },[hydrated]);
+
   const activePlayer=players.find(p=>p.id===activePlayerId)||null;
 
   const handleCreateProfile=data=>{
@@ -6221,7 +6327,35 @@ function App(){
   return<LandingPage onEnterAthlete={enterAthlete} onEnterStudio={enterStudio}/>;
 }
 
-ReactDOM.render(<App/>,document.getElementById("root"));
+/* Offline mode badge — bottom-left on every screen. */
+function OfflineBadge(){
+  const[online,setOnline]=useState(navigator.onLine);
+  const[note,setNote]=useState(null);
+  useEffect(()=>{
+    let t;const flash=m=>{setNote(m);clearTimeout(t);t=setTimeout(()=>setNote(null),5000);};
+    const on=()=>{setOnline(true);flash("Back online — sending your changes to the cloud");};
+    const off=()=>{setOnline(false);setNote(null);};
+    const synced=e=>flash(`Back online — ${e.detail.count} video${e.detail.count===1?"":"s"} uploaded`);
+    window.addEventListener("online",on);window.addEventListener("offline",off);window.addEventListener("ausa-synced",synced);
+    return()=>{clearTimeout(t);window.removeEventListener("online",on);window.removeEventListener("offline",off);window.removeEventListener("ausa-synced",synced);};
+  },[]);
+  if(online&&!note)return null;
+  return<div title={online?"":"Edits, tags and cuts save on this computer. Videos saved offline still play. Everything goes to the cloud when the internet is back."}
+    style={{position:"fixed",left:12,bottom:12,zIndex:99999,display:"flex",alignItems:"center",gap:7,padding:"6px 11px",borderRadius:8,
+      background:online?"#14532d":"#3b2a06",border:`1px solid ${online?"#22c55e":"#f59e0b"}`,color:online?"#bbf7d0":"#fde68a",
+      fontFamily:"Inter,system-ui,sans-serif",fontSize:11,fontWeight:700,boxShadow:"0 4px 16px #0008",pointerEvents:"auto"}}>
+    <span style={{width:7,height:7,borderRadius:"50%",background:online?"#22c55e":"#f59e0b"}}/>
+    {online?note:"Offline — your work is saved on this computer"}
+  </div>;
+}
+
+ReactDOM.render(<><App/><OfflineBadge/></>,document.getElementById("root"));
+
+/* Offline mode: install the service worker (sw.js) that keeps a copy of the app. */
+if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost"||location.hostname==="127.0.0.1")){
+  const reg=()=>navigator.serviceWorker.register("sw.js").catch(e=>console.warn("Offline mode unavailable:",e));
+  if(document.readyState==="complete")reg();else window.addEventListener("load",reg);
+}
 </script>
 </body>
 </html>
