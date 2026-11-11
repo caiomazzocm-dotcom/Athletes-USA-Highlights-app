@@ -2507,6 +2507,24 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const[fpsMap,setFpsMap]=useState(()=>{try{return JSON.parse(localStorage.getItem("aua_fps")||"{}");}catch(e){return{};}});
   const fpsMapRef=useRef(fpsMap);fpsMapRef.current=fpsMap;const fpsBusyRef=useRef(new Set());
   useEffect(()=>{try{localStorage.setItem("aua_fps",JSON.stringify(fpsMap));}catch(e){}},[fpsMap]);
+  /* each video's size (by videoId) — below 720p a clip gets a quality warning */
+  const[resMap,setResMap]=useState(()=>{try{return JSON.parse(localStorage.getItem("aua_vres")||"{}");}catch(e){return{};}});
+  const resMapRef=useRef(resMap);resMapRef.current=resMap;const resBusyRef=useRef(new Set());
+  useEffect(()=>{try{localStorage.setItem("aua_vres",JSON.stringify(resMap));}catch(e){}},[resMap]);
+  const lowRes=c=>{const r=c&&resMap[c.videoId];return r&&Math.min(r.w,r.h)<720?Math.min(r.w,r.h):0;};
+  const[enhBusy,setEnhBusy]=useState(null);
+  /* Preview: an enhancer canvas over the visible video (inside the same zoom/pan box)
+     shows the enhanced frame whenever the clip on screen has Enhance on. */
+  const previewEnhRef=useRef(null);
+  useEffect(()=>{const box=videoContainerRef.current;if(!box)return;const enh=createEnhancer();const cv=enh.canvas;if(!cv)return;
+    cv.style.cssText="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:2;pointer-events:none;display:none;";
+    box.appendChild(cv);previewEnhRef.current=cv;let raf=0;
+    const loop=()=>{raf=requestAnimationFrame(loop);const v=activeVideoRef.current;
+      const e=v&&v.style.opacity==="1"&&clipPropsRef.current[v._clipId]&&clipPropsRef.current[v._clipId].enhance;
+      if(!e){if(cv.style.display!=="none")cv.style.display="none";return;}
+      if(enh.render(v,e)){if(cv.style.display!=="block")cv.style.display="block";}};
+    raf=requestAnimationFrame(loop);
+    return()=>{cancelAnimationFrame(raf);cv.remove();};},[]);
   const fpsOf=c=>{const f=c&&c.videoId&&fpsMapRef.current[c.videoId];return f?exactFps(f):null;};
   /* "floor": the start of the frame being shown at t (where a cut goes);
      "round": the nearest frame boundary (where a dragged edge lands) */
@@ -2728,6 +2746,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     return()=>clearTimeout(id);
   },[tracks,audioTracks,tagTrack,clipProps,sceneSeen,zoom,saveArmed,writeProject]);
   useEffect(()=>{
+    /* sizes: metadata is enough */
+    tracks.forEach(t=>t.clips.forEach(c=>{if(c.kind==="image"||!c.url||!c.videoId||c.brand)return;
+      if(resMapRef.current[c.videoId]||resBusyRef.current.has(c.videoId))return;resBusyRef.current.add(c.videoId);
+      const v=document.createElement("video");v.preload="metadata";v.muted=true;if(/^https?:\/\//i.test(c.url))v.crossOrigin="anonymous";
+      const done=()=>{if(v.videoWidth)setResMap(p=>({...p,[c.videoId]:{w:v.videoWidth,h:v.videoHeight}}));resBusyRef.current.delete(c.videoId);v.removeAttribute("src");v.load();};
+      v.addEventListener("loadedmetadata",done,{once:true});v.addEventListener("error",()=>resBusyRef.current.delete(c.videoId),{once:true});v.src=c.url;}));
     const todo=new Map();
     tracks.forEach(t=>t.clips.forEach(c=>{if(c.kind==="image"||!c.url||!c.videoId)return;
       if(fpsMapRef.current[c.videoId]||fpsBusyRef.current.has(c.videoId))return;todo.set(c.videoId,c.url);}));
@@ -2846,7 +2870,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
         },{once:true});
         vel.load();
         container.appendChild(vel);
-        pool[c.id]=vel;
+        pool[c.id]=vel;vel._clipId=c.id;
       } else {
         const vel=pool[c.id];
         if(vel.getAttribute("src")!==c.url){vel.src=c.url;vel.load();}
@@ -3420,16 +3444,19 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const drawBackdrop=(el,vw,vh)=>{const k=Math.max(W/vw,H/vh);cx.save();cx.filter="blur(40px) brightness(0.45)";
       try{cx.drawImage(el,(W-vw*k)/2,(H-vh*k)/2,vw*k,vh*k);}catch(e){}cx.restore();};
 
-    const drawVideoFit=(vel,scale,panX,panY,box=FULLBOX)=>{
+    /* enh: the clip's Enhance settings — the frame goes through the WebGL enhancer first */
+    const exportEnh=createEnhancer();
+    const drawVideoFit=(vel,scale,panX,panY,box=FULLBOX,enh=null)=>{
       if(!vel)return false;
       const isImg=vel.tagName==="IMG";
       if(isImg?!(vel.complete&&vel.naturalWidth):vel.readyState<2)return false;
       const vw=isImg?vel.naturalWidth:vel.videoWidth,vh=isImg?vel.naturalHeight:vel.videoHeight;
       if(!vw||!vh)return false;
+      const src=(!isImg&&enh&&exportEnh.render(vel,enh))||vel;
       const t=computeVideoTransform(vw,vh,box.w,box.h,scale,panX,panY);
-      if(box.full)drawBackdrop(vel,vw,vh);
+      if(box.full)drawBackdrop(src,vw,vh);
       cx.save();cx.beginPath();cx.rect(box.x,box.y,box.w,box.h);cx.clip();
-      try{cx.drawImage(vel,box.x+t.dx,box.y+t.dy,t.dw,t.dh);}catch(e){cx.restore();return false;}
+      try{cx.drawImage(src,box.x+t.dx,box.y+t.dy,t.dw,t.dh);}catch(e){cx.restore();return false;}
       cx.restore();return true;
     };
 
@@ -3562,7 +3589,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                stay zoomed/fitted the same way as during normal playback */
             const tagPr=propsAt(clipProps[seg.clipId]||{volume:100,scale:1,panX:0,panY:0},segSrcT);
             if(ofx)cx.filter=`blur(${(ofx.blur*W).toFixed(1)}px)`;
-            drew=drawVideoFit(vel,(tagPr.scale||1)*(ofx?ofx.scale:1),tagPr.panX||0,tagPr.panY||0,box);
+            drew=drawVideoFit(vel,(tagPr.scale||1)*(ofx?ofx.scale:1),tagPr.panX||0,tagPr.panY||0,box,(clipProps[seg.clipId]||{}).enhance);
             cx.filter="none";
           }
           /* Hold the clean video frame, before overlays, so a held frame never
@@ -3631,7 +3658,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             if(audioGains[seg.clipId])audioGains[seg.clipId].gain.value=mutedIds.has(seg.clipId)?0:pr.volume/100*(tin?1-tin.mix:1)*outroGain(ofx);
             const fxBlur=Math.max(tin?tin.blur:0,ofx?ofx.blur:0);
             if(fxBlur>0)cx.filter=`blur(${(fxBlur*W).toFixed(1)}px)`;
-            const drewV=drawVideoFit(vel,(pr.scale||1)*(tin?tin.scale:1)*(ofx?ofx.scale:1),pr.panX||0,pr.panY||0,box);
+            const drewV=drawVideoFit(vel,(pr.scale||1)*(tin?tin.scale:1)*(ofx?ofx.scale:1),pr.panX||0,pr.panY||0,box,(clipProps[seg.clipId]||{}).enhance);
             cx.filter="none";
             if(drewV)saveHold();else paintHold();
 
@@ -3785,12 +3812,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     snapHist();
     let move=ed.move||null,src=null,sc=null;
     let clips=trks[ti].clips.map(c=>{if(c.id!==id)return c;src=c;
-      sc={label:null,roles:[],tags:[],notes:[],...(migrateScene(c.scene)||{})};
+      sc={label:null,roles:[],tags:[],why:[],notes:[],...(migrateScene(c.scene)||{})};
       if(ed.label!==undefined){sc.label=ed.label;if(!move&&ed.label&&sceneLabel(ed.label).rank!=null)move="front";}
       if(ed.toggleRole)sc.roles=sc.roles.includes(ed.toggleRole)?sc.roles.filter(r=>r!==ed.toggleRole):[...sc.roles,ed.toggleRole];
       (ed.roles||[]).forEach(r=>{if(!sc.roles.includes(r))sc.roles=[...sc.roles,r];});
       if(ed.toggleTag)sc.tags=sc.tags.includes(ed.toggleTag)?sc.tags.filter(t=>t!==ed.toggleTag):[...sc.tags,ed.toggleTag];
       (ed.tags||[]).forEach(t=>{if(!sc.tags.includes(t))sc.tags=[...sc.tags,t];});
+      if(ed.toggleWhy)sc.why=sc.why.includes(ed.toggleWhy)?sc.why.filter(w=>w!==ed.toggleWhy):[...sc.why,ed.toggleWhy];
+      (ed.why||[]).forEach(w=>{if(!sc.why.includes(w))sc.why=[...sc.why,w];});
       if(ed.note)sc.notes=[...sc.notes,{text:ed.note,at:Date.now()}];
       if(ed.dropNote!=null)sc.notes=sc.notes.filter((_,i)=>i!==ed.dropNote);
       return{...c,scene:sc};});
@@ -3801,6 +3830,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setSceneSeen(p=>({...p,[id]:{...(p[id]||{videoId:src.videoId||"",name:src.name,start:src.clipStart,end:src.clipEnd,playerId:src.playerId||"",split:false}),scene:sc}}));
     return move;
   };
+  /* The setting is usually the same for a whole game: give this scene's reasons to every
+     scene cut from the same video. */
+  const applyWhyToSource=c=>{const why=sceneWhy(c);if(!why.length)return;snapHist();let n=0;
+    const nt=tracksRef.current.map(t=>({...t,clips:t.clips.map(x=>{if(x.brand||x.kind==="image"||x.videoId!==c.videoId||x.id===c.id)return x;
+      const sc={label:null,roles:[],tags:[],why:[],notes:[],...(migrateScene(x.scene)||{})};const add=why.filter(w=>!sc.why.includes(w));if(!add.length)return x;n++;
+      return{...x,scene:{...sc,why:[...sc.why,...add]}};})}));
+    setTracks(nt);recalcAll(nt,tagTrackRef.current,audioTracksRef.current);
+    setSceneSeen(p=>{const q={...p};nt.forEach(t=>t.clips.forEach(x=>{if(q[x.id]&&x.scene)q[x.id]={...q[x.id],scene:x.scene};}));return q;});
+    setNotice(`${why.map(w=>(SCENE_WHY.find(o=>o.id===w)||{}).icon).join("")} added to ${n} more scene${n===1?"":"s"} from this video — ⌘Z to undo.`);};
   const labelScene=(id,label)=>{
     const c=tracksRef.current.flatMap(t=>t.clips).find(x=>x.id===id);if(!c)return;
     const off=!label||(c.scene&&c.scene.label===label);
@@ -3808,10 +3846,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const l=sceneLabel(label);
     setNotice(off?"Label removed.":`${l.icon} ${l.name}${moved==="front"?" — moved to the front":""}`);
   };
-  const sortBestFirst=()=>{const trks=tracksRef.current;if(!trks[0])return;snapHist();
-    const clips=reorderV1(trks[0].clips,null,"best",tagTrackRef.current.clips);
+  /* the player's position group, from the profile of the project's player */
+  const projectRole=()=>{const pl=playersRef.current.find(p=>p.id===loadedProjectRef.current);return pl&&(pl.positions||[]).map(roleOfPosition).find(Boolean)||null;};
+  const sortBestFirst=()=>{const trks=tracksRef.current;if(!trks[0])return;snapHist();const role=projectRole();
+    const clips=reorderV1(trks[0].clips,null,"best",tagTrackRef.current.clips,role);
     const n=trks.map((t,i)=>i===0?{...t,clips}:t);setTracks(n);recalcAll(n,tagTrackRef.current,audioTracksRef.current);
-    setNotice("Sorted: goals, assists and top scenes first, weak scenes last. ⌘Z to undo.");};
+    /* openers: graded Good or better and showing the level of play (as reorderV1 picks them) */
+    const op=Math.min(OPENER_MAX,trks[0].clips.filter(c=>!c.brand&&attention(c)>0&&sortRank(c)<=3).length);
+    setNotice(`Sorted${role?` for a ${ROLE_NAME[role]}`:""}: ${op?`${op} attention scene${op===1?"":"s"} to open, then `:""}goals, assists, top and good scenes${role?" (by position)":""}, weak, then untagged last. ⌘Z to undo.`);};
 
   /* ═══ DETACH AUDIO ═══ (CapCut / Final Cut) The clip's sound becomes its own clip
      on an audio track — same moment, same volume — and the video goes silent
@@ -3836,6 +3878,23 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     setSelectedClipId(ac.id);
     setNotice(`Sound moved to ${nat[ti].name} — cut, move or delete it on its own. ⌘Z to undo.`);
   };
+  /* ═══ ENHANCE ═══ per source video: switching it on for one clip enhances every clip
+     cut from the same video (bad footage is bad all the way through). Settings come
+     from measuring the footage (analyseEnhance); off removes them again. */
+  const toggleEnhance=async c=>{
+    if(!c||!c.url||c.brand||c.kind==="image")return;
+    const same=tracksRef.current.flatMap(t=>t.clips).filter(x=>!x.brand&&x.kind!=="image"&&x.videoId===c.videoId);
+    const on=!!(clipPropsRef.current[c.id]||{}).enhance;
+    if(on){setClipProps(p=>{const n={...p};same.forEach(x=>{if(n[x.id]){const{enhance,...rest}=n[x.id];n[x.id]=rest;}});return n;});
+      setNotice(`Enhance off for ${same.length} clip${same.length===1?"":"s"} from this video.`);return;}
+    setEnhBusy(c.videoId);
+    try{const e=await analyseEnhance(c.url,c.clipStart,c.clipEnd);
+      setClipProps(p=>{const n={...p};same.forEach(x=>{n[x.id]={...(n[x.id]||{volume:100,scale:1,panX:0,panY:0}),enhance:{g:e.g,p:e.p,c:e.c,s:e.s,k:e.k}};});return n;});
+      const pct=x=>Math.round((x-1)*100);
+      setNotice(`✨ Enhanced ${same.length} clip${same.length===1?"":"s"} from this video — ${e.brighter>2?e.brighter+"% brighter, ":""}contrast +${pct(e.c)}%, colour +${pct(e.s)}%, ${e.k>=0.45?"strong":e.k>=0.35?"medium":"light"} sharpening.`);}
+    catch(err){setNotice("Enhance couldn't read this video's frames.");}
+    finally{setEnhBusy(null);}};
+
   /* undo a detach later on: the clip plays its own sound again, the detached copy goes */
   const restoreAudio=id=>{
     const c=tracksRef.current.flatMap(t=>t.clips).find(x=>x.id===id);if(!c||!c.audioDetached)return;
@@ -3869,7 +3928,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     const base={playerId:pid||"editor",playerName:pl?pl.name:"",positions,roles:[...new Set(positions.map(roleOfPosition).filter(Boolean))],keptCount:v1.length,savedAt:Date.now()};
     const row=async(id,m,outcome,order,track)=>{const sc=migrateScene(m.scene)||{};return[`${base.playerId}_${id}`,{...base,clipId:id,
       sourceId:m.videoId||"",sourceName:m.name||"",start:+(+m.start).toFixed(3),end:+(+m.end).toFixed(3),duration:+(m.end-m.start).toFixed(3),fromSplit:!!m.split,
-      label:sc.label||null,tags:sc.tags||[],goodFor:sc.roles||[],notes:(sc.notes||[]).map(n=>n.text),outcome,order,track,thumb:await blobToDataUrl(thumbs[id])}];};
+      label:sc.label||null,tags:sc.tags||[],why:sc.why||[],goodFor:sc.roles||[],notes:(sc.notes||[]).map(n=>n.text),outcome,order,track,thumb:await blobToDataUrl(thumbs[id])}];};
     const rows=[];
     for(let i=0;i<v1.length;i++)rows.push(await row(v1[i].id,seen[v1[i].id],"kept",i,"V1"));
     for(const c of upper)rows.push(await row(c.id,seen[c.id],"kept",null,"overlay"));
@@ -3929,7 +3988,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   const voiceCommand=(said,targetId)=>{
     const p=parseVoice(said),api=voiceApiRef.current,did=[];const has=a=>p.actions.includes(a);
     const tgt=targetId&&tracksRef.current.some(t=>t.clips.some(c=>c.id===targetId))?targetId:null;
-    const feedback=!!(p.label||p.roles.length||p.tags.length||!p.actions.length);
+    const feedback=!!(p.label||p.roles.length||p.tags.length||p.why.length||!p.actions.length);
     if((feedback||has("delete")||has("splitScenes")||has("detach")||has("front")||has("end"))&&!tgt){
       setNotice(`Select a scene (or put the playhead on one), then talk. Heard: “${said}”`);return;}
     if(has("play")&&!isPlayingRef.current){api.togglePlay();did.push("playing");}
@@ -3939,11 +3998,12 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     if(has("cutHere")){api.cutAtPlayhead();did.push("cut at the playhead");}
     if(has("freeze")){api.freezeAndTag();did.push("freeze added");}
     if(tgt&&(feedback||has("front")||has("end"))){
-      const ed={};if(p.label)ed.label=p.label;if(p.roles.length)ed.roles=p.roles;if(p.tags.length)ed.tags=p.tags;if(feedback)ed.note=said;
+      const ed={};if(p.label)ed.label=p.label;if(p.roles.length)ed.roles=p.roles;if(p.tags.length)ed.tags=p.tags;if(p.why.length)ed.why=p.why;if(feedback)ed.note=said;
       if(has("front"))ed.move="front";else if(has("end"))ed.move="end";
       const moved=applySceneEdit(tgt,ed);
       if(p.label){const l=sceneLabel(p.label);did.push(l.icon+" "+l.name);}
       if(p.tags.length)did.push(p.tags.map(sceneTagName).join(", "));
+      if(p.why.length)did.push(p.why.map(w=>{const o=SCENE_WHY.find(x=>x.id===w);return o.icon+" "+o.name;}).join(", "));
       if(p.roles.length)did.push("good for "+p.roles.join(", "));
       if(moved)did.push(moved==="front"?"moved to the front":"moved to the end");
       if(feedback)did.push("note saved");}
@@ -4741,6 +4801,14 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                 :<button onClick={()=>detachAudio(selClip.id)} title="Put this clip's sound on its own audio track (like CapCut's Extract audio) — then cut, move or delete it separately"
                   style={{display:"inline-flex",alignItems:"center",gap:4,background:C.lavender+"22",border:`1px solid ${C.lavender}`,borderRadius:5,padding:"3px 10px",color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,marginRight:6,whiteSpace:"nowrap"}}>
                   <MusicIcon size={11}/> Detach audio</button>)}
+              {!selClip.isAudio&&!selClip.brand&&selClip.kind!=="image"&&(()=>{const e=(clipProps[selClip.id]||{}).enhance,busy=enhBusy===selClip.videoId,lr=lowRes(selClip),r=resMap[selClip.videoId];
+                return<>
+                  <button onClick={()=>toggleEnhance(selClip)} disabled={busy}
+                    title={e?"Enhance is on for every clip from this video. Click to switch it off.":"Brighter, more contrast and colour, and sharper — for dark, grey or soft phone footage. Applies to every clip from this video. (It can't add detail a heavily compressed video doesn't have.)"}
+                    style={{display:"inline-flex",alignItems:"center",gap:4,background:e?"#facc1533":"#facc1514",border:`1px solid ${e?"#facc15":"#facc1588"}`,borderRadius:5,padding:"3px 10px",color:e?"#fde68a":"#fff",cursor:busy?"wait":"pointer",fontSize:10,fontWeight:700,marginRight:6,whiteSpace:"nowrap"}}>
+                    ✨ {busy?"Enhancing…":e?"Enhanced · Off":"Enhance"}</button>
+                  {lr>0&&!e&&<span title={`This video is ${r.w}×${r.h} — below HD. Enhance makes it clearer; it can't add detail that isn't there.`} style={{color:"#fbbf24",fontSize:10,fontWeight:700,marginRight:6,whiteSpace:"nowrap"}}>⚠ Low quality ({lr}p) — try Enhance</span>}
+                </>;})()}
               {selClip.kind==="image"&&<button onClick={()=>pickIntroImage(selClip.id)} style={{background:C.coral+"22",border:`1px solid ${C.coral}88`,borderRadius:5,padding:"3px 10px",color:"#fff",cursor:"pointer",fontSize:10,fontWeight:700,marginRight:6}}>{selClip.url?"Change thumbnail":"Choose thumbnail"}</button>}
               <Volume2Icon size={12} color={C.sub}/>
               <input type="range" min={0} max={100} step={1} value={selProps.volume} onChange={e=>setClipProps(p=>({...p,[selClip.id]:{...selProps,volume:+e.target.value}}))} style={{width:70,accentColor:C.blue}}/>
@@ -4811,6 +4879,13 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
             <span style={{color:C.overlay,fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>Type</span>
             {SCENE_TAGS.map(t=>{const on=tags.includes(t.id);return<button key={t.id} onClick={()=>applySceneEdit(selClip.id,{toggleTag:t.id})} title={`${t.name} — what happens in this scene (pick any)`}
               style={{background:on?C.lavender+"44":"transparent",border:`1px solid ${on?C.lavender:C.s1}`,borderRadius:10,padding:"1px 8px",color:on?"#fff":C.overlay,cursor:"pointer",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>{t.name}</button>;})}
+            <div style={{width:1,height:14,background:C.s0,margin:"0 4px"}}/>
+            <span title="Why this scene is worth showing — optional" style={{color:C.overlay,fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>Why</span>
+            {SCENE_WHY.map(o=>{const on=(sc.why||[]).includes(o.id);return<button key={o.id} onClick={()=>applySceneEdit(selClip.id,{toggleWhy:o.id})} title={`${o.name}: ${o.tip}${ATTENTION.includes(o.id)?". Scenes like this can open the reel (Best first).":""}`}
+              style={{background:on?"#f59e0b33":"transparent",border:`1px solid ${on?"#f59e0b":C.s1}`,borderRadius:10,padding:"1px 7px",color:on?"#fff":C.overlay,cursor:"pointer",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>{o.icon} {o.name}</button>;})}
+            {(sc.why||[]).length>0&&(()=>{const others=tracks.flatMap(t=>t.clips).filter(x=>!x.brand&&x.kind!=="image"&&x.videoId===selClip.videoId&&x.id!==selClip.id&&(sc.why||[]).some(w=>!sceneWhy(x).includes(w))).length;
+              return others>0&&<button onClick={()=>applyWhyToSource(selClip)} title="The setting is usually the same for the whole game — give these reasons to every scene from this video"
+                style={{background:"transparent",border:"1px dashed #f59e0b",borderRadius:10,padding:"1px 8px",color:"#fcd34d",cursor:"pointer",fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>→ all {others} scene{others===1?"":"s"} from this video</button>;})()}
             <div style={{width:1,height:14,background:C.s0,margin:"0 4px"}}/>
             <span style={{color:C.overlay,fontSize:9,fontWeight:700,whiteSpace:"nowrap"}}>Good for</span>
             {SCENE_ROLES.map(([r,name])=>{const on=roles.includes(r);return<button key={r} onClick={()=>applySceneEdit(selClip.id,{toggleRole:r})} title={name}
@@ -5079,12 +5154,15 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
                   {!tiny&&<div style={{position:"absolute",left:0,top:0,bottom:0,width:2,background:"#05070c",zIndex:4,pointerEvents:"none"}}/>}
                   {!tiny&&<div style={{flex:1,display:"flex",alignItems:"center",padding:"0 6px",minHeight:0,position:"relative",zIndex:1,background:"linear-gradient(180deg,rgba(0,0,0,0.45),rgba(0,0,0,0) 85%)"}}>
                     {clipFeedback[clip.id]&&<div style={{width:6,height:6,borderRadius:"50%",background:C.peach||"#fab387",flexShrink:0,marginRight:4,boxShadow:`0 0 4px ${C.peach||"#fab387"}`}} title="Has feedback"/>}
-                    {clip.scene&&(()=>{const sc=migrateScene(clip.scene),l=sceneLabel(sc.label),tg=(sc.tags||[]).map(sceneTagName);if(!l&&!tg.length)return null;
+                    {clip.scene&&(()=>{const sc=migrateScene(clip.scene),l=sceneLabel(sc.label),tg=(sc.tags||[]).map(sceneTagName);if(!l&&!tg.length&&!sceneWhy(clip).length)return null;
                       const tip=[l&&l.name,tg.join(", "),(sc.roles||[]).length&&"good for "+sc.roles.join(", ")].filter(Boolean).join(" · ");
                       return<>{l&&<span title={tip}
                       style={{background:l.color,color:"#000",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",letterSpacing:0.3}}>{l.icon}{w>90?" "+l.name.toUpperCase():""}</span>}
+                        {sceneWhy(clip).length>0&&w>40&&<span title={sceneWhy(clip).map(x=>(SCENE_WHY.find(o=>o.id===x)||{}).name).join(", ")} style={{fontSize:9,marginRight:3,flexShrink:0}}>{sceneWhy(clip).map(x=>(SCENE_WHY.find(o=>o.id===x)||{}).icon).join("")}</span>}
                         {tg.length>0&&w>(l?150:60)&&<span title={tip} style={{background:"#000000aa",color:"#fff",fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:w*0.45}}>{tg.join(" · ").toUpperCase()}</span>}</>;})()}
                     {clip.audioDetached&&<span title="Sound detached to an audio track" style={{fontSize:9,marginRight:3,flexShrink:0}}>🔇</span>}
+                    {(clipProps[clip.id]||{}).enhance?<span title="Enhanced" style={{fontSize:9,marginRight:3,flexShrink:0}}>✨</span>
+                      :lowRes(clip)>0&&w>60&&<span title={`Low quality source (${lowRes(clip)}p) — select it and try ✨ Enhance`} style={{background:"#000000aa",color:"#fbbf24",fontSize:8,fontWeight:800,padding:"1px 5px",borderRadius:8,marginRight:4,flexShrink:0,whiteSpace:"nowrap"}}>⚠ {lowRes(clip)}p</span>}
                     {clip.scene&&(clip.scene.notes||[]).length>0&&<span title={clip.scene.notes.map(n=>"“"+n.text+"”").join("\n")} style={{fontSize:9,marginRight:3,flexShrink:0}}>🗣</span>}
                     <span style={{color:"#fff",fontSize:10,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textShadow:"0 1px 2px rgba(0,0,0,0.9)"}}>{clip.name}</span>
                     {w>80&&<span style={{color:"#ffffffbb",fontSize:8,marginLeft:"auto",flexShrink:0,fontFamily:"monospace",textShadow:"0 1px 2px rgba(0,0,0,0.9)"}}>{clip.playerName}</span>}
@@ -5605,6 +5683,61 @@ async function filmPump(){if(filmBusy)return;filmBusy=true;
       filmSubs.forEach(f=>f());
     }catch(e){filmBad.add(job.url);}
   }}finally{filmBusy=false;}}
+/* ═══ ENHANCE ═══ Brighter, more contrast and colour, and sharper — for dark, grey or
+   soft phone footage. Runs on the graphics card (WebGL): browser picture filters with
+   sharpening took ~400 ms per 1080p frame, this takes a few. One enhancer for the
+   preview, one for the export. It can't add detail a heavily compressed video
+   doesn't have — real upscaling needs an AI service (not built: costs money). */
+/* sharpen → brighten with a gamma curve (lifts darks and mids, keeps highlights) →
+   contrast around the new average (a mid-grey pivot pushed dark footage darker
+   again) → colour */
+const ENH_FS=`precision mediump float;uniform sampler2D t;uniform vec2 px;uniform float g,c,p,s,k;varying vec2 uv;
+void main(){vec3 m=texture2D(t,uv).rgb;
+  vec3 n=texture2D(t,uv+vec2(px.x,0.)).rgb+texture2D(t,uv-vec2(px.x,0.)).rgb+texture2D(t,uv+vec2(0.,px.y)).rgb+texture2D(t,uv-vec2(0.,px.y)).rgb;
+  vec3 x=clamp(m+k*(4.*m-n),0.,1.);
+  x=pow(x,vec3(g));x=(x-p)*c+p;float l=dot(x,vec3(.299,.587,.114));x=mix(vec3(l),x,s);
+  gl_FragColor=vec4(clamp(x,0.,1.),1.);}`;
+const createEnhancer=()=>{let cv=null,gl=null,u=null,tex=null;
+  const init=()=>{cv=document.createElement("canvas");gl=cv.getContext("webgl",{premultipliedAlpha:false,preserveDrawingBuffer:true,antialias:false});if(!gl)return false;
+    const sh=(type,src)=>{const o=gl.createShader(type);gl.shaderSource(o,src);gl.compileShader(o);return o;};
+    const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,"attribute vec2 p;varying vec2 uv;void main(){uv=vec2(p.x*.5+.5,.5-p.y*.5);gl_Position=vec4(p,0.,1.);}"));
+    gl.attachShader(pr,sh(gl.FRAGMENT_SHADER,ENH_FS));gl.linkProgram(pr);if(!gl.getProgramParameter(pr,gl.LINK_STATUS))return false;gl.useProgram(pr);
+    const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+    const loc=gl.getAttribLocation(pr,"p");gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+    tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+    [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T].forEach(w=>gl.texParameteri(gl.TEXTURE_2D,w,gl.CLAMP_TO_EDGE));
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    u={px:gl.getUniformLocation(pr,"px"),g:gl.getUniformLocation(pr,"g"),c:gl.getUniformLocation(pr,"c"),p:gl.getUniformLocation(pr,"p"),s:gl.getUniformLocation(pr,"s"),k:gl.getUniformLocation(pr,"k")};return true;};
+  return{get canvas(){if(!cv)init();return cv;},
+    /* draws the enhanced frame of `src` (video) into its canvas at the video's own size; null if it can't */
+    render(src,e){if(!cv&&!init())return null;if(!gl)return null;
+      const w=src.videoWidth,h=src.videoHeight;if(!w||!h||src.readyState<2)return null;
+      if(cv.width!==w)cv.width=w;if(cv.height!==h)cv.height=h;gl.viewport(0,0,w,h);
+      try{gl.texImage2D(gl.TEXTURE_2D,0,gl.RGB,gl.RGB,gl.UNSIGNED_BYTE,src);}catch(err){return null;}
+      gl.uniform2f(u.px,1/w,1/h);gl.uniform1f(u.g,e.g||1);gl.uniform1f(u.c,e.c||1);gl.uniform1f(u.p,e.p||0.45);gl.uniform1f(u.s,e.s||1);gl.uniform1f(u.k,e.k||0);
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);return cv;}};};
+/* Settings picked from the footage itself: a few frames are measured (brightness,
+   contrast, colour) and nudged toward a well-exposed picture; low resolution gets
+   more sharpening. Kept modest so good footage isn't over-processed. */
+async function analyseEnhance(url,from,to){
+  const v=document.createElement("video");v.muted=true;v.playsInline=true;v.preload="auto";if(/^https?:\/\//i.test(url))v.crossOrigin="anonymous";
+  v.style.cssText="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;";document.body.appendChild(v);
+  try{v.src=url;await new Promise((res,rej)=>{v.addEventListener("loadeddata",res,{once:true});v.addEventListener("error",rej,{once:true});setTimeout(rej,15000);});
+    const cv=document.createElement("canvas");cv.width=160;cv.height=90;const g=cv.getContext("2d",{willReadFrequently:true});
+    let L=0,S=0,Sat=0,n=0;
+    for(let i=0;i<6;i++){await whenVisible();const t=from+(to-from)*(i+0.5)/6;
+      await new Promise(res=>{const fin=()=>{v.removeEventListener("seeked",fin);clearTimeout(tm);res();};const tm=setTimeout(fin,3000);v.addEventListener("seeked",fin);v.currentTime=t;});
+      g.drawImage(v,0,0,160,90);const d=g.getImageData(0,0,160,90).data;let sl=0,sl2=0,ss=0;const N=d.length/4;
+      for(let j=0;j<d.length;j+=4){const r=d[j]/255,gg=d[j+1]/255,bb=d[j+2]/255,l=0.299*r+0.587*gg+0.114*bb,mx=Math.max(r,gg,bb),mn=Math.min(r,gg,bb);sl+=l;sl2+=l*l;ss+=mx-mn;}/* chroma: (max−min) isn't inflated by dark pixels like (max−min)/max */
+      const m=sl/N;L+=m;S+=Math.sqrt(Math.max(0,sl2/N-m*m));Sat+=ss/N;n++;}
+    L/=n;S/=n;Sat/=n;const H=Math.min(v.videoWidth,v.videoHeight)||720;
+    const cl=(x,a,b)=>Math.max(a,Math.min(b,x));
+    /* gamma that takes the average brightness toward 0.45 (only gently for bright footage) */
+    const gm=cl(Math.log(0.45)/Math.log(cl(L,0.05,0.95)),0.62,1.1);
+    const L2=Math.pow(cl(L,0.05,0.95),gm),slope=gm*Math.pow(cl(L,0.05,0.95),gm-1),S2=S*slope;
+    return{g:+gm.toFixed(3),p:+L2.toFixed(3),c:+cl(0.2/Math.max(S2,0.05),1.0,1.25).toFixed(3),s:+cl(0.14/Math.max(Sat*L2/Math.max(L,0.01),0.03),1.0,1.3).toFixed(3),/* colour after brightening vs good footage (~0.13–0.14) */
+      k:H<=480?0.45:H<=720?0.35:0.25,brighter:Math.round((L2/Math.max(L,0.01)-1)*100),src:{w:v.videoWidth,h:v.videoHeight,L:+L.toFixed(3),S:+S.toFixed(3),Sat:+Sat.toFixed(3)}};
+  }finally{try{v.pause();v.removeAttribute("src");v.load();v.remove();}catch(e){}}}
 const blobToDataUrl=b=>new Promise(r=>{if(!b)return r("");const fr=new FileReader();fr.onload=()=>r(fr.result);fr.onerror=()=>r("");fr.readAsDataURL(b);});
 
 /* ═══ SCENE LABELS & THE SCENE LIBRARY ═══
@@ -5635,7 +5768,38 @@ const sceneLabel=id=>SCENE_LABELS.find(l=>l.id===id)||null;
 /* front-of-reel rank: goals, then assists, then top scenes */
 const frontRank=c=>{const l=c&&c.scene&&sceneLabel(c.scene.label);return l?l.rank:null;};
 /* "Best first" order: goals, assists, top, good, untagged — weak scenes last */
-const sortRank=c=>{const r=frontRank(c);if(r!=null)return r;const l=c.scene&&c.scene.label;return l==="good"?3:l==="weak"?5:4;};
+/* "Best first" tier: goals, assists, top, good, weak — untagged last, so what still
+   needs grading sits at the end */
+const sortRank=c=>{const r=frontRank(c);if(r!=null)return r;const l=c.scene&&c.scene.label;return l==="good"?3:l==="weak"?4:5;};
+/* Why a scene is worth showing (optional, any number; clip.scene.why). The first four
+   catch a recruiter's attention — the level of play — so 1–2 such scenes open the reel
+   even if they're only "Good". */
+const SCENE_WHY=[
+  {id:"stadium",name:"Big stadium",icon:"🏟",tip:"Full stands, crowd, atmosphere"},
+  {id:"tv",name:"TV broadcast",icon:"📺",tip:"Footage from a TV or stream feed"},
+  {id:"level",name:"High level",icon:"🔝",tip:"Youth Bundesliga (U17/U19), Regionalliga or higher, pro opponent"},
+  {id:"biggame",name:"Big game",icon:"🏆",tip:"Derby, final, cup, playoff"},
+  {id:"footage",name:"Great footage",icon:"🎥",tip:"Clear angle, close-up, slow motion"},
+];
+const ATTENTION=["stadium","tv","level","biggame"];const OPENER_MAX=2;
+const sceneWhy=c=>(c&&c.scene&&c.scene.why)||[];
+const attention=c=>sceneWhy(c).filter(w=>ATTENTION.includes(w)).length;
+/* Within Top and Good, the scene types that matter most for the player's position
+   come first (agreed with Caio, Nov 2026). Full backs and defensive mids: defending,
+   then dribbles and shots (they assist and shoot going forward); centre backs:
+   defending, headers, long balls. */
+const ROLE_ORDER={
+  ST:["shot","dribble","penalty","freekick","header","pass","longball","corner","defense"],
+  W:["dribble","shot","pass","freekick","header","longball","corner","defense"],
+  AM:["dribble","shot","pass","freekick","longball","header","corner","defense"],
+  CM:["pass","longball","dribble","shot","freekick","corner","header","defense"],
+  DM:["defense","dribble","shot","pass","longball","header","corner","freekick"],
+  FB:["defense","dribble","shot","pass","longball","header","corner","freekick"],
+  CB:["defense","header","longball","pass","dribble","shot","corner","freekick"],
+  GK:["save","longball","pass","penalty","defense"],
+};
+const ROLE_NAME={ST:"striker",W:"winger",AM:"number 10",CM:"central midfielder",DM:"defensive midfielder",FB:"full back",CB:"centre back",GK:"goalkeeper"};
+const roleRank=(c,role)=>{const o=ROLE_ORDER[role];if(!o)return 0;const tg=(migrateScene(c.scene)||{}).tags||[];let best=o.length;tg.forEach(t=>{const i=o.indexOf(t);if(i>=0&&i<best)best=i;});return best;};
 const SCENE_ROLES=[["GK","Goalkeeper"],["CB","Center back"],["FB","Full back"],["DM","Defensive mid"],["CM","Central mid"],["AM","Number 10"],["W","Winger"],["ST","Striker"]];
 /* the profile's positions folded into those role groups */
 const roleOfPosition=p=>({GK:"GK",LCB:"CB",CB:"CB",RCB:"CB",LB:"FB",LWB:"FB",RB:"FB",RWB:"FB",CDM:"DM",CM:"CM",CAM:"AM",LM:"W",RM:"W",LW:"W",RW:"W",ST:"ST",CF:"ST",SS:"ST"})[p]||null;
@@ -5643,10 +5807,19 @@ const roleOfPosition=p=>({GK:"GK",LCB:"CB",CB:"CB",RCB:"CB",LB:"FB",LWB:"FB",RB:
 /* Re-order the main track. move: "front" (after the goals/assists/top scenes that
    rank at or above it — or first of all when the scene has no front label),
    "end" (just before the outro) or "best" (stable sort of the whole reel). */
-const reorderV1=(clips,id,move,tagClips)=>{
+/* role: the player's position group (ROLE_ORDER) — used by "best" */
+const reorderV1=(clips,id,move,tagClips,role)=>{
   const body=clips.filter(c=>!c.brand).sort((a,b)=>a.trackStart-b.trackStart);
   let order;
-  if(move==="best")order=body.map((c,i)=>[c,i]).sort((a,b)=>sortRank(a[0])-sortRank(b[0])||a[1]-b[1]).map(x=>x[0]);
+  if(move==="best"){const idx=new Map(body.map((c,i)=>[c.id,i]));
+    /* 1. opener: the strongest 1–2 scenes showing the level of play */
+    const opener=body.filter(c=>attention(c)>0&&sortRank(c)<=3).sort((a,b)=>sortRank(a)-sortRank(b)||attention(b)-attention(a)||idx.get(a.id)-idx.get(b.id)).slice(0,OPENER_MAX);
+    const op=new Set(opener.map(c=>c.id));
+    /* 2. then by tier; inside Top and Good, by position; scenes with a reason first */
+    const rest=body.filter(c=>!op.has(c.id)).sort((a,b)=>{const ta=sortRank(a),tb=sortRank(b);if(ta!==tb)return ta-tb;
+      if(ta===2||ta===3){const d=roleRank(a,role)-roleRank(b,role);if(d)return d;}
+      return sceneWhy(b).length-sceneWhy(a).length||idx.get(a.id)-idx.get(b.id);});
+    order=[...opener,...rest];}
   else{
     const tgt=body.find(c=>c.id===id);if(!tgt)return clips;
     order=body.filter(c=>c.id!==id);
@@ -5688,6 +5861,14 @@ const VOICE_LABELS=[
   /* plain praise is the middle tier */
   ["good",/ (good|nice|solid|decent|fine|ok|okay|gut|gute|guter|gutes|schoen\w*|ordentlich|solide|bom|boa|bonito|bonita|legal) /],
 ];
+/* why the scene is worth showing */
+const VOICE_WHY=[
+  ["stadium",/ (full stadium|big stadium|packed stadium|stadium|crowd|big crowd|fans|atmosphere|volles stadion|stadion|zuschauer|kulisse|estadio cheio|estadio|torcida|publico) /],
+  ["tv",/ (tv( game)?|television|broadcast|live stream|stream|fernsehen|fernsehspiel|tv spiel|transmissao|televisao|na tv) /],
+  ["level",/ (high level|top level|youth bundesliga|u19 bundesliga|u17 bundesliga|bundesliga|regionalliga|oberliga|pro level|professional|profis?|hohes niveau|alto nivel|nivel alto) /],
+  ["biggame",/ (derby|final|finals|cup( game)?|playoffs?|big game|important game|pokal\w*|finale|endspiel|classico|decisao|copa) /],
+  ["footage",/ (great angle|nice angle|good angle|close up|close-up|slow motion|slow mo|good footage|great footage|nahaufnahme|zeitlupe|camera lenta|boa imagem) /],
+];
 /* scene types — several can be said at once ("good header, long ball") */
 const VOICE_TAGS=[
   ["header",/ (headers?|headed|heading|head ball|kopfball\w*|kopfballtor|cabeceio|cabecada|cabeca) /],
@@ -5717,10 +5898,11 @@ const VOICE_ACTIONS=[
 const VOICE_SOLO=[["play",/^ (play|play it|go|abspielen|weiter|tocar|toca) $/],["pause",/^ (pause|stop|stopp|halt|pausa|parar|para) $/]];
 const parseVoice=raw=>{
   /* German compounds carry two facts: Kopfballtor = header + goal */
-  let s=voiceNorm(raw).replace(/(kopfball|fallrueckzieher|freistoss|elfmeter|distanz)(tore?) /g,"$1 $2 ");const out={label:null,roles:[],tags:[],actions:[]};
+  let s=voiceNorm(raw).replace(/(kopfball|fallrueckzieher|freistoss|elfmeter|distanz)(tore?) /g,"$1 $2 ");const out={label:null,roles:[],tags:[],why:[],actions:[]};
   for(const[a,re]of VOICE_SOLO)if(re.test(s)){out.actions.push(a);return out;}
   for(const[a,re]of VOICE_ACTIONS)if(re.test(s)){out.actions.push(a);s=s.replace(re," ");}
   for(const[r,re]of VOICE_ROLES){let m;while((m=s.match(re))){if(!out.roles.includes(r))out.roles.push(r);s=s.replace(m[0]," ");}}
+  for(const[w,re]of VOICE_WHY)if(re.test(s)){out.why.push(w);s=s.replace(re," ");}
   for(const[t,re]of VOICE_TAGS)if(re.test(s)){out.tags.push(t);s=s.replace(re," ");}
   for(const[l,re]of VOICE_LABELS)if(re.test(s)){out.label=l;break;}
   return out;
