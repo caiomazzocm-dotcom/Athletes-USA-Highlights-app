@@ -2421,7 +2421,14 @@ function SpotlightTagGenerator({onBack,defaultName}){
 }
 
 /* ═══════════ EDITOR / STUDIO ═══════════ */
-function StudioApp({players,onLogout,onRefreshPlayers}){
+function StudioApp({players:cloudPlayers,onLogout,onRefreshPlayers,onUpdatePlayer}){
+  /* Drafts — projects for athletes who haven't made their profile yet. Kept on this
+     computer (localStorage aua_drafts). Inside the Studio a draft is just another
+     player (isDraft, no folders), so tags, intro, Best first and export all work;
+     "Move to player" hands the project to the real profile later. */
+  const[drafts,setDrafts]=useState(()=>{try{const d=JSON.parse(localStorage.getItem(STORAGE_KEY_DRAFTS)||"[]");return Array.isArray(d)?d:[];}catch(e){return[];}});
+  useEffect(()=>{try{localStorage.setItem(STORAGE_KEY_DRAFTS,JSON.stringify(drafts));}catch(e){}},[drafts]);
+  const players=React.useMemo(()=>[...cloudPlayers,...drafts],[cloudPlayers,drafts]);
   const[tracks,setTracks]=useState([{id:uid("trk"),name:"V1",clips:[]},{id:uid("trk"),name:"V2",clips:[]},{id:uid("trk"),name:"V3",clips:[]}]);
   const[tagTrack,setTagTrack]=useState({id:uid("ttag"),name:"TAGS",clips:[]});
   /* Always-current tag track. compactV1 runs from callbacks that were created in an
@@ -2728,6 +2735,72 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
     await loadProject(target);
   },[writeProject,loadProject]);
 
+  const[draftForm,setDraftForm]=useState(null);/* {name,pos,num} while creating */
+  const[draftMove,setDraftMove]=useState(null);/* draft id whose "Move to player" list is open */
+  const[draftBusy,setDraftBusy]=useState(null);/* {id,text} while moving */
+  const createDraft=async()=>{
+    const f=draftForm||{};const name=(f.name||"").trim();if(!name)return;
+    const d={id:uid("draft"),name,positions:f.pos?[f.pos]:[],shirtNumber:(f.num||"").trim(),categories:[],isDraft:true,createdAt:Date.now()};
+    setDrafts(p=>[...p,d]);setDraftForm(null);
+    await afterRender();
+    await openProject(d.id);
+    setNotice(`Draft for ${name} ready — drop his videos in from Finder. When he makes his profile, use "Move to player".`);
+  };
+  const deleteDraft=d=>{
+    const ps=projectSummary[d.id];
+    if(!confirm(`Delete the draft for ${d.name}?${ps&&ps.clips>2?`\n\nIts timeline (${ps.clips} clips) is deleted too. Videos you dropped stay in Editor Media.`:""}`))return;
+    if(loadedProjectRef.current===d.id){loadedProjectRef.current=null;setActivePlayerId(null);loadProject(null);}
+    try{const k=projectKey(d.id);const v=localStorage.getItem(k);if(v)localStorage.setItem(k+":deleted-"+Date.now(),v);localStorage.removeItem(k);}catch(e){}
+    setDrafts(p=>p.filter(x=>x.id!==d.id));
+  };
+  /* Move a draft's project to a real player: the videos he only has on this
+     computer are uploaded into his Media Inbox, clips and tags become his, and his
+     own previous project (if any) is backed up first. */
+  const moveDraft=async(d,pl)=>{
+    if(!navigator.onLine){alert("Connect to the internet to move the draft — the videos are added to "+pl.name+"'s profile in the cloud.");return;}
+    if(loadedProjectRef.current===d.id||loadedProjectRef.current===pl.id)writeProject(loadedProjectRef.current);
+    let proj=null;try{proj=JSON.parse(localStorage.getItem(projectKey(d.id))||"null");}catch(e){}
+    if(!proj||!Array.isArray(proj.tracks)){alert("This draft has no timeline yet — there's nothing to move.");return;}
+    let existing=null;try{existing=localStorage.getItem(projectKey(pl.id));}catch(e){}
+    const exClips=(()=>{try{const x=JSON.parse(existing||"null");return x&&Array.isArray(x.tracks)?x.tracks.reduce((a,t)=>a+t.clips.filter(c=>!c.brand).length,0):0;}catch(e){return 0;}})();
+    if(!confirm(`Move the draft "${d.name}" to ${pl.name}'s profile?\n\n• The timeline, cuts, tags and grades become ${pl.name}'s project.\n• Videos that are only on this computer are uploaded to his Media Inbox.`+(exClips?`\n\n${pl.name} already has a project (${exClips} clips). It will be REPLACED — a backup is kept on this computer.`:"")))return;
+    setDraftMove(null);
+    try{
+      if(existing)localStorage.setItem(projectKey(pl.id)+":backup-before-draft-"+Date.now(),existing);
+      const known=new Set(cloudPlayers.flatMap(p=>(p.categories||[]).flatMap(c=>(c.videos||[]).map(v=>v.id))));
+      const durOf={};edVidsRef.current.forEach(v=>{durOf[v.id]=v.duration;});
+      const need={};
+      proj.tracks.forEach(t=>t.clips.forEach(c=>{if(c.brand||c.kind==="image"||!c.videoId||known.has(c.videoId))return;
+        if(!need[c.videoId])need[c.videoId]={id:c.videoId,name:(c.name||"Video").replace(/ \(\d+\)$/,""),duration:durOf[c.videoId]||c.clipEnd||0};}));
+      const list=Object.values(need);const added=[];let missing=0;
+      for(let i=0;i<list.length;i++){const v=list[i];
+        setDraftBusy({id:d.id,text:`Uploading video ${i+1} of ${list.length}…`});
+        const blob=await getBlob(v.id);if(!blob){missing++;continue;}
+        const cloudUrl=await uploadVideoToCloud(v.id,blob,pct=>setDraftBusy({id:d.id,text:`Uploading video ${i+1} of ${list.length} · ${Math.round(pct*100)}%`}));
+        added.push({id:v.id,name:v.name,duration:v.duration,cloudUrl,url:URL.createObjectURL(blob)});
+      }
+      setDraftBusy({id:d.id,text:"Saving his profile…"});
+      let cats=[...(pl.categories||[])];let inbox=cats.find(c=>c.isInbox);
+      if(!inbox){inbox={id:uid("cat"),name:"Media Inbox",isInbox:true,videos:[]};cats=[inbox,...cats];}
+      if(added.length){cats=cats.map(c=>c.id===inbox.id?{...c,videos:[...c.videos,...added]}:c);
+        const updated={...pl,categories:cats};onUpdatePlayer&&onUpdatePlayer(updated);await savePlayerToCloud(updated);}
+      const color=playerColor(Math.max(0,cloudPlayers.findIndex(p=>p.id===pl.id)));
+      const moved=new Set(added.map(v=>v.id));
+      const fixClip=c=>c.playerId===d.id||moved.has(c.videoId)?{...c,playerId:pl.id,playerName:pl.name,categoryId:moved.has(c.videoId)?inbox.id:c.categoryId}:c;
+      const out={...proj,playerId:pl.id,savedAt:Date.now(),
+        tracks:proj.tracks.map(t=>({...t,clips:t.clips.map(c=>{const x=fixClip(c);return x.brand==="intro"&&/^INTRO — /.test(x.name)&&x.name.includes(d.name)?{...x,name:x.name.replace(d.name,pl.name)}:x;})})),
+        audioTracks:(proj.audioTracks||[]).map(t=>({...t,clips:t.clips.map(fixClip)})),
+        tagTrack:proj.tagTrack?{...proj.tagTrack,clips:(proj.tagTrack.clips||[]).map(t=>t.playerId===d.id?{...t,playerId:pl.id,playerName:pl.name,playerColor:color}:t)}:proj.tagTrack};
+      localStorage.setItem(projectKey(pl.id),JSON.stringify(out));
+      /* open his project; nothing may write the old draft or his old project back */
+      if(loadedProjectRef.current===d.id||loadedProjectRef.current===pl.id){loadedProjectRef.current=pl.id;setActivePlayerId(pl.id);await loadProject(pl.id);}
+      else await openProject(pl.id);
+      try{const k=projectKey(d.id);localStorage.setItem(k+":moved-"+Date.now(),localStorage.getItem(k)||"");localStorage.removeItem(k);}catch(e){}
+      setDrafts(p=>p.filter(x=>x.id!==d.id));
+      setNotice(`Moved to ${pl.name}: his project is open`+(added.length?` and ${added.length} video${added.length===1?" is":"s are"} in his Media Inbox`:"")+(missing?` · ${missing} video${missing===1?"":"s"} not on this computer`:"")+".");
+    }catch(err){console.error("Move draft failed:",err);alert("The move stopped: "+(err&&err.message||err)+"\n\nThe draft is still here — nothing was lost. Try again when the connection is good.");}
+    finally{setDraftBusy(null);}
+  };
   /* Per-player project status for the sidebar: live for the open one, from
      storage for the rest. Recomputed on edits, not on every playback frame. */
   const projectSummary=React.useMemo(()=>{
@@ -3973,6 +4046,7 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   /* ═══ SCENE LIBRARY — runs after every full export ═══ */
   const saveSceneLibrary=async()=>{
     const pid=loadedProjectRef.current||null;const pl=playersRef.current.find(p=>p.id===pid);
+    if(pl&&pl.isDraft)return null;/* saved once the draft is moved to the real player */
     const trks=tracksRef.current;
     const v1=((trks[0]&&trks[0].clips)||[]).filter(c=>isScene(c)&&c.kind!=="image").sort((a,b)=>a.trackStart-b.trackStart);
     const upper=trks.slice(1).flatMap(t=>t.clips).filter(c=>isScene(c)&&c.kind!=="image");
@@ -4451,12 +4525,67 @@ function StudioApp({players,onLogout,onRefreshPlayers}){
   <div style={{width:260,minWidth:260,background:C.mantle,borderRight:`1px solid ${C.s0}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
     <div style={{padding:"10px 14px",borderBottom:`1px solid ${C.s0}`,display:"flex",alignItems:"center",gap:6}}>
       <FolderIcon size={13} color={C.sub}/><span style={{color:C.sub,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:1}}>Players</span>
-      <span style={{color:C.overlay,fontSize:10,marginLeft:"auto"}}>{players.length}</span>
+      <span style={{color:C.overlay,fontSize:10,marginLeft:"auto"}}>{cloudPlayers.length}</span>
       <button onClick={onRefreshPlayers} style={{...ib,color:C.blue,marginLeft:4}} title="Refresh from cloud"><RefreshIcon size={12}/></button>
     </div>
     <div style={{flex:1,overflow:"auto",padding:"4px 0"}}>
-      {players.length===0&&<div style={{padding:"16px 14px",color:C.overlay,fontSize:11,textAlign:"center"}}>No players yet. Players upload clips from the Athlete Portal.</div>}
-      {players.map((pl,pi)=>{
+      {/* ── DRAFTS: athletes without a profile yet ── */}
+      <div style={{padding:"6px 14px 4px",display:"flex",alignItems:"center",gap:6}}>
+        <span style={{color:C.peach,fontSize:9,fontWeight:800,letterSpacing:1}}>DRAFTS</span>
+        <span style={{color:C.overlay,fontSize:9}}>no profile yet</span>
+        <button onClick={()=>setDraftForm(f=>f?null:{name:"",pos:"",num:""})} title="Start editing for an athlete who hasn't made his profile yet"
+          style={{marginLeft:"auto",fontSize:9,fontWeight:700,color:C.peach,background:"transparent",border:`1px solid ${C.peach}88`,borderRadius:4,padding:"1px 7px",cursor:"pointer"}}>{draftForm?"Cancel":"+ New draft"}</button>
+      </div>
+      {draftForm&&<div style={{margin:"2px 14px 8px",padding:8,background:C.s0,borderRadius:6,display:"flex",flexDirection:"column",gap:5}}>
+        <input autoFocus value={draftForm.name} onChange={e=>setDraftForm(f=>({...f,name:e.target.value}))} onKeyDown={e=>{if(e.key==="Enter")createDraft();if(e.key==="Escape")setDraftForm(null);}}
+          placeholder="Athlete's name" style={{background:C.base,border:`1px solid ${C.s2}`,borderRadius:4,color:C.text,fontSize:11,padding:"4px 6px",outline:"none"}}/>
+        <div style={{display:"flex",gap:5}}>
+          <select value={draftForm.pos} onChange={e=>setDraftForm(f=>({...f,pos:e.target.value}))} title="Position — used by Best first"
+            style={{flex:1,background:C.base,border:`1px solid ${C.s2}`,borderRadius:4,color:draftForm.pos?C.text:C.overlay,fontSize:10,padding:"3px 4px"}}>
+            <option value="">Position (optional)</option>
+            {Object.entries(POS_NAMES.en).map(([k,v])=><option key={k} value={k}>{k} — {v}</option>)}
+          </select>
+          <input value={draftForm.num} onChange={e=>setDraftForm(f=>({...f,num:e.target.value.replace(/[^0-9]/g,"").slice(0,3)}))} placeholder="#" title="Shirt number (optional)"
+            style={{width:38,background:C.base,border:`1px solid ${C.s2}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 5px",outline:"none"}}/>
+        </div>
+        <button onClick={createDraft} disabled={!draftForm.name.trim()} style={{background:draftForm.name.trim()?C.peach:C.s1,color:draftForm.name.trim()?"#111":C.overlay,border:"none",borderRadius:4,padding:"4px 0",fontSize:10,fontWeight:800,cursor:draftForm.name.trim()?"pointer":"default"}}>Create draft & start editing</button>
+      </div>}
+      {drafts.length===0&&!draftForm&&<div style={{padding:"0 14px 6px",color:C.overlay,fontSize:9}}>Have videos before the athlete has a profile? Start a draft.</div>}
+      {drafts.map(d=>{
+        const di=cloudPlayers.length+drafts.indexOf(d);const ps=projectSummary[d.id];const busy=draftBusy&&draftBusy.id===d.id;
+        const low=s=>(s||"").toLowerCase();const dn=low(d.name).split(/\s+/).filter(Boolean);
+        const score=p=>{const pn=low(p.name);return dn.filter(w=>pn.includes(w)).length;};
+        const matches=[...cloudPlayers].sort((a,b)=>score(b)-score(a)||a.name.localeCompare(b.name));
+        return<div key={d.id} style={{borderLeft:`3px solid ${d.id===activePlayerId?SPOT_COLOR:"transparent"}`,background:d.id===activePlayerId?SPOT_COLOR+"18":"transparent",marginBottom:2}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 14px"}}>
+            <span style={{width:9,height:9,borderRadius:2,background:playerColor(di),flexShrink:0}}/>
+            <span style={{color:C.text,fontSize:12,fontWeight:700,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={d.name}>{d.name}</span>
+            {d.shirtNumber&&<span style={{color:playerColor(di),fontSize:8,fontWeight:700}}>#{d.shirtNumber}</span>}
+            {(d.positions||[])[0]&&<span style={{color:C.sub,fontSize:8,fontWeight:700,background:C.s0,padding:"1px 4px",borderRadius:3}}>{d.positions[0]}</span>}
+            {d.id===activePlayerId
+              ?<span style={{fontSize:8,fontWeight:800,letterSpacing:0.8,color:"#fff",background:SPOT_COLOR,padding:"2px 6px",borderRadius:4}}>EDITING</span>
+              :<button onClick={()=>openProject(d.id)} title={`Open the draft for ${d.name} — your current edit is saved first`}
+                style={{fontSize:9,fontWeight:700,color:SPOT_COLOR,background:"transparent",border:`1px solid ${SPOT_COLOR}88`,borderRadius:4,padding:"1px 7px",cursor:"pointer"}}>Edit</button>}
+            <button onClick={()=>deleteDraft(d)} disabled={busy} title="Delete this draft" style={{...ib,color:C.overlay,padding:2,fontSize:13,lineHeight:1}}>&times;</button>
+          </div>
+          <div style={{padding:"0 14px 5px 29px",display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:9,color:ps&&ps.clips>2?C.sub:C.overlay,flex:1}}>{busy?draftBusy.text:ps&&ps.clips>0?`${ps.clips} clip${ps.clips===1?"":"s"} · ${ps.tags} tag${ps.tags===1?"":"s"}`:"No edit yet"}</span>
+            {!busy&&<button onClick={()=>setDraftMove(m=>m===d.id?null:d.id)} title="The athlete made his profile? Move this project to it"
+              style={{fontSize:9,fontWeight:700,color:C.green,background:"transparent",border:`1px solid ${C.green}88`,borderRadius:4,padding:"1px 6px",cursor:"pointer"}}>{draftMove===d.id?"Cancel":"Move to player"}</button>}
+          </div>
+          {draftMove===d.id&&<div style={{margin:"0 14px 6px 29px",background:C.s0,borderRadius:6,padding:4,maxHeight:180,overflow:"auto"}}>
+            <div style={{fontSize:9,color:C.sub,padding:"2px 4px 4px"}}>Which profile is {d.name}?</div>
+            {matches.length===0&&<div style={{fontSize:10,color:C.overlay,padding:4}}>No profiles yet — ask the athlete to create his.</div>}
+            {matches.map(p=><div key={p.id} onClick={()=>moveDraft(d,p)} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 6px",borderRadius:4,cursor:"pointer",fontSize:11,color:C.text}}
+              onMouseEnter={e=>e.currentTarget.style.background=C.s1} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+              {p.profilePicUrl?<img src={p.profilePicUrl} style={{width:16,height:16,borderRadius:"50%",objectFit:"cover"}}/>:<span style={{width:16,height:16,borderRadius:"50%",background:C.s2,display:"inline-block"}}/>}
+              <span style={{flex:1}}>{p.name}</span>{score(p)>0&&<span style={{fontSize:8,color:C.green,fontWeight:800}}>MATCH</span>}
+            </div>)}
+          </div>}
+        </div>;})}
+      <div style={{height:1,background:C.s0,margin:"4px 0 2px"}}/>
+      {cloudPlayers.length===0&&<div style={{padding:"16px 14px",color:C.overlay,fontSize:11,textAlign:"center"}}>No players yet. Players upload clips from the Athlete Portal.</div>}
+      {cloudPlayers.map((pl,pi)=>{
         const pColor=playerColor(pi);const pExp=expandedPlayers[pl.id]!==false;
         const totalVids=pl.categories.reduce((a,c)=>a+c.videos.length,0);
         return(
@@ -5531,6 +5660,7 @@ const STORAGE_KEY_EDIMGS="aua_editor_imgs";
 /* The Studio timeline itself — tracks, tags and per-clip settings — so an edit
    session survives a reload instead of starting from zero every time. */
 const STORAGE_KEY_PROJECT="aua_studio_project";
+const STORAGE_KEY_DRAFTS="aua_drafts";
 /* AUSA brand template. Every project opens with an intro slot (the athlete's
    thumbnail over the AUSA sound) and closes with the AUSA outro; clips always go
    between them. Files live in brand/ beside index.html — same origin, so the
@@ -6379,7 +6509,7 @@ function App(){
   }
 
   /* ── INNER SCREENS (athlete flow + editor) ── */
-  if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers}/>;
+  if(screen==="editor")return<StudioApp players={players} onLogout={goToLanding} onRefreshPlayers={refreshPlayers} onUpdatePlayer={handleUpdatePlayer}/>;
   if(screen==="athlete"){
     if(athleteStep==="select")return<AthleteSelect players={players} isEditorMode={isEditorMode} allBatches={allBatches}
       onSelect={id=>{setActivePlayerId(id);setAthleteStep("portal");}}
